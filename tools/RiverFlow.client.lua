@@ -6,6 +6,14 @@
 	Client-only, cosmetic, no remotes. Reads Water's CFrame/Size every frame so the
 	effect follows the model if it is moved or resized.
 
+	Each streak is SEGMENTS_PER_STREAK connected parts. Segment j spans the curve
+	between t0=(j-1)/N and t1=j/N (N = SEGMENTS_PER_STREAK), so segment j's tail
+	endpoint is exactly segment j+1's head endpoint: the pieces visibly connect.
+	Each segment is sized Size.X = width, Size.Z = endpoint distance (plus a small
+	overlap so seams don't gap), and oriented with CFrame.lookAt(midpoint, endpoint,
+	water.CFrame.UpVector) so its length (local Z, per lookAt's -Z-to-target
+	convention combined with the size axis below) tracks the local-X current.
+
 	TUNING (edit these constants only):
 		STREAK_COUNT     - number of streaks alive at once (kept under the part cap)
 		SEGMENTS_PER_STREAK - short connected pieces forming each streak's curve
@@ -26,7 +34,8 @@ local FLOW_DIR = -1
 local SWAY_AMPLITUDE = 0.9 -- studs of lateral bend across a streak's length
 local SWAY_SPEED_MIN, SWAY_SPEED_MAX = 0.5, 1.1 -- radians/second for the sway phase
 local SURFACE_LIFT = 0.03 -- studs above the water's top face
-local EDGE_FADE_STUDS = 6 -- fade streaks out within this many studs of the ends
+local EDGE_FADE_STUDS = 6 -- fade streaks out within this many studs of the water's X ends
+local SEGMENT_OVERLAP = 1.15 -- >1 so adjacent segments overlap slightly instead of leaving seams
 
 local FOLDER_NAME = "LocalFlowLines"
 local OLD_FOLDER_NAME = "LocalRipples"
@@ -78,12 +87,14 @@ end
 
 local streaks = {}
 
--- (Re)rolls a streak's length/width/speed/lane and, unless keepX, its start X.
+-- (Re)rolls a streak's length/width/speed/lane and, unless keepX, its head X.
 local function respawnStreak(s, size: Vector3, keepX: boolean)
 	s.length = rng:NextNumber(LENGTH_MIN, LENGTH_MAX)
 	s.width = rng:NextNumber(WIDTH_MIN, WIDTH_MAX)
 	s.speed = rng:NextNumber(SPEED_MIN, SPEED_MAX)
-	s.lz = rng:NextNumber(-size.Z / 2 + 1, size.Z / 2 - 1)
+	-- Keep the whole sway range inside the water's Z bounds, with a small margin.
+	local swayRoom = math.max(size.Z / 2 - 1 - SWAY_AMPLITUDE, 0.1)
+	s.lz = rng:NextNumber(-swayRoom, swayRoom)
 	s.swaySpeed = rng:NextNumber(SWAY_SPEED_MIN, SWAY_SPEED_MAX)
 	s.swayPhase = rng:NextNumber(0, math.pi * 2)
 	s.swaySign = if rng:NextNumber() < 0.5 then -1 else 1
@@ -108,6 +119,15 @@ end
 
 local clock = 0
 
+-- Local-space (x, z) of the curve at parameter t in [0, 1]: 0 at the streak's
+-- head (leading edge, in the flow direction), 1 at its tail.
+local function curvePoint(s, t: number): (number, number)
+	local along = -FLOW_DIR * t * s.length -- steps backward from the head, away from the flow direction
+	local lx = s.lx + along
+	local sway = math.sin(clock * s.swaySpeed + s.swayPhase + t * math.pi) * SWAY_AMPLITUDE * s.swaySign
+	return lx, s.lz + sway
+end
+
 local function updateStreak(s, cf: CFrame, size: Vector3, dt: number)
 	s.lx += FLOW_DIR * s.speed * dt
 	local halfX = size.X / 2
@@ -119,51 +139,55 @@ local function updateStreak(s, cf: CFrame, size: Vector3, dt: number)
 	local topY = size.Y / 2 + SURFACE_LIFT
 	local segCount = #s.segments
 	for j, part in ipairs(s.segments) do
-		-- Position each segment along the streak, front (flow-facing) to back.
-		local t = (j - 1) / math.max(segCount - 1, 1) -- 0 at front, 1 at back
-		local along = -FLOW_DIR * t * s.length -- steps backward from the head, away from flow direction
-		local segLx = s.lx + along
-
-		-- Gentle curve: lateral offset varies smoothly along the streak's length.
-		local sway = math.sin(clock * s.swaySpeed + s.swayPhase + t * math.pi) * SWAY_AMPLITUDE * s.swaySign
-		local segLz = s.lz + sway
+		local t0 = (j - 1) / segCount
+		local t1 = j / segCount
+		local lx0, lz0 = curvePoint(s, t0)
+		local lx1, lz1 = curvePoint(s, t1)
+		local p0 = cf:PointToWorldSpace(Vector3.new(lx0, topY, lz0))
+		local p1 = cf:PointToWorldSpace(Vector3.new(lx1, topY, lz1))
+		local midpoint = p0:Lerp(p1, 0.5)
+		local segLen = (p1 - p0).Magnitude
 
 		-- Fade near the water's X ends and taper the streak's own head/tail.
-		local edgeFade = math.clamp(math.min(halfX - math.abs(segLx), EDGE_FADE_STUDS) / EDGE_FADE_STUDS, 0, 1)
-		local tailFade = math.sin(t * math.pi) -- 0 at both ends of the streak, 1 in the middle
+		local midT = (t0 + t1) / 2
+		local midLx = (lx0 + lx1) / 2
+		local edgeFade = math.clamp(math.min(halfX - math.abs(midLx), EDGE_FADE_STUDS) / EDGE_FADE_STUDS, 0, 1)
+		local tailFade = math.sin(midT * math.pi) -- 0 at both ends of the streak, 1 in the middle
 		local alpha = edgeFade * (0.35 + 0.65 * tailFade)
 		part.Transparency = 1 - math.clamp(alpha, 0, 1) * 0.65 -- min transparency ~0.35 midstream
 
-		local segLen = (s.length / segCount) * 1.15 -- slight overlap so the curve reads as continuous
-		part.Size = Vector3.new(segLen, 0.05, s.width)
-
-		-- Orient each segment to face the next point along the sway curve.
-		local nextT = math.clamp(t + 1 / math.max(segCount - 1, 1) * 0.35, 0, 1)
-		local nextSway = math.sin(clock * s.swaySpeed + s.swayPhase + nextT * math.pi) * SWAY_AMPLITUDE * s.swaySign
-		local aheadLx = segLx - FLOW_DIR * 0.5
-		local aheadLz = s.lz + nextSway
-		local worldPos = cf:PointToWorldSpace(Vector3.new(segLx, topY, segLz))
-		local worldAhead = cf:PointToWorldSpace(Vector3.new(aheadLx, topY, aheadLz))
-		if (worldAhead - worldPos).Magnitude > 1e-3 then
-			part.CFrame = CFrame.lookAt(worldPos, worldAhead)
+		part.Size = Vector3.new(s.width, 0.05, math.max(segLen * SEGMENT_OVERLAP, 0.05))
+		if segLen > 1e-4 then
+			part.CFrame = CFrame.lookAt(midpoint, p1, water.CFrame.UpVector)
 		else
-			part.CFrame = CFrame.new(worldPos)
+			part.CFrame = CFrame.new(midpoint)
 		end
 	end
 end
 
-local connection
+local heartbeatConnection: RBXScriptConnection? = nil
+local ancestryConnection: RBXScriptConnection? = nil
+local destroyingConnection: RBXScriptConnection? = nil
+
 local function cleanup()
-	if connection then
-		connection:Disconnect()
-		connection = nil
+	if heartbeatConnection then
+		heartbeatConnection:Disconnect()
+		heartbeatConnection = nil
+	end
+	if ancestryConnection then
+		ancestryConnection:Disconnect()
+		ancestryConnection = nil
+	end
+	if destroyingConnection then
+		destroyingConnection:Disconnect()
+		destroyingConnection = nil
 	end
 	if folder.Parent then
 		folder:Destroy()
 	end
 end
 
-connection = RunService.Heartbeat:Connect(function(dt)
+heartbeatConnection = RunService.Heartbeat:Connect(function(dt)
 	if not water.Parent or not folder.Parent then
 		cleanup()
 		return
@@ -175,10 +199,10 @@ connection = RunService.Heartbeat:Connect(function(dt)
 	end
 end)
 
-water.AncestryChanged:Connect(function()
+ancestryConnection = water.AncestryChanged:Connect(function()
 	if not water:IsDescendantOf(workspace) then
 		cleanup()
 	end
 end)
 
-script.Destroying:Connect(cleanup)
+destroyingConnection = script.Destroying:Connect(cleanup)
