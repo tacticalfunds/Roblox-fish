@@ -12,15 +12,24 @@ local CarryVisual = require(script.Parent.CarryVisual)
 
 local PlayerData = {}
 
-export type NetSegment = { ax: number, az: number, bx: number, bz: number, t: number, speed: number }
-
+-- See src/server/Net.luau for the full state machine. ax/az/tx/tz/startAngle/
+-- currentAngle are in the plot's FishZone local space; anchorWorld is used for
+-- leash-distance checks against the character.
 export type NetState = {
-	active: boolean,
-	x: number,
-	z: number,
+	phase: string, -- "Idle" | "Deploying" | "Sweeping" | "Hauling"
+	timer: number, -- seconds remaining in Deploying/Hauling
+	ax: number,
+	az: number,
+	anchorWorld: Vector3,
+	radius: number, -- locked from the NetRadius stat at cast time
+	tx: number,
+	tz: number,
+	startAngle: number,
+	currentAngle: number,
+	sweepDir: number, -- 0 = undetermined, else 1 or -1
+	startedAngle: boolean,
 	lastMove: number,
-	segments: { NetSegment },
-	netted: { any }, -- fish records currently held in the net
+	netted: { any }, -- fish records currently held in the net; persists across cycles until unloaded
 }
 
 export type State = {
@@ -51,7 +60,22 @@ function PlayerData.create(player: Player): State
 		money = Config.StartingMoney,
 		levels = levels,
 		carry = { fish = 0, food = 0 },
-		net = { active = false, x = 0, z = 0, lastMove = 0, segments = {}, netted = {} },
+		net = {
+			phase = "Idle",
+			timer = 0,
+			ax = 0,
+			az = 0,
+			anchorWorld = Vector3.zero,
+			radius = 0,
+			tx = 0,
+			tz = 0,
+			startAngle = 0,
+			currentAngle = 0,
+			sweepDir = 0,
+			startedAngle = false,
+			lastMove = 0,
+			netted = {},
+		},
 		pads = {},
 		nextTransfer = 0,
 		connections = {},
@@ -101,7 +125,7 @@ function PlayerData.commit(state: State)
 	player:SetAttribute("CarryCapacity", PlayerData.intStat(state, "CarryCapacity"))
 	player:SetAttribute("NetRadius", PlayerData.stat(state, "NetRadius"))
 	player:SetAttribute("NetCapacity", PlayerData.intStat(state, "NetCapacity"))
-	player:SetAttribute("NetActive", state.net.active)
+	player:SetAttribute("NetPhase", state.net.phase)
 	player:SetAttribute("NetCount", #state.net.netted)
 	player:SetAttribute("PlotIndex", state.plot and state.plot.index or 0)
 	for id, level in pairs(state.levels) do

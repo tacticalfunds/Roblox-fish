@@ -107,10 +107,11 @@ local function loadPlot(model: Model): (Plot?, string?)
 		customers = nil,
 		net = nil,
 		cash = 0,
-		cashLabel = nil,
+		cashLabel = Billboard.create(parts[Scene.Parts.CashPad], runtime, 4, 150),
 		upgradeLabels = {},
 	}
 	plot.signLabel.Text = string.format("Plot %d - free", index)
+	plot.cashLabel.Text = "Cash: 0"
 	return plot, nil
 end
 
@@ -161,6 +162,12 @@ function Plots.assign(player: Player): Plot?
 		end
 	end
 	return nil
+end
+
+function Plots.refreshCashLabel(plot: Plot)
+	if plot.cashLabel then
+		plot.cashLabel.Text = string.format("Cash: %d", plot.cash)
+	end
 end
 
 function Plots.release(plot: Plot)

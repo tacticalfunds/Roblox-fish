@@ -27,13 +27,20 @@ Config.Fish = {
 	TickRate = 15, -- server simulation steps per second
 }
 
+-- The net is anchored to a fixed dock marker (NetAnchor). The player steers the
+-- outer tip; the enclosure is the circular sector (the "bag") between the
+-- anchor and the swept arc, radius fixed at cast time. See src/server/Net.luau
+-- for the full state machine and the geometry proof behind the clamp order.
 Config.Net = {
-	Reach = 28, -- max horizontal distance from the character to the net centre
-	MaxSpeed = 30, -- studs/second the net may travel; faster input is clamped
-	MinSweepSpeed = 1.5, -- the net must be moving at least this fast to scoop fish
-	CatchTolerance = 2.5, -- extra studs allowed for network latency when verifying claims
-	HistorySeconds = 1.0, -- how long swept segments stay valid for catch claims
-	FishingAreaMargin = 1.5, -- extra studs around the FishingArea pad while casting
+	AnchorReach = 7, -- studs from NetAnchor the character must stand within to cast
+	SweepLeash = 21, -- studs from NetAnchor the character may wander while sweeping/hauling before it auto-finishes
+	MaxSpeed = 24, -- studs/second the tip may travel; faster input is clamped
+	DeploySeconds = 0.4, -- timed "net drops into the water" delay before sweeping is allowed
+	HaulSeconds = 1.1, -- timed "bag closes and is pulled in" delay before unloading
+	MaxSweepDegrees = 324, -- the sector may not wrap past this; keeps the bag an open shape, not a full circle
+	SweepDeadzoneDegrees = 4, -- angular jitter under this is ignored (does not flip sweep direction or reverse the sector)
+	CatchTolerance = 1.5, -- extra studs of sector radius allowed for latency when verifying claims
+	ReturnReach = 7, -- studs from NetReturn (beside the grinder) the character must stand within to auto-unload into the hopper
 }
 
 Config.Grinder = {

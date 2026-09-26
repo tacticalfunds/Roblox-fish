@@ -25,8 +25,9 @@ Scene.Rollers = { "RollerA", "RollerB" }
 -- Required BaseParts directly under each plot model.
 Scene.Parts = {
 	FishZone = "FishZone", -- invisible box over the water; its top face is the water surface
-	FishingArea = "FishingArea", -- dock-edge strip where the owner may cast the net
-	DepositPad = "DepositPad", -- grinder hopper: drop carried fish here
+	NetAnchor = "NetAnchor", -- fixed dock spool the net is anchored to; character must stand within Config.Net.AnchorReach to cast
+	NetReturn = "NetReturn", -- marker beside the grinder; standing within Config.Net.ReturnReach auto-unloads the net into the hopper
+	DepositPad = "DepositPad", -- grinder hopper: stand here to move carried fish in (e.g. fish that overflowed the net's unload)
 	OutputPad = "OutputPad", -- grinder output tray: pick up food portions
 	CounterPad = "CounterPad", -- stand here to serve waiting customers
 	CashPad = "CashPad", -- stand here to collect earnings
