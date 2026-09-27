@@ -1,0 +1,29 @@
+-- FishPayout (ModuleScript in ServerScriptService).
+--
+-- Integration point for paying out meat sales. This place has no currency
+-- consumer yet (no script references leaderstats; CustomerBought and
+-- MeatDelivered have no listener), so this returns nil and NOTHING is paid.
+-- Variant value exists only as metadata until a real payout is connected.
+--
+-- CustomerSystem and TruckSystem call onSale exactly once per meat piece sold,
+-- with metadata captured before the meat is destroyed:
+--   info.kind        "Customer" | "Truck"
+--   info.fishName    species the meat came from
+--   info.tier        fish tier
+--   info.variant     "Silver" | "Gold" | nil
+--   info.multiplier  1 / 2 / 5 (per piece; a fish's pieces each carry it)
+--   info.ownerId     UserId of the player who caught the fish (may be nil)
+--   info.sellerId    UserId of the player who delivered it (truck sales)
+--   info.customer    customer name (customer sales)
+--
+-- To connect one later, return a table like:
+--
+--   return {
+--       onSale = function(info)
+--           -- e.g. pay (baseValue(info.tier) * info.multiplier) to the right player
+--       end,
+--   }
+--
+-- onSale runs inside pcall, so an error there can't break selling.
+
+return nil

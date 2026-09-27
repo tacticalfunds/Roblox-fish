@@ -1,0 +1,13 @@
+{
+  "name": "FishVariants",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "FishVariants": { "$path": "src/FishVariants.luau" },
+      "FishVariantVisuals": { "$path": "src/FishVariantVisuals.luau" }
+    },
+    "ServerScriptService": {
+      "FishPayout": { "$path": "src/FishPayout.luau" }
+    }
+  }
+}
