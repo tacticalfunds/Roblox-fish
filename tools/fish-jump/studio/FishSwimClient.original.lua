@@ -1,0 +1,144 @@
+-- Animates the fish stream: every fish swims up the river (toward +Z) with a body-wave wiggle.
+-- Position comes from server time + attributes set by FishSpawner, so all players see the same thing.
+-- Fish that get a CaughtT attribute (set by the net) are launched in an arc into the grinder.
+local RunService = game:GetService("RunService")
+local folder = workspace:WaitForChild("SwimmingFish")
+local surfaceY = folder:GetAttribute("SurfaceY")
+
+local LAUNCH_RISE, LAUNCH_FLY, LAUNCH_DROP = 0.12, 0.95, 0.55
+
+local fishes = {}
+
+local function swimPos(f, t)
+	local age = t - f.spawnT
+	local z = f.startZ + f.speed * age
+	local x = f.laneX + f.weaveA * math.sin(f.weaveF * t + f.phase)
+	local y = surfaceY - 0.6 + 0.12 * math.sin(t * 1.7 + f.phase)
+	local dx = f.weaveA * f.weaveF * math.cos(f.weaveF * t + f.phase)
+	return Vector3.new(x, y, z), Vector3.new(dx, 0, f.speed)
+end
+
+local function addFish(m)
+	if fishes[m] then return end
+	local root = m:WaitForChild("Root", 5)
+	if not root or not m.Parent then return end
+	local L = m:GetAttribute("SwimLen") or 4
+	local seed = m:GetAttribute("Seed") or 1
+	local f = {
+		model = m, L = L,
+		vertical = m:GetAttribute("Vertical") == true,
+		snake = m.Name == "CrystalSerpent",
+		spawnT = m:GetAttribute("SpawnT"), startZ = m:GetAttribute("StartZ"),
+		speed = m:GetAttribute("Speed"), laneX = m:GetAttribute("LaneX"),
+		caughtT = m:GetAttribute("CaughtT"),
+		weaveA = 0.8 + (seed % 7) * 0.15, weaveF = 0.35 + (seed % 5) * 0.08, phase = seed * 1.7,
+		spinAxis = Vector3.new(math.sin(seed), 0.6, math.cos(seed * 1.3)).Unit,
+		parts = {}, rels = {}, zs = {}, sizes = {},
+	}
+	f.omega = math.clamp(7 * math.sqrt(3 / L), 3, 9)
+	f.k = 2 * math.pi / (L * 1.2)
+	f.B = (f.snake and 0.13 or 0.08) * L
+	local rootCF = root.CFrame
+	for _, p in ipairs(m:GetDescendants()) do
+		if p:IsA("BasePart") then
+			local rel = rootCF:ToObjectSpace(p.CFrame)
+			table.insert(f.parts, p)
+			table.insert(f.rels, rel)
+			table.insert(f.zs, rel.Position.Z)
+			table.insert(f.sizes, p.Size)
+		end
+	end
+	m:GetAttributeChangedSignal("SpawnT"):Connect(function() f.spawnT = m:GetAttribute("SpawnT") end)
+	m:GetAttributeChangedSignal("CaughtT"):Connect(function() f.caughtT = m:GetAttribute("CaughtT") end)
+	fishes[m] = f
+end
+
+for _, m in ipairs(folder:GetChildren()) do task.spawn(addFish, m) end
+folder.ChildAdded:Connect(function(m) task.spawn(addFish, m) end)
+folder.ChildRemoved:Connect(function(m) fishes[m] = nil end)
+
+local allParts, allCFs = {}, {}
+local function push(p, cf) table.insert(allParts, p) table.insert(allCFs, cf) end
+
+RunService.RenderStepped:Connect(function()
+	local t = workspace:GetServerTimeNow()
+	local grinder = folder:GetAttribute("GrinderPos")
+	table.clear(allParts) table.clear(allCFs)
+	for m, f in pairs(fishes) do
+		if not m.Parent then fishes[m] = nil continue end
+		local L, B, k, w = f.L, f.B, f.k, f.omega
+
+		if f.caughtT and grinder then
+			-- LAUNCHED: pop up with the net, arc into the grinder, tumble, drop in
+			local lt = t - f.caughtT
+			local p0, dir0 = swimPos(f, f.caughtT)
+			local top = p0 + Vector3.new(0, 6, 0)
+			local pos
+			if lt < LAUNCH_RISE then
+				local e = 1 - (1 - lt / LAUNCH_RISE) ^ 3
+				pos = p0:Lerp(top, e)
+			elseif lt < LAUNCH_RISE + LAUNCH_FLY then
+				local u = (lt - LAUNCH_RISE) / LAUNCH_FLY
+				pos = top:Lerp(grinder, u) + Vector3.new(0, 9 * 4 * u * (1 - u), 0)
+			else
+				-- SUCKED IN: spiral down into the rollers while spinning and shrinking
+				local u = math.clamp((lt - LAUNCH_RISE - LAUNCH_FLY) / LAUNCH_DROP, 0, 1)
+				local e = u * u
+				local r = 1.2 * (1 - u)
+				local a = u * math.pi * 5
+				pos = grinder + Vector3.new(math.cos(a) * r, -3.2 * e, math.sin(a) * r)
+				f.suck = 1 - 0.92 * e
+			end
+			local s = f.suck or 1
+			local startRot = CFrame.lookAt(p0, p0 + dir0).Rotation
+			local rot
+			if f.suck then
+				local u = math.clamp((lt - LAUNCH_RISE - LAUNCH_FLY) / LAUNCH_DROP, 0, 1)
+				local flightEnd = startRot * CFrame.fromAxisAngle(f.spinAxis, LAUNCH_FLY * 11)
+				local dive = CFrame.Angles(0, u * math.pi * 6, 0) * CFrame.Angles(math.rad(-80), 0, 0) -- whirl nose-first down
+				rot = flightEnd:Lerp(dive, math.min(1, u * 2.5))
+			else
+				rot = startRot * CFrame.fromAxisAngle(f.spinAxis, math.max(0, lt - LAUNCH_RISE) * 11)
+			end
+			local base = rot + pos
+			local flap = math.sin(t * 25) * 0.35 -- panicked tail flap
+			for i, p in ipairs(f.parts) do
+				local zr = f.zs[i]
+				local weight = math.clamp((zr + 0.1 * L) / (0.6 * L), 0, 1)
+				local rel = f.rels[i]
+				if s < 1 then
+					p.Size = f.sizes[i] * s
+					rel = CFrame.new(rel.Position * s) * rel.Rotation
+				end
+				push(p, base * CFrame.new(flap * weight * L * 0.12 * s, 0, 0) * rel)
+			end
+			continue
+		end
+
+		local pos, dir = swimPos(f, t)
+		local base = CFrame.lookAt(pos, pos + dir)
+		for i, p in ipairs(f.parts) do
+			local zr = f.zs[i]
+			local weight
+			if f.snake then
+				weight = 0.35 + 0.65 * math.clamp((zr + L / 2) / L, 0, 1)
+			else
+				weight = math.clamp((zr + 0.1 * L) / (0.6 * L), 0, 1) ^ 1.5
+			end
+			local phase = w * t - k * zr
+			local off = B * weight * math.sin(phase)
+			local ang = -B * weight * k * math.cos(phase)
+			local rel = f.rels[i]
+			local cf
+			if f.vertical then
+				cf = CFrame.new(0, off, 0) * CFrame.new(rel.Position) * CFrame.Angles(ang, 0, 0) * rel.Rotation
+			else
+				cf = CFrame.new(off, 0, 0) * CFrame.new(rel.Position) * CFrame.Angles(0, -ang, 0) * rel.Rotation
+			end
+			push(p, base * cf)
+		end
+	end
+	if #allParts > 0 then
+		workspace:BulkMoveTo(allParts, allCFs, Enum.BulkMoveMode.FireCFrameChanged)
+	end
+end)
