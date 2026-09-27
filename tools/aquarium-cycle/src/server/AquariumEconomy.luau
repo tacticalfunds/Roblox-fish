@@ -1,0 +1,21 @@
+-- AquariumEconomy (ModuleScript in ServerScriptService).
+--
+-- The currency binding for aquarium upgrades. This place currently has no
+-- currency the aquarium can charge (no script references leaderstats, and
+-- CustomerSystem's CustomerBought event has no consumer), so this returns nil
+-- and the upgrade prompts say upgrades are unavailable. Upgrades are never
+-- granted for free, and nothing here creates a currency.
+--
+-- To connect a real currency later, return a table like:
+--
+--   return {
+--       -- Take `amount` from `player`. Must be atomic: return true only if
+--       -- the whole amount was taken, false (and take nothing) otherwise.
+--       tryCharge = function(player: Player, amount: number, reason: string): boolean
+--           ...
+--       end,
+--   }
+--
+-- The price always comes from the aquarium's own upgrade tables.
+
+return nil

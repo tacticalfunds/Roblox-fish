@@ -38,7 +38,7 @@ export type Adapters = {
 	FishSource: FishSource?,
 }
 
-local Upgrades = require("./Upgrades")
+local Upgrades = require(script.Parent.Upgrades)
 
 local Adapters = {}
 

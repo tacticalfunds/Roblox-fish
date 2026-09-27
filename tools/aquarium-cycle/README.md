@@ -1,92 +1,146 @@
 # Aquarium cycle (dock rods → aquarium → river)
 
-Opt-in, self-contained module for the recycling loop: dock rods lift single
-fish into an upgradeable aquarium, and the aquarium releases them back into
-the river to be caught again. It is separate from the net/grinder/conveyor
-bulk route and from the paused `src/` prototype.
+Rod catches from the five shared dock rods go into the one `FishTank`
+instead of the grinder. Players release them back into
+`Workspace.SwimmingFish`, where they swim, can be netted, and go through the
+grinder as usual. The net → grinder → conveyor → customer/truck route is
+unchanged. Releasing pays nothing.
 
-## Status
+## Install and uninstall (Studio, Edit mode, Command Bar)
 
-| Part | State |
+| Step | File |
 |---|---|
-| `src/Config.luau` | Done. `Enabled = false` by default. |
-| `src/Upgrades.luau` | Done. Explicit per-level tables, clamped levels. |
-| `src/CycleState.luau` | Done. Pure, server-authoritative state machine. |
-| `src/Adapters.luau` | Contracts only. All adapters default to off. |
-| `tests/cycle.test.luau` | Done. Offline pure-logic tests plus a randomized fuzz. |
-| Roblox controller, prompts, visuals | **Not started, on purpose.** Waiting for the real source. |
-| Installer and uninstaller | **Not started.** Waiting for the scene/source inventory. |
+| Install | `tools/aquarium-cycle/InstallAquariumCycle.lua` (generated; paste the whole file) |
+| Uninstall | `tools/aquarium-cycle/UninstallAquariumCycle.lua` |
+| Kill switch | Untick `Enabled` on `ReplicatedStorage.AquariumCycle`. Rod catches go back to the grinder, and mid-play any tank fish are put back in the river. |
 
-The live place already has `RodFishingClient`, `FishSwimClient`,
-`TruckClient`, `NetLiftClient`, `Workspace.SwimmingFish`, `RodCatches`,
-`FishTank`, `FishLoader`, `TankPipe`, `FishStockingTruck`, five
-`FishingRod1` models, and `ReplicatedStorage.FishModels`, `SwimTemplates`,
-`Rods` and `PressFishButton`. The Roblox side of this module must extend that
-code, not duplicate or replace it. Nothing is wired until its server source
-has been read.
+The installer changes nothing unless every check passes. It requires exactly
+one `RodFishingSystem` Script in ServerScriptService whose source matches
+`studio/RodFishingSystem.original.lua` (whitespace-normalized), plus
+`FishTank.BaseWater`, `SwimmingFish` with numeric bounds, `SwimTemplates` and
+`FishModels`. The install is one undo step.
 
-## Core rules (what the tests enforce)
+**What it changes:**
+- **Patched:** `ServerScriptService…RodFishingSystem`. The original and
+  patched copies are saved, disabled, in `ServerStorage.AquariumCycleBackup`.
+- **Added:** `ReplicatedStorage.AquariumCycle`, holding 8 pure ModuleScripts,
+  a `Bindings` folder of ObjectValues, and the `Enabled` attribute.
+- **Added:** `ServerScriptService.AquariumCycleServer` (ModuleScript) and
+  `ServerScriptService.AquariumEconomy` (ModuleScript; returns nil, so no
+  currency).
+- **Added:** `StarterPlayer.StarterPlayerScripts.AquariumTankClient`
+  (LocalScript).
 
-- Every tracked fish is in exactly one place: `River`, `Hooked` (on one rod),
-  `Tank` (one owner) or `Releasing` (swimming back). Fish are never
-  duplicated or lost; the fuzz test checks the fish count and every
-  invariant after each random operation.
-- A cast reserves a tank slot up front. When `tank + reserved` would exceed
-  capacity, the cast is refused with `tankFull` before any fish is taken.
-- Rods and tanks belong to one owner, and every call checks ownership.
-- The server picks which river fish gets hooked. Timings (`BiteSeconds`,
-  `LiftSeconds`, cast timeout, release swim time and cooldown) are enforced
-  in the core, never supplied by the client.
-- Upgrade levels are clamped to `[1, max]`. Malformed saved levels fall back
-  to level 1.
-- Removing an owner or shutting the system down cancels casts and returns
-  every fish they hold to the river.
-- **No currency is ever created.** Release and return events go to an
-  optional payout adapter that decides whether anything is paid. Upgrades
-  can't be bought until an economy adapter is installed, and the price
-  always comes from the core state, never from the caller.
+Every added object is tagged `AquariumCycleOwned`, and the uninstaller removes
+only tagged objects. It restores the original source unless the patched script
+was edited after install; in that case it stops and says so.
 
-## Upgrades (tentative numbers)
+**Bindings the installer writes** (the runtime reads only these, never
+guessing names):
 
-| Upgrade | Levels 1→4 | Cost to next level |
+| Binding | Points at | Required |
 |---|---|---|
-| Tank Capacity | 3 / 6 / 10 / 15 fish | 50 / 150 / 400 |
-| Release Rate | 1 / 2 / 4 / 6 fish per release | 40 / 120 / 350 |
+| `TankWater` | `FishTank.BaseWater` | yes |
+| `River` | `SwimmingFish` | yes |
+| `SwimTemplates`, `FishModels` | the ReplicatedStorage folders | yes |
+| `Loader` | `FishLoader` | optional |
+| `CountPrompt` | `Model.Road.ProximityPrompt` | optional; only if exactly one match with `BillboardGui.TextLabel` = "Fish available" and an `Amount` label |
 
-The release cooldown is fixed (4 s), so batch size is the one throughput
-lever. There's no luck or value upgrade; one can be added later if wanted.
+## RodFishingSystem changes
 
-## Proposed controls (no handheld minigame)
+Every change is marked `AquariumCycle` in `studio/RodFishingSystem.patched.lua`.
+Diff it against the `.original.lua` beside it.
 
-- **Rod** (ProximityPrompt on each bound rod): `Cast Rod`. While busy, show
-  `Reeling…` with the prompt disabled. When the tank is full, show `Tank Full`
-  (disabled) instead of casting.
-- **Tank counter** (billboard): `Fish in tank: 2/3`. This replaces the
-  placeholder `NEW CAR / PLACE CAR` prompt.
-- **Tank prompt**: `Release Fish`, disabled while the tank is empty or on
-  cooldown.
-- **Upgrade prompts**: `Upgrade Capacity (3 → 6)` and
-  `Upgrade Release Rate (1 → 2)`. These appear only once an economy adapter
-  exists.
+- **Before casting:** `press()` reserves one tank spot per idle rod before any
+  rod task starts. Rods beyond the free spots stay idle.
+- **Tank full:** the button handler tells the presser and doesn't cast, and
+  the `PressedAt` press animation doesn't play.
+- **At the bite:** the picked fish is attached to the reserved spot.
+- **Step 6:** the fish arcs into the tank instead of the grinder. If the
+  aquarium is missing, disabled, stopped mid-catch, or refuses, the fish goes
+  to the grinder exactly as before (`FishCaught:Fire` with the same
+  arguments), so no catch is lost.
+- **Error safety:** each rod task runs in `xpcall`. On error it destroys its
+  bobber and fish, clears `Pulling`, frees its tank spot and goes idle.
+  Previously an error left the rod busy forever.
 
-## Proposed bindings (to confirm against the inventory)
+The weighted pick, silhouette cycling, reveal, button lock and all client
+visuals (`RodFishingClient`) are unchanged.
 
-No scene names are guessed in code. The installer will create one folder
-owned by this module containing `ObjectValue`s that Astra points at existing
-objects: each rod model, the tank's swim bounds, the river swim bounds, and
-the fish template source. The controller reads only those bindings and
-refuses to start if any is missing or has the wrong class. Uninstall removes
-only that folder and any runtime objects this module created.
+## Runtime behavior
 
-## Running the tests
+- **One tank for the server.** Capacity is shared, not per player. It starts
+  at 3; Release Rate starts at 1 fish per release, with a 4 s cooldown.
+- **Count display:** the bound "Fish available" label reads "Fish in tank"
+  with `count/capacity`, and turns red when no spot is free.
+- **Placeholder prompt:** the "NEW CAR / PLACE CAR" prompt is hidden while
+  running (`Config.Scene.HidePlaceholderPrompt`).
+- **Prompts at the same spot:** `E` Release Fish, `F` Upgrade Tank Capacity,
+  `G` Upgrade Release Rate. The server re-checks distance, a live character
+  and a per-player cooldown on every trigger.
+- **Returning to the river:** released fish swim to the fish loader and fade
+  out on clients. After 3 s the server clones the fish's `SwimTemplate` into
+  `SwimmingFish` with FishSpawner's attributes (`SpawnT`, `StartZ`, `Speed`,
+  `LaneX`, `Seed`), set before parenting, plus the end-of-river despawn.
+- **Tank visuals:** client-side clones of `FishModels`, scaled and swimming a
+  smooth path bounded inside `BaseWater` (derived at runtime).
 
-```sh
-luau tools/aquarium-cycle/tests/cycle.test.luau
-```
+## Known limitations (please review)
 
-These are offline pure-logic tests. No Roblox runtime test has been run.
+1. **Upgrades are unavailable.** The place has no currency consumer, so the
+   upgrade prompts say so and nothing is granted. To connect one, make
+   `AquariumEconomy` return `{ tryCharge = function(player, amount, reason) }`.
+   Prices come from the aquarium's own tables.
+2. **Nothing persists.** Levels and tank contents reset each server, and the
+   one shared tank has no owner.
+3. **Released fish ignore FishSpawner's rare-fish caps.** Released rare fish
+   count toward those caps but can push the river above them.
+4. **The placeholder prompt is disabled, not reused.** If its count
+   BillboardGui turns out to depend on the prompt being enabled, set
+   `HidePlaceholderPrompt = false`.
+5. **Switching `Enabled` on mid-play does nothing** until the server restarts;
+   switching off works immediately.
 
-The modules use string requires (`require("./Upgrades")`) so the same files
-run under the Luau CLI. Before installing, check that Studio accepts these
-require-by-string paths for the chosen module layout, or switch them to
-`script.Parent` requires.
+## Checks run
+
+- `python3 tools/aquarium-cycle/tests/run_tests.py <luau>`: 850 offline
+  checks pass (core 477, integration 373). The randomized fuzz tests assert
+  every invariant, and that each hooked fish ends in exactly one outcome.
+- Every source, the patched RodFishingSystem and both installer scripts
+  compile, and type-check clean with luau-lsp (Roblox definitions plus a Rojo
+  sourcemap). The only lints are same-line-statement style warnings in lines
+  that are unchanged from the original RodFishingSystem.
+- The generated installer contains every source verbatim.
+- **No Roblox runtime test has been run.** Everything below needs the Studio
+  playtest.
+
+## Studio playtest checklist
+
+1. Install. The output lists the bindings; check that CountPrompt and Loader
+   are bound.
+2. Play. Output shows `[AquariumCycle] running; upgrades unavailable …`.
+3. Press the button. Three rods cast and two stay idle (capacity 3), the
+   label shows `0/3`, and the fish arc into the tank. They should not go to
+   the grinder, and no meat should appear.
+4. The tank shows swimming fish and `3/3` in red. Pressing again shows the
+   full-tank notice and no rods cast.
+5. `E` releases one fish, which swims to the loader. About 3 s later it
+   appears at the upstream end of the river and swims normally.
+6. Net that fish. It launches into the grinder and meat comes out as usual.
+7. `F`/`G` show the upgrades-unavailable notice, and levels don't change.
+8. Untick `Enabled` mid-play. Tank fish reappear in the river, rods in flight
+   go to the grinder, and the "Fish available" label is restored.
+9. Stop, run the uninstaller, and confirm RodFishingSystem matches the
+   original with no AquariumCycle objects left.
+
+## Source layout
+
+- `src/shared/`: pure modules (Config, Upgrades, CycleState, Adapters,
+  SharedTank, RiverRelease, TankPath, Messages). Studio requires use
+  `script.Parent`; `tests/run_tests.py` rewrites them for the Luau CLI.
+- `src/server/`, `src/client/`: the Roblox side.
+- `studio/`: the reviewed original and patched RodFishingSystem.
+- `build/`: the installer generator and template. Rebuild with
+  `python3 tools/aquarium-cycle/build/build_installer.py`.
+- `default.project.json`: used only to generate a sourcemap for type
+  checking. Don't Rojo-sync it into the live place.

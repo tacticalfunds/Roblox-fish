@@ -17,7 +17,7 @@
 -- Owners are opaque keys (e.g. a UserId). Rods are registered to exactly one
 -- owner; every call checks that the caller owns the rod/tank it names.
 
-local Upgrades = require("./Upgrades")
+local Upgrades = require(script.Parent.Upgrades)
 
 local CycleState = {}
 CycleState.__index = CycleState
@@ -124,6 +124,18 @@ function CycleState.spawnRiverFish(self: CycleState): number
 	local id = self.nextFishId
 	self.fish[id] = { id = id, location = "River" }
 	return id
+end
+
+-- Stops tracking a fish that is in the River location: it has been handed to
+-- the place's own river system (or never reached it). Ids are never reused.
+-- Returns false for fish anywhere else, so tank/rod fish can't be dropped.
+function CycleState.forgetRiverFish(self: CycleState, id: any): boolean
+	local fish = self.fish[id]
+	if not fish or fish.location ~= "River" then
+		return false
+	end
+	self.fish[id] = nil
+	return true
 end
 
 function CycleState.addTank(self: CycleState, owner: any, levels: { [string]: any }?): (boolean, string?)
