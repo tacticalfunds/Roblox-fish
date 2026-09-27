@@ -10,7 +10,8 @@
 	  * none of its own objects already exist (run the uninstaller first)
 	  * exactly one Script named RodFishingSystem under ServerScriptService,
 	    whose source matches the reviewed original embedded below
-	  * Workspace.FishTank.BaseWater (BasePart), Workspace.SwimmingFish with
+	  * exactly one BasePart named BaseWater anywhere under Workspace.FishTank
+	    (live: FishTank.Base5.BaseWater), Workspace.SwimmingFish with
 	    numeric MinX/MaxX/MinZ/MaxZ/SurfaceY, ReplicatedStorage.SwimTemplates
 	    and ReplicatedStorage.FishModels
 
@@ -99,11 +100,21 @@ if not sourceMatches and not ALLOW_SOURCE_MISMATCH then
 	)
 end
 
+-- The live hierarchy is Workspace.FishTank.Base5.BaseWater, so search all of
+-- FishTank, but insist on exactly one BasePart named BaseWater.
 local fishTank = workspace:FindFirstChild("FishTank")
-local baseWater = fishTank and fishTank:FindFirstChild("BaseWater")
-if not (baseWater and baseWater:IsA("BasePart")) then
-	return fail("Workspace.FishTank.BaseWater (BasePart) not found")
+local waters = {}
+if fishTank then
+	for _, d in ipairs(fishTank:GetDescendants()) do
+		if d.Name == "BaseWater" and d:IsA("BasePart") then
+			table.insert(waters, d)
+		end
+	end
 end
+if #waters ~= 1 then
+	return fail(string.format("expected exactly 1 BasePart named BaseWater under Workspace.FishTank, found %d", #waters))
+end
+local baseWater = waters[1]
 local river = workspace:FindFirstChild("SwimmingFish")
 if not river then
 	return fail("Workspace.SwimmingFish not found")

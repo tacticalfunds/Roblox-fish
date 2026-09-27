@@ -16,9 +16,10 @@ unchanged. Releasing pays nothing.
 
 The installer changes nothing unless every check passes. It requires exactly
 one `RodFishingSystem` Script in ServerScriptService whose source matches
-`studio/RodFishingSystem.original.lua` (whitespace-normalized), plus
-`FishTank.BaseWater`, `SwimmingFish` with numeric bounds, `SwimTemplates` and
-`FishModels`. The install is one undo step.
+`studio/RodFishingSystem.original.lua` (whitespace-normalized), exactly one
+BasePart named `BaseWater` anywhere under `Workspace.FishTank` (live:
+`FishTank.Base5.BaseWater`), `SwimmingFish` with numeric bounds,
+`SwimTemplates` and `FishModels`. The install is one undo step.
 
 **What it changes:**
 - **Patched:** `ServerScriptService…RodFishingSystem`. The original and
@@ -40,7 +41,7 @@ guessing names):
 
 | Binding | Points at | Required |
 |---|---|---|
-| `TankWater` | `FishTank.BaseWater` | yes |
+| `TankWater` | `FishTank.Base5.BaseWater` (the one `BaseWater` under `FishTank`) | yes |
 | `River` | `SwimmingFish` | yes |
 | `SwimTemplates`, `FishModels` | the ReplicatedStorage folders | yes |
 | `Loader` | `FishLoader` | optional |
@@ -83,7 +84,7 @@ visuals (`RodFishingClient`) are unchanged.
   `SwimmingFish` with FishSpawner's attributes (`SpawnT`, `StartZ`, `Speed`,
   `LaneX`, `Seed`), set before parenting, plus the end-of-river despawn.
 - **Tank visuals:** client-side clones of `FishModels`, scaled and swimming a
-  smooth path bounded inside `BaseWater` (derived at runtime).
+  smooth path bounded inside the bound `BaseWater` (derived at runtime).
 
 ## Known limitations (please review)
 

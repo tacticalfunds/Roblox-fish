@@ -3,7 +3,7 @@
 -- Visual only. For each fish marker the server keeps in
 -- Workspace.AquariumCycleRuntime.TankFish, this draws a local clone of the
 -- matching ReplicatedStorage.FishModels model swimming a smooth, bounded path
--- inside the bound tank water (FishTank.BaseWater). Released fish swim over to
+-- inside the bound tank water (FishTank.Base5.BaseWater). Released fish swim over to
 -- the fish loader (or the tank rim) and fade out; the server then puts them
 -- back into the river. Also shows the server's short feedback notices.
 -- Nothing here affects game state.
