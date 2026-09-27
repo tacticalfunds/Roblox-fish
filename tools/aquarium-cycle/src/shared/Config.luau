@@ -64,6 +64,8 @@ Config.Scene = {
 	TankMargin = 2, -- studs kept clear of the tank walls (client)
 	RiverSpeed = { 4, 6.5 }, -- matches FishSpawner SPEED
 	RiverSeedBase = 1000000, -- keeps released fish seeds apart from FishSpawner's 1..N
+	-- Fish attributes carried unchanged rod -> tank -> river (never rerolled).
+	PassthroughAttributes = { "Variant" },
 }
 
 return Config

@@ -133,6 +133,36 @@ do
 	check("shutdown idempotent", #tank:shutdown() == 0)
 end
 
+-- Meta pass-through (e.g. rare-fish Variant): whitelisted, carried unchanged
+-- rod -> tank -> river and through shutdown, cleared on abort.
+do
+	local tank = fresh()
+	tank:reserve({ 1, 2, 3 }, 0)
+	tank:hook(1, "Koi", BITE, { Variant = "Gold", SpawnT = 5, Evil = "x" })
+	local _, _, _, name, meta = tank:land(1, BITE + LIFT)
+	check("land returns meta", name == "Koi" and meta and meta.Variant == "Gold")
+	check("non-whitelisted keys dropped", meta and meta.SpawnT == nil and meta.Evil == nil)
+	tank:hook(2, "Cod", BITE, nil)
+	local _, _, _, _, noMeta = tank:land(2, BITE + LIFT)
+	check("no meta stays nil", noMeta == nil)
+	tank:hook(3, "Eel", BITE, { Variant = "Silver" })
+	tank:abort(3)
+	check("abort clears meta", next(tank.meta) ~= nil and tank.meta[3] == nil)
+	healthy(tank, "meta bookkeeping")
+	local _, _, fish = tank:release(10)
+	check("release batch carries meta", fish[1].meta and fish[1].meta.Variant == "Gold")
+	local handed = tank:step(10 + Config.ReleaseSwimSeconds)
+	check("hand-off to river keeps variant", #handed == 1 and handed[1].meta.Variant == "Gold")
+	local out = tank:shutdown()
+	check("shutdown hands back plain fish without meta", #out == 1 and out[1].name == "Cod" and out[1].meta == nil)
+	check("meta cleared after shutdown", next(tank.meta) == nil)
+	local long = SharedTank.new(Config)
+	long:registerRods({ 1 })
+	long:reserve({ 1 }, 0)
+	long:hook(1, "X", BITE, { Variant = string.rep("a", 40) })
+	check("oversized meta values dropped", long.meta[next(long.meta) or 0] == nil)
+end
+
 -- Upgrades: unavailable without currency, never free.
 do
 	local tank = fresh()

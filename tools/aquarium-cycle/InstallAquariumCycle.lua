@@ -867,6 +867,8 @@ Config.Scene = {
 	TankMargin = 2, -- studs kept clear of the tank walls (client)
 	RiverSpeed = { 4, 6.5 }, -- matches FishSpawner SPEED
 	RiverSeedBase = 1000000, -- keeps released fish seeds apart from FishSpawner's 1..N
+	-- Fish attributes carried unchanged rod -> tank -> river (never rerolled).
+	PassthroughAttributes = { "Variant" },
 }
 
 return Config
@@ -1483,7 +1485,11 @@ local Adapters = require(script.Parent.Adapters)
 local SharedTank = {}
 SharedTank.__index = SharedTank
 
-export type Handoff = { id: number, name: string? }
+-- meta: optional per-fish attributes carried unchanged through the tank and
+-- back into the river (only names in Config.Scene.PassthroughAttributes, e.g.
+-- a rare-fish "Variant"). Never rerolled or invented here.
+export type Meta = { [string]: string | number | boolean }
+export type Handoff = { id: number, name: string?, meta: Meta? }
 
 export type Info = {
 	count: number,
@@ -1504,6 +1510,7 @@ function SharedTank.new(config: any)
 		state = state,
 		owner = owner,
 		names = {} :: { [number]: string },
+		meta = {} :: { [number]: Meta? },
 		rodKeys = {} :: { any },
 		stopped = false,
 	}, SharedTank)
@@ -1564,7 +1571,31 @@ function SharedTank.reserve(self: SharedTank, keys: { any }, now: number): ({ an
 end
 
 -- Hooks a newly picked fish on a rod that holds a reservation.
-function SharedTank.hook(self: SharedTank, key: any, fishName: any, now: number): (boolean, string?, number?)
+-- Keeps only whitelisted keys with primitive values.
+local function cleanMeta(config: any, meta: any): Meta?
+	if type(meta) ~= "table" then
+		return nil
+	end
+	local out: Meta = {}
+	local any = false
+	for _, key in ipairs(config.Scene.PassthroughAttributes or {}) do
+		local v = meta[key]
+		local t = type(v)
+		if (t == "string" and #v <= 32) or (t == "number" and v == v) or t == "boolean" then
+			out[key] = v
+			any = true
+		end
+	end
+	return if any then out else nil
+end
+
+function SharedTank.hook(
+	self: SharedTank,
+	key: any,
+	fishName: any,
+	now: number,
+	meta: any?
+): (boolean, string?, number?)
 	if self.stopped then
 		return false, "stopped", nil
 	end
@@ -1578,19 +1609,20 @@ function SharedTank.hook(self: SharedTank, key: any, fishName: any, now: number)
 		return false, err, nil
 	end
 	self.names[id] = fishName
+	self.meta[id] = cleanMeta(self.config, meta)
 	return true, nil, id
 end
 
 -- Moves the rod's hooked fish into the tank. Returns (ok, reason, id, name).
-function SharedTank.land(self: SharedTank, key: any, now: number): (boolean, string?, number?, string?)
+function SharedTank.land(self: SharedTank, key: any, now: number): (boolean, string?, number?, string?, Meta?)
 	if self.stopped then
-		return false, "stopped", nil, nil
+		return false, "stopped", nil, nil, nil
 	end
 	local ok, err, id = self.state:landCatch(self.owner, key, now)
 	if not ok or not id then
-		return false, err, nil, nil
+		return false, err, nil, nil, nil
 	end
-	return true, nil, id, self.names[id]
+	return true, nil, id, self.names[id], self.meta[id]
 end
 
 -- Releases a rod's reservation and any fish on its line. That fish was made
@@ -1604,6 +1636,7 @@ function SharedTank.abort(self: SharedTank, key: any): boolean
 	if id then
 		self.state:forgetRiverFish(id)
 		self.names[id] = nil
+		self.meta[id] = nil
 	end
 	return wasBusy
 end
@@ -1616,7 +1649,7 @@ function SharedTank.release(self: SharedTank, now: number): (boolean, string?, {
 	local ok, err, ids = self.state:release(self.owner, now)
 	local out: { Handoff } = {}
 	for _, id in ipairs(ids) do
-		table.insert(out, { id = id, name = self.names[id] })
+		table.insert(out, { id = id, name = self.names[id], meta = self.meta[id] })
 	end
 	return ok, err, out
 end
@@ -1631,10 +1664,11 @@ function SharedTank.step(self: SharedTank, now: number): { Handoff }
 	for _, event in ipairs(self.state:step(now)) do
 		if event.kind == "ReturnedToRiver" and event.fishId then
 			local id = event.fishId
-			local name = self.names[id]
+			local name, meta = self.names[id], self.meta[id]
 			self.state:forgetRiverFish(id)
 			self.names[id] = nil
-			table.insert(out, { id = id, name = name })
+			self.meta[id] = nil
+			table.insert(out, { id = id, name = name, meta = meta })
 		end
 	end
 	return out
@@ -1660,9 +1694,10 @@ function SharedTank.shutdown(self: SharedTank): { Handoff }
 		self:abort(key)
 	end
 	for _, id in ipairs(self.state:removeOwner(self.owner)) do
-		table.insert(out, { id = id, name = self.names[id] })
+		table.insert(out, { id = id, name = self.names[id], meta = self.meta[id] })
 		self.state:forgetRiverFish(id)
 		self.names[id] = nil
+		self.meta[id] = nil
 	end
 	self.stopped = true
 	return out
@@ -1681,6 +1716,11 @@ function SharedTank.check(self: SharedTank): (boolean, string?)
 		end
 		if self.names[id] == nil then
 			return false, "tracked fish without name " .. id
+		end
+	end
+	for id in pairs(self.meta) do
+		if self.names[id] == nil then
+			return false, "meta without fish " .. id
 		end
 	end
 	for id in pairs(self.names) do
@@ -1840,7 +1880,7 @@ local SERVER = [[
 --   active()                -> bool
 --   reserve(rods, player)   -> rods allowed to cast (a tank spot is reserved for each)
 --   hasFreeSpot(player)     -> bool (tells the player when the tank is full)
---   hook(rodKey, fishName)  -> bool
+--   hook(rodKey, fishName, meta?) -> bool  (meta: e.g. { Variant = "Gold" }, carried unchanged)
 --   land(rodKey)            -> bool
 --   abort(rodKey)           -- frees the rod's spot; safe to call any time
 --   entryPoint()            -> Vector3 above the tank water
@@ -2030,7 +2070,29 @@ end
 
 ------------------------------------------------------------ fish
 
-local function addMarker(id: number, name: string)
+-- Optional ReplicatedStorage.FishVariantVisuals (installed by the variants
+-- feature); without it, fish are released without extra effects.
+local function variantVisuals()
+	local mod = ReplicatedStorage:FindFirstChild("FishVariantVisuals")
+	if not (mod and mod:IsA("ModuleScript")) then
+		return nil
+	end
+	local ok, v = pcall(require, mod)
+	return if ok and type(v) == "table" then v else nil
+end
+
+local function setMeta(inst: Instance, meta)
+	if type(meta) ~= "table" then
+		return
+	end
+	for _, key in ipairs(scene.PassthroughAttributes or {}) do
+		if meta[key] ~= nil then
+			inst:SetAttribute(key, meta[key])
+		end
+	end
+end
+
+local function addMarker(id: number, name: string, meta)
 	local marker = Instance.new("Configuration")
 	marker.Name = "Fish" .. id
 	marker:SetAttribute("FishId", id)
@@ -2038,6 +2100,7 @@ local function addMarker(id: number, name: string)
 	marker:SetAttribute("Seed", id)
 	marker:SetAttribute("EnterT", workspace:GetServerTimeNow())
 	marker:SetAttribute("State", "Tank")
+	setMeta(marker, meta)
 	marker.Parent = tankFishFolder
 	markers[id] = marker
 end
@@ -2053,7 +2116,7 @@ end
 -- Puts a fish back into Workspace.SwimmingFish exactly like FishSpawner does,
 -- so FishSwimClient animates it and the net can catch it. Attributes are set
 -- before parenting because FishSwimClient reads them on ChildAdded.
-local function spawnIntoRiver(name: string?)
+local function spawnIntoRiver(name: string?, meta)
 	local template = name and swimTemplates:FindFirstChild(name)
 	if not template then
 		warn("[AquariumCycle] no SwimTemplate for released fish " .. tostring(name))
@@ -2076,6 +2139,11 @@ local function spawnIntoRiver(name: string?)
 	model:SetAttribute("LaneX", s.LaneX)
 	model:SetAttribute("Seed", s.Seed)
 	model:SetAttribute("FromAquarium", true)
+	setMeta(model, meta) -- e.g. Variant: kept from the original catch, never rerolled
+	local visuals = variantVisuals()
+	if visuals and model:GetAttribute("Variant") then
+		pcall(visuals.applyToFish, model, model:GetAttribute("Variant"))
+	end
 	local at = Vector3.new(s.LaneX, s.y, s.StartZ)
 	model:PivotTo(CFrame.lookAt(at, at + Vector3.new(0, 0, 1)))
 	model.Parent = river
@@ -2089,7 +2157,7 @@ end
 local function handOff(list)
 	for _, fish in ipairs(list) do
 		removeMarker(fish.id)
-		spawnIntoRiver(fish.name)
+		spawnIntoRiver(fish.name, fish.meta)
 	end
 end
 
@@ -2392,11 +2460,11 @@ function M.hasFreeSpot(player: Player?): boolean
 	return false
 end
 
-function M.hook(rodKey: any, fishName: string): boolean
+function M.hook(rodKey: any, fishName: string, meta: any?): boolean
 	if not running then
 		return false
 	end
-	local ok, reason = tank:hook(rodKey, fishName, clock())
+	local ok, reason = tank:hook(rodKey, fishName, clock(), meta)
 	if not ok and reason ~= "notWaiting" then
 		warn("[AquariumCycle] hook refused for rod " .. tostring(rodKey) .. ": " .. tostring(reason))
 	end
@@ -2407,12 +2475,12 @@ function M.land(rodKey: any): boolean
 	if not running then
 		return false
 	end
-	local ok, reason, id, name = tank:land(rodKey, clock())
+	local ok, reason, id, name, meta = tank:land(rodKey, clock())
 	if not ok or not id then
 		warn("[AquariumCycle] land refused for rod " .. tostring(rodKey) .. ": " .. tostring(reason))
 		return false
 	end
-	addMarker(id, name or "")
+	addMarker(id, name or "", meta)
 	refresh()
 	return true
 end
@@ -2617,6 +2685,15 @@ local function addFish(marker: Instance)
 			table.insert(parts, d)
 		elseif d:IsA("Script") or d:IsA("LocalScript") then
 			d:Destroy()
+		end
+	end
+	-- Rare-fish effects when the variants feature is installed.
+	local variant = marker:GetAttribute("Variant")
+	local fx = variant and ReplicatedStorage:FindFirstChild("FishVariantVisuals")
+	if fx and fx:IsA("ModuleScript") then
+		local ok, v = pcall(require, fx)
+		if ok and type(v) == "table" then
+			pcall(v.applyToFish, model, variant)
 		end
 	end
 	model.Parent = visuals

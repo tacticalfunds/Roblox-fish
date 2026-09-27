@@ -128,6 +128,15 @@ local function addFish(marker: Instance)
 			d:Destroy()
 		end
 	end
+	-- Rare-fish effects when the variants feature is installed.
+	local variant = marker:GetAttribute("Variant")
+	local fx = variant and ReplicatedStorage:FindFirstChild("FishVariantVisuals")
+	if fx and fx:IsA("ModuleScript") then
+		local ok, v = pcall(require, fx)
+		if ok and type(v) == "table" then
+			pcall(v.applyToFish, model, variant)
+		end
+	end
 	model.Parent = visuals
 	fish[marker] = {
 		model = model,

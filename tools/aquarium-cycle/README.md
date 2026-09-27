@@ -86,6 +86,19 @@ visuals (`RodFishingClient`) are unchanged.
 - **Tank visuals:** client-side clones of `FishModels`, scaled and swimming a
   smooth path bounded inside the bound `BaseWater` (derived at runtime).
 
+## v1.1: metadata pass-through
+
+Rod catches can carry a small metadata table, which goes into the tank, onto
+the tank marker, and onto the fish released back into the river:
+`Aquarium.hook(rodKey, name, { Variant = "Gold" })`. Only keys listed in
+`Config.Scene.PassthroughAttributes` (currently `Variant`) survive, and
+values are never rerolled.
+- If `ReplicatedStorage.FishVariantVisuals` exists, the tank client and river
+  releases show the variant effects.
+- Without variants installed, v1.1 behaves exactly like v1.
+- Fresh installs get v1.1. The fish-variants installer upgrades an installed
+  v1 in place, and its uninstaller restores v1.
+
 ## Known limitations (please review)
 
 1. **Upgrades are unavailable.** The place has no currency consumer, so the

@@ -11,7 +11,7 @@
 --   active()                -> bool
 --   reserve(rods, player)   -> rods allowed to cast (a tank spot is reserved for each)
 --   hasFreeSpot(player)     -> bool (tells the player when the tank is full)
---   hook(rodKey, fishName)  -> bool
+--   hook(rodKey, fishName, meta?) -> bool  (meta: e.g. { Variant = "Gold" }, carried unchanged)
 --   land(rodKey)            -> bool
 --   abort(rodKey)           -- frees the rod's spot; safe to call any time
 --   entryPoint()            -> Vector3 above the tank water
@@ -201,7 +201,29 @@ end
 
 ------------------------------------------------------------ fish
 
-local function addMarker(id: number, name: string)
+-- Optional ReplicatedStorage.FishVariantVisuals (installed by the variants
+-- feature); without it, fish are released without extra effects.
+local function variantVisuals()
+	local mod = ReplicatedStorage:FindFirstChild("FishVariantVisuals")
+	if not (mod and mod:IsA("ModuleScript")) then
+		return nil
+	end
+	local ok, v = pcall(require, mod)
+	return if ok and type(v) == "table" then v else nil
+end
+
+local function setMeta(inst: Instance, meta)
+	if type(meta) ~= "table" then
+		return
+	end
+	for _, key in ipairs(scene.PassthroughAttributes or {}) do
+		if meta[key] ~= nil then
+			inst:SetAttribute(key, meta[key])
+		end
+	end
+end
+
+local function addMarker(id: number, name: string, meta)
 	local marker = Instance.new("Configuration")
 	marker.Name = "Fish" .. id
 	marker:SetAttribute("FishId", id)
@@ -209,6 +231,7 @@ local function addMarker(id: number, name: string)
 	marker:SetAttribute("Seed", id)
 	marker:SetAttribute("EnterT", workspace:GetServerTimeNow())
 	marker:SetAttribute("State", "Tank")
+	setMeta(marker, meta)
 	marker.Parent = tankFishFolder
 	markers[id] = marker
 end
@@ -224,7 +247,7 @@ end
 -- Puts a fish back into Workspace.SwimmingFish exactly like FishSpawner does,
 -- so FishSwimClient animates it and the net can catch it. Attributes are set
 -- before parenting because FishSwimClient reads them on ChildAdded.
-local function spawnIntoRiver(name: string?)
+local function spawnIntoRiver(name: string?, meta)
 	local template = name and swimTemplates:FindFirstChild(name)
 	if not template then
 		warn("[AquariumCycle] no SwimTemplate for released fish " .. tostring(name))
@@ -247,6 +270,11 @@ local function spawnIntoRiver(name: string?)
 	model:SetAttribute("LaneX", s.LaneX)
 	model:SetAttribute("Seed", s.Seed)
 	model:SetAttribute("FromAquarium", true)
+	setMeta(model, meta) -- e.g. Variant: kept from the original catch, never rerolled
+	local visuals = variantVisuals()
+	if visuals and model:GetAttribute("Variant") then
+		pcall(visuals.applyToFish, model, model:GetAttribute("Variant"))
+	end
 	local at = Vector3.new(s.LaneX, s.y, s.StartZ)
 	model:PivotTo(CFrame.lookAt(at, at + Vector3.new(0, 0, 1)))
 	model.Parent = river
@@ -260,7 +288,7 @@ end
 local function handOff(list)
 	for _, fish in ipairs(list) do
 		removeMarker(fish.id)
-		spawnIntoRiver(fish.name)
+		spawnIntoRiver(fish.name, fish.meta)
 	end
 end
 
@@ -563,11 +591,11 @@ function M.hasFreeSpot(player: Player?): boolean
 	return false
 end
 
-function M.hook(rodKey: any, fishName: string): boolean
+function M.hook(rodKey: any, fishName: string, meta: any?): boolean
 	if not running then
 		return false
 	end
-	local ok, reason = tank:hook(rodKey, fishName, clock())
+	local ok, reason = tank:hook(rodKey, fishName, clock(), meta)
 	if not ok and reason ~= "notWaiting" then
 		warn("[AquariumCycle] hook refused for rod " .. tostring(rodKey) .. ": " .. tostring(reason))
 	end
@@ -578,12 +606,12 @@ function M.land(rodKey: any): boolean
 	if not running then
 		return false
 	end
-	local ok, reason, id, name = tank:land(rodKey, clock())
+	local ok, reason, id, name, meta = tank:land(rodKey, clock())
 	if not ok or not id then
 		warn("[AquariumCycle] land refused for rod " .. tostring(rodKey) .. ": " .. tostring(reason))
 		return false
 	end
-	addMarker(id, name or "")
+	addMarker(id, name or "", meta)
 	refresh()
 	return true
 end

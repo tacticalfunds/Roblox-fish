@@ -16,7 +16,11 @@ local Adapters = require(script.Parent.Adapters)
 local SharedTank = {}
 SharedTank.__index = SharedTank
 
-export type Handoff = { id: number, name: string? }
+-- meta: optional per-fish attributes carried unchanged through the tank and
+-- back into the river (only names in Config.Scene.PassthroughAttributes, e.g.
+-- a rare-fish "Variant"). Never rerolled or invented here.
+export type Meta = { [string]: string | number | boolean }
+export type Handoff = { id: number, name: string?, meta: Meta? }
 
 export type Info = {
 	count: number,
@@ -37,6 +41,7 @@ function SharedTank.new(config: any)
 		state = state,
 		owner = owner,
 		names = {} :: { [number]: string },
+		meta = {} :: { [number]: Meta? },
 		rodKeys = {} :: { any },
 		stopped = false,
 	}, SharedTank)
@@ -97,7 +102,31 @@ function SharedTank.reserve(self: SharedTank, keys: { any }, now: number): ({ an
 end
 
 -- Hooks a newly picked fish on a rod that holds a reservation.
-function SharedTank.hook(self: SharedTank, key: any, fishName: any, now: number): (boolean, string?, number?)
+-- Keeps only whitelisted keys with primitive values.
+local function cleanMeta(config: any, meta: any): Meta?
+	if type(meta) ~= "table" then
+		return nil
+	end
+	local out: Meta = {}
+	local any = false
+	for _, key in ipairs(config.Scene.PassthroughAttributes or {}) do
+		local v = meta[key]
+		local t = type(v)
+		if (t == "string" and #v <= 32) or (t == "number" and v == v) or t == "boolean" then
+			out[key] = v
+			any = true
+		end
+	end
+	return if any then out else nil
+end
+
+function SharedTank.hook(
+	self: SharedTank,
+	key: any,
+	fishName: any,
+	now: number,
+	meta: any?
+): (boolean, string?, number?)
 	if self.stopped then
 		return false, "stopped", nil
 	end
@@ -111,19 +140,20 @@ function SharedTank.hook(self: SharedTank, key: any, fishName: any, now: number)
 		return false, err, nil
 	end
 	self.names[id] = fishName
+	self.meta[id] = cleanMeta(self.config, meta)
 	return true, nil, id
 end
 
 -- Moves the rod's hooked fish into the tank. Returns (ok, reason, id, name).
-function SharedTank.land(self: SharedTank, key: any, now: number): (boolean, string?, number?, string?)
+function SharedTank.land(self: SharedTank, key: any, now: number): (boolean, string?, number?, string?, Meta?)
 	if self.stopped then
-		return false, "stopped", nil, nil
+		return false, "stopped", nil, nil, nil
 	end
 	local ok, err, id = self.state:landCatch(self.owner, key, now)
 	if not ok or not id then
-		return false, err, nil, nil
+		return false, err, nil, nil, nil
 	end
-	return true, nil, id, self.names[id]
+	return true, nil, id, self.names[id], self.meta[id]
 end
 
 -- Releases a rod's reservation and any fish on its line. That fish was made
@@ -137,6 +167,7 @@ function SharedTank.abort(self: SharedTank, key: any): boolean
 	if id then
 		self.state:forgetRiverFish(id)
 		self.names[id] = nil
+		self.meta[id] = nil
 	end
 	return wasBusy
 end
@@ -149,7 +180,7 @@ function SharedTank.release(self: SharedTank, now: number): (boolean, string?, {
 	local ok, err, ids = self.state:release(self.owner, now)
 	local out: { Handoff } = {}
 	for _, id in ipairs(ids) do
-		table.insert(out, { id = id, name = self.names[id] })
+		table.insert(out, { id = id, name = self.names[id], meta = self.meta[id] })
 	end
 	return ok, err, out
 end
@@ -164,10 +195,11 @@ function SharedTank.step(self: SharedTank, now: number): { Handoff }
 	for _, event in ipairs(self.state:step(now)) do
 		if event.kind == "ReturnedToRiver" and event.fishId then
 			local id = event.fishId
-			local name = self.names[id]
+			local name, meta = self.names[id], self.meta[id]
 			self.state:forgetRiverFish(id)
 			self.names[id] = nil
-			table.insert(out, { id = id, name = name })
+			self.meta[id] = nil
+			table.insert(out, { id = id, name = name, meta = meta })
 		end
 	end
 	return out
@@ -193,9 +225,10 @@ function SharedTank.shutdown(self: SharedTank): { Handoff }
 		self:abort(key)
 	end
 	for _, id in ipairs(self.state:removeOwner(self.owner)) do
-		table.insert(out, { id = id, name = self.names[id] })
+		table.insert(out, { id = id, name = self.names[id], meta = self.meta[id] })
 		self.state:forgetRiverFish(id)
 		self.names[id] = nil
+		self.meta[id] = nil
 	end
 	self.stopped = true
 	return out
@@ -214,6 +247,11 @@ function SharedTank.check(self: SharedTank): (boolean, string?)
 		end
 		if self.names[id] == nil then
 			return false, "tracked fish without name " .. id
+		end
+	end
+	for id in pairs(self.meta) do
+		if self.names[id] == nil then
+			return false, "meta without fish " .. id
 		end
 	end
 	for id in pairs(self.names) do
