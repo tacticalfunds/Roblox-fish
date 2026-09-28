@@ -91,7 +91,7 @@ local Enum = { FinishRecordingOperation = { Commit = "Commit", Cancel = "Cancel"
 local function makeGame()
 	local game = new("DataModel", "game")
 	local services = {}
-	for _, n in ipairs({ "ReplicatedStorage", "ServerScriptService", "ServerStorage", "StarterPlayer", "Workspace" }) do
+	for _, n in ipairs({ "ReplicatedStorage", "ServerScriptService", "ServerStorage", "StarterPlayer", "Workspace", "StarterGui", "ReplicatedFirst" }) do
 		local s = new(n, n) s.Parent = game services[n] = s
 	end
 	new("StarterPlayerScripts", "StarterPlayerScripts").Parent = services.StarterPlayer
@@ -571,6 +571,34 @@ do
 		and sv.ServerScriptService.AquariumEconomy.Source == AQV1.AquariumEconomy)
 end
 
+------------------------------------------------------------ visual features (rebased on live)
+
+-- fish jumps: the live FishSwimClient (with its harpoon branch) -> patched; uninstall restores it
+local function jumpInstall(g, s) warnings = {} runJumpInstall(g, s.Workspace) end
+local function jumpUninstall(g, s) warnings = {} runJumpUninstall(g, s.Workspace) end
+do
+	local g, sv = makeGame()
+	local client = new("LocalScript", "FishSwimClient") client.Source = VIS.LiveFishSwimClient
+	client.Parent = sv.StarterPlayer.StarterPlayerScripts
+	local base = snapshot(g)
+	sv.RunService.running = true
+	jumpInstall(g, sv)
+	check("jump install in Play: refused", refused() and snapshot(g) == base)
+	sv.RunService.running = false
+	jumpInstall(g, sv)
+	check("jump install on the live client", not refused() and client.Source == VIS.JumpPatched
+		and sv.ReplicatedStorage:FindFirstChild("FishJump") ~= nil and sv.ServerStorage:FindFirstChild("FishJumpBackup") ~= nil)
+	check("jump patch keeps the live harpoon branch", client.Source:find("HARPOONED", 1, true) ~= nil)
+	jumpUninstall(g, sv)
+	check("jump uninstall restores the live client exactly", not refused() and snapshot(g) == base)
+	local g2, sv2 = makeGame()
+	local old = new("LocalScript", "FishSwimClient") old.Source = VIS.LiveFishSwimClient .. "\n-- edited"
+	old.Parent = sv2.StarterPlayer.StarterPlayerScripts
+	local b2 = snapshot(g2)
+	jumpInstall(g2, sv2)
+	check("jump install over a different client: refused", refused() and snapshot(g2) == b2)
+end
+
 -- refusals change nothing
 do
 	local g, sv, _, sc = astraPlace()
@@ -667,6 +695,11 @@ def main() -> int:
         tables += f"\t{n} = {lua_string(git_show(f'server/{n}.luau', AQUARIUM_V1, aq))},\n"
     tables += f"\tAquariumTankClient = {lua_string(git_show('client/AquariumTankClient.client.luau', AQUARIUM_V1, aq))},\n}}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
+    vis = {
+        "LiveFishSwimClient": (live / "FishSwimClient.lua").read_text(),
+        "JumpPatched": (ROOT.parent / "fish-jump" / "studio" / "FishSwimClient.patched.lua").read_text(),
+    }
+    tables += "local VIS = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in vis.items()) + "}\n"
     aqroot = ROOT.parent / "aquarium-cycle" / "src"
     tables += "local AQV12 = {\n"
     for n in ("Config", "SharedTank"):
@@ -687,6 +720,8 @@ def main() -> int:
         + wrap("runInstallSales", (ROOT / "InstallSales.lua").read_text())
         + wrap("runRollbackSales", (ROOT / "RollbackSales.lua").read_text())
         + wrap("runInstallUpg", (ROOT / "InstallUpgrades.lua").read_text())
+        + wrap("runJumpInstall", (ROOT.parent / "fish-jump" / "InstallFishJump.lua").read_text())
+        + wrap("runJumpUninstall", (ROOT.parent / "fish-jump" / "UninstallFishJump.lua").read_text())
         + wrap("runRollbackUpg", (ROOT / "RollbackUpgrades.lua").read_text())
         + TESTS
     )

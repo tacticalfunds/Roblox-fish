@@ -209,6 +209,22 @@ end
 function CFrame.Lerp(a, b, u)
 	return cf(a.p + (b.p - a.p) * u, if u < 0.5 then a.r else b.r)
 end
+function CFrame.ToObjectSpace(a, b)
+	return CFrame.Inverse(a) * b
+end
+function CFrame.ToWorldSpace(a, b)
+	return a * b
+end
+function CFrame.fromAxisAngle(axis, angle)
+	local u = axis.Unit
+	local c, s, t = math.cos(angle), math.sin(angle), 1 - math.cos(angle)
+	local x, y, z = u.X, u.Y, u.Z
+	return cf(v3(0, 0, 0), {
+		{ t * x * x + c, t * x * y - s * z, t * x * z + s * y },
+		{ t * x * y + s * z, t * y * y + c, t * y * z - s * x },
+		{ t * x * z - s * y, t * y * z + s * x, t * z * z + c },
+	})
+end
 function CFrame.PointToWorldSpace(c, v)
 	return c * v
 end
@@ -389,6 +405,7 @@ local EVENTS = {
 	OnServerEvent = true,
 	Touched = true,
 	Died = true,
+	AttributeChanged = true,
 }
 local ISA = {
 	Part = { BasePart = true, PVInstance = true },
@@ -597,6 +614,10 @@ function Inst:SetAttribute(k, v)
 	local s = self._attrSignals[k]
 	if s then
 		s:Fire()
+	end
+	local any = rawget(self, "_signals").AttributeChanged
+	if any then
+		any:Fire(k)
 	end
 end
 function Inst:GetAttributeChangedSignal(k)
@@ -838,6 +859,11 @@ workspaceInst._props.CurrentCamera = { ViewportSize = Vector2.new(1280, 720) }
 function workspaceInst:GetServerTimeNow()
 	return now
 end
+function workspaceInst:BulkMoveTo(parts, cframes)
+	for i, p in ipairs(parts) do
+		p._props.CFrame = cframes[i]
+	end
+end
 local Players = services.Players
 function Players:GetPlayers()
 	local out = {}
@@ -1064,12 +1090,14 @@ local function join(userId, name, pos)
 	p.CharacterAdded:Fire(char)
 	notices[p] = {}
 	promptState[p] = { shown = {}, inputType = Enum.ProximityPromptInputType.Keyboard }
-	runAs(p, function()
-		root.Notice.OnClientEvent:Connect(function(text)
-			table.insert(notices[p], text)
+	if root then -- economy installed: the player's EconomyClient + a notice spy
+		runAs(p, function()
+			root.Notice.OnClientEvent:Connect(function(text)
+				table.insert(notices[p], text)
+			end)
+			runScript(script("LocalScript", "EconomyClient", SOURCES.EconomyClient), p)
 		end)
-		runScript(script("LocalScript", "EconomyClient", SOURCES.EconomyClient), p)
-	end)
+	end
 	current = nil
 	return p
 end

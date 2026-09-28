@@ -6,6 +6,31 @@ takeoff and landing. This patches the live `FishSwimClient` minimally and adds
 one pure module. It is independent of the aquarium install, so either can go
 in first.
 
+## Rebased on the live client (2026-09-28)
+
+- **Base:** `studio/FishSwimClient.original.lua` is now the **live**
+  `FishSwimClient` that Astra supplied, including its harpoon branch. The
+  patch was re-applied with a clean three-way merge.
+- **Harpoon order:** the harpoon branch still runs first. A harpooned fish
+  never jumps.
+- **Harpooned mid-jump:** the pull starts from the harpoon's hit point, which
+  is at water level, because the server doesn't know about the client-only
+  jump. That fish drops to the water as the rope pulls. It's rare and
+  cosmetic.
+- **Independent install:** this feature doesn't depend on the economy or the
+  aquarium, and none of their installers change `FishSwimClient`.
+- **Edit mode:** the installer and uninstaller now refuse to run in Play.
+
+**Studio checklist:**
+
+| # | Do | Expect |
+|---|---|---|
+| J1 | Play and watch the river for a minute | Fish jump now and then, not in sync, with a splash on takeoff and landing |
+| J2 | Net a fish while it's in the air | It launches from the air into the grinder (no snap down) |
+| J3 | Let the harpoon fire | Harpooned fish are pulled in exactly as before |
+| J4 | Set `Workspace.SwimmingFish.JumpEnabled = false` during Play | Jumps stop within a few seconds |
+| J5 | Uninstall | The client source is back to the live version |
+
 ## Install and uninstall (Studio, Edit mode, Command Bar)
 
 - Install: `tools/fish-jump/InstallFishJump.lua` (generated). One undo step.

@@ -50,6 +50,10 @@ local function addFish(m)
 	end
 	m:GetAttributeChangedSignal("SpawnT"):Connect(function() f.spawnT = m:GetAttribute("SpawnT") end)
 	m:GetAttributeChangedSignal("CaughtT"):Connect(function() f.caughtT = m:GetAttribute("CaughtT") end)
+	m:GetAttributeChangedSignal("HarpoonT"):Connect(function()
+		f.hHit, f.hBack = m:GetAttribute("HarpoonHit"), m:GetAttribute("HarpoonBack")
+		f.harpoonT = m:GetAttribute("HarpoonT")
+	end)
 	fishes[m] = f
 end
 
@@ -67,6 +71,41 @@ RunService.RenderStepped:Connect(function()
 	for m, f in pairs(fishes) do
 		if not m.Parent then fishes[m] = nil continue end
 		local L, B, k, w = f.L, f.B, f.k, f.omega
+
+		if f.harpoonT and f.hHit and f.hBack and grinder then
+			-- HARPOONED: dragged back along the rope, tossed into the grinder, sucked in
+			local PULL, TOSS, SUCK = 0.6, 0.8, 0.45
+			local lt = t - f.harpoonT
+			local pos, rot, s = nil, nil, 1
+			local away = Vector3.new(f.hHit.X - f.hBack.X, 0, f.hHit.Z - f.hBack.Z).Unit
+			if lt < PULL then
+				local u = math.clamp(lt / PULL, 0, 1)
+				u = u * u * (3 - 2 * u)
+				pos = f.hHit:Lerp(f.hBack, u) + Vector3.new(0, math.sin(u * math.pi) * 2, 0)
+				rot = CFrame.lookAt(Vector3.zero, away) * CFrame.Angles(0, math.sin(t * 30) * 0.5, math.sin(t * 22) * 0.3)
+			elseif lt < PULL + TOSS then
+				local u = (lt - PULL) / TOSS
+				pos = f.hBack:Lerp(grinder, u) + Vector3.new(0, 12 * 4 * u * (1 - u), 0)
+				rot = CFrame.fromAxisAngle(f.spinAxis, u * 12)
+			else
+				local u = math.clamp((lt - PULL - TOSS) / SUCK, 0, 1)
+				local e = u * u
+				local a = u * math.pi * 5
+				pos = grinder + Vector3.new(math.cos(a) * 1.2 * (1 - u), -3.2 * e, math.sin(a) * 1.2 * (1 - u))
+				rot = CFrame.Angles(0, u * math.pi * 6, 0) * CFrame.Angles(math.rad(-80), 0, 0)
+				s = 1 - 0.92 * e
+			end
+			local base = rot + pos
+			for i, p in ipairs(f.parts) do
+				local rel = f.rels[i]
+				if s < 1 then
+					p.Size = f.sizes[i] * s
+					rel = CFrame.new(rel.Position * s) * rel.Rotation
+				end
+				push(p, base * rel)
+			end
+			continue
+		end
 
 		if f.caughtT and grinder then
 			-- LAUNCHED: pop up with the net, arc into the grinder, tumble, drop in

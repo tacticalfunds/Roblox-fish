@@ -40,6 +40,11 @@ def sources() -> dict:
     for module in sorted((ROOT.parent / "aquarium-cycle" / "src" / "shared").glob("*.luau")):
         out["Aq_" + module.stem] = module.read_text()
     out["AquariumEconomy"] = (ROOT / "src" / "server" / "AquariumEconomy.luau").read_text()
+    # visual features (rebased on the live scripts)
+    jump = ROOT.parent / "fish-jump"
+    out["Jump_Module"] = (jump / "src" / "FishJump.luau").read_text()
+    out["Jump_Client"] = (jump / "studio" / "FishSwimClient.patched.lua").read_text()
+    out["Live_FishSwimClient"] = (ROOT / "studio" / "live" / "FishSwimClient.lua").read_text()
     return out
 
 

@@ -50,6 +50,9 @@ local function normalize(s)
 	return s
 end
 
+if game:GetService("RunService"):IsRunning() then
+	return fail("stop Play first (run this in Edit mode)")
+end
 if ReplicatedStorage:FindFirstChild("FishJump") or ServerStorage:FindFirstChild("FishJumpBackup") then
 	return fail("already installed (run UninstallFishJump.lua first)")
 end

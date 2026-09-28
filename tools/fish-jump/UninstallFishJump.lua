@@ -27,6 +27,9 @@ local function normalize(s)
 	return s
 end
 
+if game:GetService("RunService"):IsRunning() then
+	return fail("stop Play first (run this in Edit mode)")
+end
 local backup = ServerStorage:FindFirstChild("FishJumpBackup")
 if not backup or backup:GetAttribute(TAG) ~= true then
 	return fail("ServerStorage.FishJumpBackup not found (not installed?)")
