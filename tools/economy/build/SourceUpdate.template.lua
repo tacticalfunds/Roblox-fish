@@ -45,6 +45,17 @@ local function normalize(s)
 	return s
 end
 
+-- " (first difference at line N: ...)" to help find what changed
+local function firstDiff(actual, expected)
+	local a, e = string.split(normalize(actual), "\n"), string.split(normalize(expected), "\n")
+	for i = 1, math.max(#a, #e) do
+		if a[i] ~= e[i] then
+			return string.format(" (first difference at line %d: Studio has %q, expected %q)", i, (a[i] or "<end>"):sub(1, 80), (e[i] or "<end>"):sub(1, 80))
+		end
+	end
+	return ""
+end
+
 ------------------------------------------------------------ checks (read-only)
 
 if RunService:IsRunning() then
@@ -119,7 +130,7 @@ for _, entry in ipairs(UNCHANGED) do
 		return fail(why)
 	end
 	if normalize(target.Source) ~= normalize(entry.source) then
-		return fail(target:GetFullName() .. " is not the expected version (" .. entry.key .. "); send the current source")
+		return fail(target:GetFullName() .. " is not the expected version (" .. entry.key .. ")" .. firstDiff(target.Source, entry.source) .. "; send the current source")
 	end
 end
 local changes = {}
@@ -129,7 +140,7 @@ for _, entry in ipairs(CHANGES) do
 		return fail(why)
 	end
 	if normalize(target.Source) ~= normalize(entry.old) then
-		return fail(target:GetFullName() .. " is not the expected version (" .. entry.key .. "); send the current source")
+		return fail(target:GetFullName() .. " is not the expected version (" .. entry.key .. ")" .. firstDiff(target.Source, entry.old) .. "; send the current source")
 	end
 	table.insert(changes, { target = target, key = entry.key, new = entry.new })
 end

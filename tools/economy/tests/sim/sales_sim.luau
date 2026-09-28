@@ -76,13 +76,15 @@ local STACK_SPOT = Vector3.new(-78.4, 10.05, 160) -- TruckSystem's STACK_CENTER
 local BUCKET = Vector3.new(0, 2, 40) -- truckCF(LOAD_S) * BucketOffset
 local AWAY = Vector3.new(200, 0, 200)
 
+-- the carrier is already in the server when TruckSystem starts (loading
+-- EconomyService can yield): it must still be bound for respawn cleanup
+local C = join(3, "Carrier", AWAY) -- carries meat to the trucks; bound to the harpoon
 runScript(script("Script", "GrinderProcessor", SOURCES.Sales_GrinderProcessor, services.ServerScriptService))
 runScript(script("Script", "TruckSystem", SOURCES.Sales_TruckSystem, services.ServerScriptService))
 advance(0.2)
 
 local A = join(1, "Netter", AWAY) -- steps on the net pad
 local B = join(2, "Buyer", AWAY) -- bought a rod fish
-local C = join(3, "Carrier", AWAY) -- carries meat to the trucks; bound to the harpoon
 advance(1)
 check("players loaded", balance(A) == 100 and balance(B) == 100 and balance(C) == 100)
 
@@ -191,7 +193,11 @@ end, 10)
 check("carrier holds 3", carried(C) == 3 and #stackPieces() == 0)
 respawn(C, AWAY)
 advance(0.2)
-check("respawn: carried pieces are held, not lost", Economy.heldCount() == 3)
+check(
+	"respawn (player present before TruckSystem started): carried pieces are held, not lost",
+	Economy.heldCount() == 3
+)
+check("respawn: carry count reset", carried(C) == 0)
 check(
 	"respawn: held pieces come back out of the pipe onto the stack",
 	waitFor(function()

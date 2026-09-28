@@ -64,6 +64,10 @@ def check_sales(outputs: dict) -> None:
     assert c.index('Economy.settle(meat:GetAttribute("PieceId"), "Customer")') < c.index("giveMeat(c, meat)\n\t\t\tbought:Fire")
     t = outputs["TruckSystem"]
     assert t.count("Economy.settle(") == 1 and t.count("dropCarried(") == 3
+    assert "for _, p in ipairs(Players:GetPlayers()) do bindPlayer(p) end" in t, "players already present are bound"
+    cs = outputs["CustomerSystem"]
+    assert 'workspace:GetAttribute("CustomersLineCap")' in cs and 'workspace:GetAttribute("CustomersPerMin")' in cs, \
+        "CarSalesServer customer-upgrade hooks kept"
     n = outputs["NetLiftScript"]
     assert 'OwnerId = m:GetAttribute("OwnerId")' in n and 'Source = "Net"' in n
     h = outputs["HarpoonSystem"]

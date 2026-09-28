@@ -629,6 +629,17 @@ do
 	check("sales with two TruckSystem scripts: refused", refused() and snapshot(g) == before)
 end
 do
+	-- the CustomerSystem without CarSalesServer's line-cap / per-minute hooks
+	-- (what refused Astra's first InstallSales run): refused, and says where
+	local g, sv, _, sc = astraPlace()
+	upgradeAq(g, sv)
+	sc.CustomerSystem.Source = OLDCUSTOMER
+	local before = snapshot(g)
+	installSales(g, sv)
+	check("sales over the pre-hook CustomerSystem: refused", refused() and snapshot(g) == before)
+	check("refusal names the first differing line", (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
+do
 	local g, sv = astraPlace()
 	upgradeAq(g, sv)
 	sv.ServerScriptService.EconomyService.Ledger:SetAttribute("EconomyOwned", nil)
@@ -695,6 +706,7 @@ def main() -> int:
         tables += f"\t{n} = {lua_string(git_show(f'server/{n}.luau', AQUARIUM_V1, aq))},\n"
     tables += f"\tAquariumTankClient = {lua_string(git_show('client/AquariumTankClient.client.luau', AQUARIUM_V1, aq))},\n}}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
+    tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
     vis = {
         "LiveFishSwimClient": (live / "FishSwimClient.lua").read_text(),
         "JumpPatched": (ROOT.parent / "fish-jump" / "studio" / "FishSwimClient.patched.lua").read_text(),

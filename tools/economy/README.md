@@ -13,6 +13,14 @@ reviews and installs. Nothing here touches Studio on its own.
 | **Paid aquarium upgrades** (this commit) | done | **yes**: `InstallUpgrades.lua` (after sales) |
 | Rebased visual features (jumps, variants, immediate cast, grinder dwell) | later | - |
 
+**Studio now (Astra, 2026-09-28):** fresh `a826d73` rod install + aquarium
+v1.2 (`UpgradeAquariumV12` installed: `EconomyRodOffersBackup` +
+`EconomyAquariumBackup`). Sales and upgrades are not installed yet.
+`InstallSales` refused the first time because the live CustomerSystem has
+CarSalesServer's customer-upgrade hooks (3 more line slots,
+`CustomersLineCap`, `CustomersPerMin`). `studio/live/CustomerSystem.lua` now
+includes them and the sales patch keeps them.
+
 **Install order:** `InstallRodOffers` (a826d73) → `UpgradeAquariumV12` →
 `InstallSales` → `InstallUpgrades`. **Roll back in reverse:**
 `RollbackUpgrades` → `RollbackSales` → `RollbackAquariumV12` →
@@ -184,7 +192,11 @@ What each patched script does:
   table.
 - **CustomerSystem:** settles the piece before it's destroyed.
 - **TruckSystem:** settles when a piece is dropped in a truck. The truck UI
-  is unchanged.
+  is unchanged. Every player is bound to respawn cleanup exactly once,
+  including players already in the server when the script starts, because
+  loading EconomyService can yield.
+- **CustomerSystem:** Astra's live version, with CarSalesServer's line-cap
+  and customers-per-minute hooks kept as they are.
 - **NetLiftScript and HarpoonSystem:** send the owner payload.
 - **RodFishingSystem:** a hooked fish in offer mode carries its caster as
   `OwnerId`. Only the caster can buy it, and an unbought fish's data is
@@ -211,7 +223,7 @@ Until `InstallSales` passes a buyer, it behaves exactly like v1.
 Each installer:
 
 - **Checks first:** it changes nothing if any script differs from the
-  expected version, if a script name isn't unique, if an economy object
+  expected version (the refusal names the first differing line), if a script name isn't unique, if an economy object
   isn't tagged as ours, or in Play mode.
 - **Records one undo step.**
 - **Backs up what it changes:** `InstallSales` backs up 10 scripts to
@@ -262,6 +274,12 @@ prices:
   that they're alive and within range before charging.
 - **Shared tank:** the level applies to the one shared tank **for this
   server session**. It isn't saved, and it's never per player.
+- **⚠ Known limitation:** upgrades reset whenever a server starts, but the
+  Money spent on them is saved. A player who buys Tank 6 and rejoins a new
+  server has paid 50 and sees Tank 3 again. That's acceptable only while
+  there's one long-lived server, or for testing. Before launch, decide
+  between saving tank levels (per server owner, or globally) and pricing
+  them as a per-session boost, and say so in the prompt.
 - **One step:** the charge and the level-up happen in one step with no
   yields in between.
 - **Nothing charged:** when the player can't afford it, at max level, or
@@ -368,8 +386,8 @@ changes; the rest re-check behaviour that already worked.
 
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80 + sales 37 + upgrades 18 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 106 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80 + sales 38 + upgrades 18 + jump 10 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 113 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

@@ -53,6 +53,9 @@ local SLOTS = { -- slot 1 is at the sale table, the rest line up behind
 	Vector3.new(-94.6, Y, 162.4),
 	Vector3.new(-98.5, Y, 163.1),
 	Vector3.new(-102.5, Y, 163.1),
+	Vector3.new(-106.5, Y, 163.1),
+	Vector3.new(-110.5, Y, 163.1),
+	Vector3.new(-114.5, Y, 163.1),
 }
 local TABLE_LOOK = Vector3.new(-80, Y, 152.5)
 
@@ -255,8 +258,15 @@ end
 
 task.wait(4)
 while true do
-	if #Players:GetPlayers() > 0 and #line < MAX_IN_LINE then
+	local cap = workspace:GetAttribute("CustomersLineCap") or MAX_IN_LINE
+	if #Players:GetPlayers() > 0 and #line < cap then
 		spawnCustomer()
 	end
-	task.wait(math.random(SPAWN_DELAY[1] * 10, SPAWN_DELAY[2] * 10) / 10)
+	local perMin = workspace:GetAttribute("CustomersPerMin")
+	if perMin then
+		local gap = 60 / perMin
+		task.wait(gap * (0.75 + math.random() * 0.5))
+	else
+		task.wait(math.random(SPAWN_DELAY[1] * 10, SPAWN_DELAY[2] * 10) / 10)
+	end
 end

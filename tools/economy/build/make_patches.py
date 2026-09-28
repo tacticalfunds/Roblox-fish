@@ -331,12 +331,28 @@ end
         "Players.PlayerRemoving:Connect(function(p) dropCarried(carry[p]) carry[p] = nil end)\n",
     )
     p.rep(
-        """	p.CharacterAdded:Connect(function()
+        """Players.PlayerAdded:Connect(function(p)
+	p.CharacterAdded:Connect(function()
 		carry[p] = { count = 0, parts = {} }
+		p:SetAttribute("CarryMeat", 0)
+	end)
+end)
 """,
-        """	p.CharacterAdded:Connect(function()
-		dropCarried(carry[p]) -- Economy
+        """-- Economy: loading EconomyService (top of this script) can yield, so players
+-- may already be in the server here; bind every player exactly once.
+local bound = {}
+local function bindPlayer(p)
+	if bound[p] then return end
+	bound[p] = true
+	p.CharacterAdded:Connect(function()
+		dropCarried(carry[p]) -- Economy: a respawned carrier's pieces are held, not lost
 		carry[p] = { count = 0, parts = {}, ids = {} }
+		p:SetAttribute("CarryMeat", 0)
+	end)
+end
+Players.PlayerAdded:Connect(bindPlayer)
+for _, p in ipairs(Players:GetPlayers()) do bindPlayer(p) end
+Players.PlayerRemoving:Connect(function(p) bound[p] = nil end)
 """,
     )
     return p.src

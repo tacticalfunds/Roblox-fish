@@ -244,7 +244,28 @@ local function dummy(kind)
 		end,
 	})
 end
-local Color3, UDim2, UDim = dummy("Color3"), dummy("UDim2"), dummy("UDim")
+local UDim2, UDim = dummy("UDim2"), dummy("UDim")
+local C3 = {}
+C3.__index = C3
+function C3:Lerp(other, u)
+	return setmetatable(
+		{ R = self.R + (other.R - self.R) * u, G = self.G + (other.G - self.G) * u, B = self.B + (other.B - self.B) * u },
+		C3
+	)
+end
+local Color3 = {
+	new = function(r, g, b)
+		return setmetatable({ R = r or 0, G = g or 0, B = b or 0 }, C3)
+	end,
+	fromRGB = function(r, g, b)
+		return setmetatable({ R = (r or 0) / 255, G = (g or 0) / 255, B = (b or 0) / 255 }, C3)
+	end,
+}
+local RaycastParams = {
+	new = function()
+		return {}
+	end,
+}
 local ColorSequence, NumberSequence, NumberRange = dummy("ColorSequence"), dummy("NumberSequence"), dummy("NumberRange")
 local Vector2 = {
 	new = function(x, y)
@@ -431,7 +452,12 @@ local DEFAULTS = {
 		ActionText = "",
 	},
 	Humanoid = { Health = 100, MaxHealth = 100 },
-	Part = { Size = v3(1, 1, 1), Anchored = false, Transparency = 0 },
+	Part = {
+		Size = v3(1, 1, 1),
+		Anchored = false,
+		Transparency = 0,
+		Color = setmetatable({ R = 0.6, G = 0.6, B = 0.6 }, C3),
+	},
 }
 local Inst = {}
 local function isInst(x)
@@ -731,6 +757,14 @@ function Inst:FireAllClients(...)
 		s:Fire(...)
 	end
 end
+function Inst:FireServer(...)
+	local caller = current
+	assert(isInst(caller) and caller.ClassName == "Player", "FireServer from a non-client thread")
+	local prev = current
+	current = "server"
+	self.OnServerEvent:Fire(caller, ...)
+	current = prev
+end
 function Inst:InvokeServer(...)
 	local caller = current
 	assert(isInst(caller) and caller.ClassName == "Player", "InvokeServer from a non-client thread")
@@ -920,7 +954,17 @@ services.RunService = {
 		return current == "server"
 	end,
 }
+services.GuiService = {
+	GetGuiInset = function()
+		return Vector2.new(0, 0)
+	end,
+}
 services.UserInputService = {
+	InputBegan = Signal.new(),
+	InputEnded = Signal.new(),
+	GetMouseLocation = function()
+		return Vector2.new(0, 0)
+	end,
 	GetStringForKeyCode = function(_, key)
 		return if key == Enum.KeyCode.E then "E" else ""
 	end,
@@ -998,6 +1042,7 @@ function envFor(scriptInst)
 		NumberSequence = NumberSequence,
 		NumberRange = NumberRange,
 		Random = Random,
+		RaycastParams = RaycastParams,
 		Enum = Enum,
 		require = requireModule,
 		warn = function(...)

@@ -72,7 +72,8 @@ def fill(template: str, values: dict) -> str:
     return template
 
 
-def write_pair(file: str, rollback: str, about: str, backup: str, requires, forbids, later, targets) -> list[str]:
+def write_pair(file: str, rollback: str, about: str, backup: str, requires, forbids, later, targets, out_dir: pathlib.Path | None = None) -> list[str]:
+    out_dir = out_dir or ROOT
     changes, unchanged, changed_keys = [], [], []
     for t, old, new in targets:
         text, changed = target(t, old, new)
@@ -95,7 +96,7 @@ def write_pair(file: str, rollback: str, about: str, backup: str, requires, forb
             "--[[@UNCHANGED]]": "{\n" + "\n".join(unchanged) + "\n}",
         },
     )
-    (ROOT / file).write_text(install)
+    (out_dir / file).write_text(install)
     rb = fill(
         (ROOT / "build" / "Rollback.template.lua").read_text(),
         {
@@ -106,8 +107,8 @@ def write_pair(file: str, rollback: str, about: str, backup: str, requires, forb
             "--[[@LATER]]": lua(later),
         },
     )
-    (ROOT / rollback).write_text(rb)
-    print(f"wrote tools/economy/{file} ({len(install)} chars; changes {', '.join(changed_keys)}) + {rollback}")
+    (out_dir / rollback).write_text(rb)
+    print(f"wrote {out_dir.relative_to(REPO)}/{file} ({len(install)} chars; changes {', '.join(changed_keys)}) + {rollback}")
     return changed_keys
 
 

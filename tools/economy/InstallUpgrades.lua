@@ -777,13 +777,21 @@ task.spawn(function()
 end)
 
 Players.PlayerRemoving:Connect(function(p) dropCarried(carry[p]) carry[p] = nil end)
-Players.PlayerAdded:Connect(function(p)
+-- Economy: loading EconomyService (top of this script) can yield, so players
+-- may already be in the server here; bind every player exactly once.
+local bound = {}
+local function bindPlayer(p)
+	if bound[p] then return end
+	bound[p] = true
 	p.CharacterAdded:Connect(function()
-		dropCarried(carry[p]) -- Economy
+		dropCarried(carry[p]) -- Economy: a respawned carrier's pieces are held, not lost
 		carry[p] = { count = 0, parts = {}, ids = {} }
 		p:SetAttribute("CarryMeat", 0)
 	end)
-end)
+end
+Players.PlayerAdded:Connect(bindPlayer)
+for _, p in ipairs(Players:GetPlayers()) do bindPlayer(p) end
+Players.PlayerRemoving:Connect(function(p) bound[p] = nil end)
 ]] },
 	{ key = "EconomyService", where = "ServerScriptService/EconomyService", class = "ModuleScript", tag = "EconomyOwned", source = [[
 -- EconomyService (ModuleScript in ServerScriptService; its children are the
@@ -2298,6 +2306,17 @@ local function normalize(s)
 	return s
 end
 
+-- " (first difference at line N: ...)" to help find what changed
+local function firstDiff(actual, expected)
+	local a, e = string.split(normalize(actual), "\n"), string.split(normalize(expected), "\n")
+	for i = 1, math.max(#a, #e) do
+		if a[i] ~= e[i] then
+			return string.format(" (first difference at line %d: Studio has %q, expected %q)", i, (a[i] or "<end>"):sub(1, 80), (e[i] or "<end>"):sub(1, 80))
+		end
+	end
+	return ""
+end
+
 ------------------------------------------------------------ checks (read-only)
 
 if RunService:IsRunning() then
@@ -2372,7 +2391,7 @@ for _, entry in ipairs(UNCHANGED) do
 		return fail(why)
 	end
 	if normalize(target.Source) ~= normalize(entry.source) then
-		return fail(target:GetFullName() .. " is not the expected version (" .. entry.key .. "); send the current source")
+		return fail(target:GetFullName() .. " is not the expected version (" .. entry.key .. ")" .. firstDiff(target.Source, entry.source) .. "; send the current source")
 	end
 end
 local changes = {}
@@ -2382,7 +2401,7 @@ for _, entry in ipairs(CHANGES) do
 		return fail(why)
 	end
 	if normalize(target.Source) ~= normalize(entry.old) then
-		return fail(target:GetFullName() .. " is not the expected version (" .. entry.key .. "); send the current source")
+		return fail(target:GetFullName() .. " is not the expected version (" .. entry.key .. ")" .. firstDiff(target.Source, entry.old) .. "; send the current source")
 	end
 	table.insert(changes, { target = target, key = entry.key, new = entry.new })
 end
