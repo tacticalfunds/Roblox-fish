@@ -83,12 +83,16 @@ Config.OfferPrice = {
 
 Config.Offer = {
 	TimeoutSeconds = 20, -- unanswered offers are passed automatically
-	-- Server-side range check: the buyer's character must be this close to
-	-- the fish on the line (prompt distance + slack for lag).
-	MaxBuyDistance = 30,
-	PromptDistance = 18,
-	ActionCooldown = 0.25, -- per player, between Buy/Pass triggers
+	-- Server-side range check: the buyer's character must be within this many
+	-- studs of the fish on the line. The button accepts presses from 80 studs,
+	-- so this keeps buying to the dock area; tune after measuring in Studio.
+	MaxBuyDistance = 100,
+	ActionCooldown = 0.25, -- per player, between Buy/Pass requests
 }
+-- Attribute on ReplicatedStorage.Economy: set false to switch rod offers off
+-- during play (open offers are cancelled, nothing charged; rods go back to
+-- the original free rod -> aquarium behaviour, exactly as if not installed).
+Config.RodOffersAttribute = "RodOffersEnabled"
 
 ------------------------------------------------------------ meat pipeline
 

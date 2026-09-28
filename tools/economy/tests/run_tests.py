@@ -32,6 +32,11 @@ def main() -> int:
                 print(f"{module.name}: unexpected Instance access left after rewrite", file=sys.stderr)
                 return 1
             (tmp / "src" / module.name).write_text(text)
+        # the aquarium's pure core, for the rod-offer integration tests
+        (tmp / "src" / "aquarium").mkdir()
+        for module in sorted((ROOT.parent / "aquarium-cycle" / "src" / "shared").glob("*.luau")):
+            text = REQUIRE.sub(r'require("./\1")', module.read_text())
+            (tmp / "src" / "aquarium" / module.name).write_text(text)
         tests = sorted((ROOT / "tests").glob("*.test.luau"))
         for test in tests:
             shutil.copy(test, tmp / "tests" / test.name)

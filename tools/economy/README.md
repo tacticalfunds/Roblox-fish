@@ -1,61 +1,152 @@
-# Economy (work in progress)
+# Economy
 
-A single soft currency, `leaderstats.Money`, paid only when a meat piece sells.
-Also rod-fish Buy/Pass offers and aquarium upgrade charging. Nothing here is
-installed in Studio. Astra reviews the code against the live mechanics before
-anything is installed.
+A single soft currency, `leaderstats.Money`, and rod-fish Buy/Pass. Astra
+reviews and installs. Nothing here touches Studio on its own.
 
-Status of this directory:
+| Milestone | State | Installable? |
+|---|---|---|
+| Core (`6081e33`): Config, Pricing, Ledger, MoneyStore, Offers | done | review only |
+| Sale-settlement patches (`dcf9c44`): grinder/bot/customer/truck/net/harpoon | parked WIP | **no** (no installer) |
+| **Rod Buy/Pass** (this commit): Money service + offers + RodShop compatibility | done | **yes**: `InstallRodOffers.lua` |
+| Paid aquarium upgrades | next | - |
+| Sale settlement (finish `dcf9c44`) | later | - |
+| Rebased visual features (jump, dwell, immediate cast, variants) | later | - |
 
-| Part | State |
-|---|---|
-| `src/core`: Config, Pricing, Ledger, MoneyStore, Offers | done, 168 offline checks |
-| EconomyService (Roblox binding), live-script patches, installer/uninstaller | next commit |
-| Rod-fish Buy/Pass + aquarium v1.2 (buyer id through tank/river) | after that |
+`studio/live/` holds the live sources Astra supplied on 2026-09-28. Every
+patch and installer guard is built against these copies.
 
-`studio/live/` holds the latest live sources Astra supplied (2026-09-28). The
-patches and installer guards are built against these copies.
+## Rod Buy/Pass: what it does
 
-## Rules the core enforces
+1. **Press.** The button casts every idle rod that can get an aquarium spot,
+   as before. Each spot is reserved at the press. If the aquarium is
+   closed, nothing is cast and the presser is told why.
+2. **Reveal.** The fish is revealed as before. It then **waits on the
+   line**:
+   - A label above it shows the species and the server's price, e.g.
+     `Salmon - 17 Money`, plus `<caster>'s catch: Buy or Pass`.
+   - The caster gets a panel at the bottom of the screen: `Buy` / `Pass`
+     with a 20 s countdown.
+3. **Buy.** Only the caster can buy. The server runs one step with no yields
+   in between:
+   1. The offer is still open and the requester is the caster.
+   2. The offer hasn't expired.
+   3. The caster is within 100 studs of the fish.
+   4. The aquarium is still running; if not, the offer is cancelled and
+      **nothing is charged**.
+   5. Money is taken; if there isn't enough, the offer **stays open**.
+   6. The fish is landed in the aquarium; if that fails, the price is
+      **refunded in full**.
 
-- **One payment per meat piece.** The grinder issues a ledger record per piece
-  with its owner and value fixed. Settling removes the record, so a second
-  settle of the same `PieceId` (a clone, a second route, a repeated event)
-  pays nothing.
-- **Value is split, not multiplied.** A fish is worth
-  `round(4 × 1.3^(tier−1)) × variant`, where Silver is ×2 and Gold ×5. That
-  value is split across the existing 1/2/3/5 meat pieces, with the remainder
-  on the last piece, so the pieces add up to exactly the fish value.
-- **No full stack destroys unpaid meat.** When the pipeline is full, a piece
-  is *held* as a ledger record with no object and re-emitted later, oldest
-  first. The same happens to meat a truck carrier was holding when they left
-  or respawned.
-- **Money safety:**
-  - The starting grant (100) is given only when the store positively reports
-    no record.
-  - A load error or corrupt record never grants and never writes defaults,
-    and that player is never saved.
-  - Saves use a session lock. A save reports success only if this server's
-    value was actually written.
-  - Credits earned while a player's money is loading are applied once the
-    load succeeds, or dropped if they leave first.
-- **Offers:**
-  - Only the caster can buy or pass.
-  - Buy is one step with no yields: range → tank reservation → debit →
-    delivery, with a refund if the delivery fails.
-  - A full or unavailable tank cancels the offer without charging.
-  - Too little money keeps the offer open.
-  - Repeated clicks never charge or deliver twice.
-  - Pass, timeout, disconnect and switching the feature off all cancel with
-    no charge.
+   The fish then flies into the tank. Repeated clicks never charge or
+   deliver twice.
+4. **Pass, timeout, caster leaving, feature off, rod error.** The fish slips
+   back into the water and is gone. The reserved tank spot is freed and
+   nothing is charged. **An unpaid rod fish never reaches the aquarium or
+   the grinder.**
 
-All prices are tentative targets, not measured income.
+Prices come from `Pricing.offerPrice`:
 
-## Tests
+- Tiers 1–5 cost 1–3 Money; examples: tier 10 costs 17, tier 14 costs 48,
+  tier 19 costs 180.
+- Silver/Gold prices are ×1.25 / ×1.75. Variants aren't rolled for rod fish
+  in this slice.
+
+A new player gets **100 Money once**. Tank 6 (50) still leaves money for
+fish.
+
+**In this slice Money only goes down.** Nothing pays out yet; that is the
+sale-settlement milestone. Balances are saved in DataStore `FishEconomy_v1`,
+so Money spent while testing stays spent.
+
+### Money safety
+
+- Money is shown in leaderstats only after it loads successfully.
+- A load error or a corrupt record never grants Money and never writes, and
+  that player is never saved. They get a notice and background retries.
+- Saves use a session lock and report success only if the write happened.
+- Outside writes to `leaderstats.Money` are reverted.
+
+### Why RodShopServer is patched too
+
+The live shop charges whatever `leaderstats.Money` it finds by writing the
+value directly. Once Money exists, that write would be reverted and the rod
+given anyway, so rods would be free. The patch charges through
+EconomyService instead. The shop stays **closed** ("Rod shop opens soon")
+until owning a rod does something and is saved (`Config.RodShopOpen`).
+Stock and restock are unchanged.
+
+### Switches
+
+- `ReplicatedStorage.Economy.RodOffersEnabled = false` during Play cancels
+  open offers with no charge. Rods then behave exactly as before this
+  install (free rod → aquarium).
+- If EconomyService is missing or fails to start, the patched scripts also
+  behave exactly as before.
+
+## Install / rollback (Astra)
+
+**Dependencies:**
+
+- The aquarium must be installed and enabled.
+- RodFishingSystem and RodShopServer must equal `studio/live/`. If they
+  differ, the installer changes nothing and asks for the current source.
+- Nothing else may create `leaderstats`.
+
+**Install:** Edit mode (not Play) → paste `tools/economy/InstallRodOffers.lua`
+into the Command Bar → Enter.
+
+- It checks everything first and changes nothing if any check fails.
+- It is one undo step.
+- It backs up both scripts to `ServerStorage.EconomyRodOffersBackup`.
+
+**Rollback:** Edit mode → paste `tools/economy/UninstallRodOffers.lua`.
+
+- It restores both scripts' original sources and removes only objects
+  tagged `EconomyOwned`.
+- It refuses if a patched script was edited afterwards (set
+  `FORCE_RESTORE = true` to override).
+- Saved Money is kept.
+
+**Persistence in Studio:** enable *Game Settings → Security → Enable Studio
+Access to API Services*. Without it, a temporary in-memory store is used and
+Output says so.
+
+## Studio acceptance checklist
+
+Run Play with the aquarium enabled. Two players (Test → Clients and Servers)
+are needed for items 4 and 11.
+
+| # | Do | Expect |
+|---|---|---|
+| 1 | Join as a new player | Toast "Welcome! 100 Money to start"; leaderboard Money = 100; Output `[Economy] running (DataStore store)` (or `Memory` with a warning) |
+| 2 | Press the button | Up to 3 rods cast (tank capacity 3); same reel/reveal as before |
+| 3 | Wait for a reveal | Label above the fish `Name - N Money`; your panel shows the row with Buy/Pass and a countdown; the fish stays on the line |
+| 4 | Second player looks | Sees the label, **no** panel row; cannot buy |
+| 5 | Click Buy | Money drops by exactly N; fish flies into the tank; tank count +1; toast "Bought!" |
+| 6 | Spam-click Buy on one fish | Charged once; one fish in the tank |
+| 7 | Click Pass on another | Fish drops into the water and disappears; no charge; tank spot freed (count unchanged, next press can cast) |
+| 8 | Let one time out (20 s) | Same as Pass; toast "... slipped off the hook" |
+| 9 | Fill the tank, press again | No cast; "tank full" notice; no charge |
+| 10 | Spend down to under a price, click Buy | "Not enough Money"; offer stays until it times out |
+| 11 | Caster leaves mid-offer | The other player sees the fish drop; no fish added to the tank |
+| 12 | Set `ReplicatedStorage.Economy.RodOffersEnabled` false mid-offer | Offers vanish, no charge; next press behaves like before the install |
+| 13 | Walk >100 studs away, click Buy | "Get closer to the rods to buy"; offer stays |
+| 14 | Try the rod shop | "Rod shop opens soon"; Money unchanged; no rod added |
+| 15 | Stop, Play again (API access on) | Money is what you left with, no second grant |
+| 16 | Any rod fish going to the grinder in offer mode | Must never happen |
+
+## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau
+python3 tools/economy/tests/run_tests.py path/to/luau          # 222 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 22 checks
 ```
 
-These are pure-logic tests; the DataStore is a fake that fails on purpose.
-They are not Roblox runtime tests.
+- **Core:** pricing, ledger, MoneyStore against a fake DataStore that fails
+  on purpose, and Offers.
+- **Rod-offer integration:** the real aquarium SharedTank, MoneyStore and
+  Offers, wired as the patch wires them.
+- **Installer dry run:** the real installer and uninstaller against a fake
+  DataModel.
+- **Build-time guards:** the offer path never fires the grinder event, and
+  its only aquarium delivery is the paid `deliver` callback.

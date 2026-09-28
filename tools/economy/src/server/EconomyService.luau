@@ -29,6 +29,7 @@ local Ledger = require(script.Ledger)
 local MoneyStore = require(script.MoneyStore)
 local PieceTags = require(script.PieceTags)
 local Sales = require(script.Sales)
+local Offers = require(script.Offers)
 
 local M = {}
 M.Config = Config
@@ -43,6 +44,11 @@ local ledger: Ledger.Ledger
 local root: Folder -- ReplicatedStorage.Economy (installed)
 local notice: RemoteEvent
 local storeKind = "DataStore"
+local offers: Offers.Offers
+local offersFolder: Folder -- ReplicatedStorage.Economy.Offers: one Configuration per open offer
+local offerAction: RemoteFunction
+local offerRecs = {} -- offer id -> { fish, deps, cfg, gui }
+local lastOfferAction: { [Player]: number } = {}
 local lastLockWarn = {}
 
 ------------------------------------------------------------ helpers
@@ -90,22 +96,30 @@ local function memoryStore(): MoneyStore.Store
 end
 
 local function pickStore(): MoneyStore.Store
-	local store = dataStoreStore()
-	if RunService:IsStudio() and Config.StudioMemoryStoreFallback then
-		local ok, err = pcall(function()
+	local ok, result = pcall(dataStoreStore)
+	local err: any = if ok then nil else result
+	if ok and RunService:IsStudio() then
+		-- Studio: is DataStore access actually on for this place?
+		local probed, probeErr = pcall(function()
 			DataStoreService:GetDataStore(Config.DataStoreName):GetAsync("__probe")
 		end)
-		if not ok then
-			storeKind = "Memory"
-			warn(
-				"[Economy] DataStore unavailable in Studio ("
-					.. tostring(err)
-					.. "); using a TEMPORARY in-memory store - Money will not persist"
-			)
-			return memoryStore()
+		if not probed then
+			ok, err = false, probeErr
 		end
 	end
-	return store
+	if ok then
+		return result
+	end
+	if RunService:IsStudio() and Config.StudioMemoryStoreFallback then
+		storeKind = "Memory"
+		warn(
+			"[Economy] DataStore unavailable in Studio ("
+				.. tostring(err)
+				.. "); using a TEMPORARY in-memory store - Money will not persist"
+		)
+		return memoryStore()
+	end
+	error("DataStore unavailable: " .. tostring(err))
 end
 
 ------------------------------------------------------------ leaderstats
@@ -282,6 +296,36 @@ function M._start(): boolean
 		n.Parent = root
 	end
 	notice = n :: RemoteEvent
+	local of = root:FindFirstChild("Offers")
+	if not (of and of:IsA("Folder")) then
+		of = Instance.new("Folder")
+		of.Name = "Offers"
+		of.Parent = root
+	end
+	offersFolder = of :: Folder
+	for _, old in ipairs(offersFolder:GetChildren()) do
+		old:Destroy() -- nothing from a previous run survives
+	end
+	local oa = root:FindFirstChild("OfferAction")
+	if not (oa and oa:IsA("RemoteFunction")) then
+		oa = Instance.new("RemoteFunction")
+		oa.Name = "OfferAction"
+		oa.Parent = root
+	end
+	offerAction = oa :: RemoteFunction
+	offers = Offers.new(Config.Offer.TimeoutSeconds)
+	offerAction.OnServerInvoke = function(player, offerId, action)
+		return M._offerAction(player, offerId, action)
+	end
+	root:GetAttributeChangedSignal(Config.RodOffersAttribute):Connect(function()
+		if root:GetAttribute(Config.RodOffersAttribute) == false then
+			offers:cancelAll("disabled") -- nothing charged, nothing delivered
+		end
+	end)
+	table.insert(M._onLeave, function(player: Player)
+		offers:cancelForUser(player.UserId, "left") -- nothing charged, nothing delivered
+		lastOfferAction[player] = nil
+	end)
 
 	money = MoneyStore.new(pickStore(), game.JobId, os.time)
 	ledger = Ledger.new("P")
@@ -465,6 +509,209 @@ end
 
 function M.pipeline()
 	return Config.Pipeline
+end
+
+------------------------------------------------------------ rod-fish offers
+
+-- Offers are on while the service runs, unless ReplicatedStorage.Economy's
+-- RodOffersEnabled attribute is false.
+function M.rodOffersEnabled(): boolean
+	return startOk and root:GetAttribute(Config.RodOffersAttribute) ~= false
+end
+
+local VARIANT_TEXT = { Silver = "SILVER ", Gold = "GOLD " }
+
+local function offerBillboard(
+	fish: Model,
+	caster: Player,
+	fishName: string,
+	variant: string?,
+	price: number
+): BillboardGui?
+	local adornee = fish.PrimaryPart or fish:FindFirstChildWhichIsA("BasePart", true)
+	if not adornee then
+		return nil
+	end
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "OfferGui"
+	gui.Size = UDim2.fromOffset(240, 58)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.2, 0)
+	gui.AlwaysOnTop = true
+	gui.MaxDistance = 140
+	gui.LightInfluence = 0
+	gui.Adornee = adornee
+	local top = Instance.new("TextLabel")
+	top.Name = "Price"
+	top.Size = UDim2.fromScale(1, 0.6)
+	top.BackgroundTransparency = 1
+	top.Font = Enum.Font.FredokaOne
+	top.TextScaled = true
+	top.TextColor3 = if variant == "Gold"
+		then Color3.fromRGB(255, 205, 60)
+		elseif variant == "Silver" then Color3.fromRGB(215, 230, 245)
+		else Color3.new(1, 1, 1)
+	top.TextStrokeTransparency = 0.2
+	top.Text = string.format("%s%s - %d %s", VARIANT_TEXT[variant or ""] or "", fishName, price, Config.CurrencyName)
+	top.Parent = gui
+	local sub = top:Clone()
+	sub.Name = "Who"
+	sub.Position = UDim2.fromScale(0, 0.6)
+	sub.Size = UDim2.fromScale(1, 0.4)
+	sub.TextColor3 = Color3.fromRGB(220, 230, 240)
+	sub.Text = caster.DisplayName .. "'s catch: Buy or Pass"
+	sub.Parent = gui
+	gui.Parent = adornee
+	return gui
+end
+
+local RESULT_TEXT = {
+	bought = "Bought! It's going to the aquarium",
+	alreadyBought = "Already bought",
+	closed = "That fish is gone",
+	unknown = "That fish is gone",
+	notYours = "Only the player who cast can buy this fish",
+	expired = "Too late - it slipped off the hook",
+	tooFar = "Get closer to the rods to buy",
+	tankUnavailable = "The aquarium can't take it - not charged",
+	funds = "Not enough Money",
+	notLoaded = "Money is still loading - try again",
+	deliveryFailed = "Couldn't reach the aquarium - refunded",
+	passed = "Passed - it swims off",
+}
+
+function M._offerAction(player: Player, offerId: any, action: any): (boolean, string)
+	if not startOk or typeof(player) ~= "Instance" or player.Parent ~= Players then
+		return false, "Not available"
+	end
+	if type(offerId) ~= "number" or (action ~= "buy" and action ~= "pass") then
+		return false, "Bad request"
+	end
+	local now = os.clock()
+	local last = lastOfferAction[player]
+	if last and now - last < Config.Offer.ActionCooldown then
+		return false, "Slow down"
+	end
+	lastOfferAction[player] = now
+	local rec = offerRecs[offerId]
+	if action == "pass" then
+		local r = offers:pass(offerId, player.UserId)
+		return r == "passed", RESULT_TEXT[r] or r
+	end
+	if not rec then
+		return false, RESULT_TEXT.unknown
+	end
+	-- One synchronous sequence (Offers.buy): no yields between the checks,
+	-- the debit and the delivery.
+	local r = offers:buy(offerId, player.UserId, now, {
+		inRange = function(): boolean
+			local character = player.Character
+			local hrp = character and character:FindFirstChild("HumanoidRootPart")
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			if not (hrp and hrp:IsA("BasePart") and humanoid and humanoid.Health > 0 and rec.fish.Parent) then
+				return false
+			end
+			return (hrp.Position - rec.fish:GetPivot().Position).Magnitude <= Config.Offer.MaxBuyDistance
+		end,
+		reservationOk = function(): boolean
+			return rec.reservationOk() == true
+		end,
+		debit = function(amount: number): (boolean, string?)
+			return M.tryDebit(player, amount, "RodFish")
+		end,
+		deliver = function(): boolean
+			return rec.deliver() == true
+		end,
+		refund = function(amount: number)
+			M.refund(player, amount, "RodFish")
+		end,
+	})
+	local text = RESULT_TEXT[r] or r
+	M.notify(player, text, if r == "bought" then "success" elseif r == "alreadyBought" then "info" else "warn")
+	return r == "bought" or r == "alreadyBought", text
+end
+
+export type RodOfferParams = {
+	rodKey: any,
+	caster: Player,
+	fishName: string,
+	tier: number,
+	variant: string?,
+	fish: Model, -- the revealed fish on the line (price label + range check)
+	stillValid: () -> boolean, -- false = the aquarium can no longer take it
+	reservationOk: () -> boolean, -- checked right before charging
+	deliver: () -> boolean, -- puts the fish in the aquarium; false = failed (refund)
+}
+
+-- RodFishingSystem: offer a revealed fish to its caster and WAIT (yields)
+-- until they buy it, pass, time out, leave, or the offer can't continue.
+-- Returns true only if it was paid for AND delivered to the aquarium.
+function M.runRodOffer(p: RodOfferParams): boolean
+	if not M.rodOffersEnabled() then
+		return false
+	end
+	local caster = p.caster
+	if not (typeof(caster) == "Instance" and caster:IsA("Player") and caster.Parent == Players) then
+		return false
+	end
+	local variant = Pricing.variant(p.variant)
+	local tier = if type(p.tier) == "number" then p.tier else 1
+	local price = Pricing.offerPrice(tier, variant)
+	local offer, why = offers:open(p.rodKey, caster.UserId, p.fishName, tier, variant, price, os.clock())
+	if not offer then
+		warn("[Economy] rod offer not opened: " .. tostring(why))
+		return false
+	end
+	local cfg = Instance.new("Configuration")
+	cfg.Name = "Offer" .. offer.id
+	cfg:SetAttribute("OfferId", offer.id)
+	cfg:SetAttribute("CasterUserId", caster.UserId)
+	cfg:SetAttribute("FishName", p.fishName)
+	cfg:SetAttribute("Tier", tier)
+	cfg:SetAttribute("Variant", variant)
+	cfg:SetAttribute("Price", price)
+	cfg:SetAttribute("ExpiresAt", workspace:GetServerTimeNow() + Config.Offer.TimeoutSeconds)
+	cfg.Parent = offersFolder
+	local okGui, gui = pcall(offerBillboard, p.fish, caster, p.fishName, variant, price)
+	offerRecs[offer.id] = { fish = p.fish, reservationOk = p.reservationOk, deliver = p.deliver }
+
+	while offer.status == "Open" or offer.status == "Delivering" do
+		task.wait(0.1)
+		if offer.status == "Open" then
+			if os.clock() >= offer.expiresAt then
+				offers:expire(os.clock())
+			elseif caster.Parent ~= Players then
+				offers:cancel(offer.id, "left")
+			elseif not M.rodOffersEnabled() then
+				offers:cancel(offer.id, "disabled")
+			elseif not p.stillValid() or not p.fish.Parent then
+				offers:cancel(offer.id, "tankUnavailable")
+			end
+		end
+	end
+
+	local bought = offer.status == "Bought"
+	if offer.status == "Expired" then
+		M.notify(caster, p.fishName .. " slipped off the hook (not bought)", "info")
+	elseif offer.status == "Cancelled" and offer.reason == "tankUnavailable" then
+		M.notify(caster, "The aquarium closed - " .. p.fishName .. " was not charged", "warn")
+	end
+	offerRecs[offer.id] = nil
+	offers:forget(offer.id)
+	cfg:Destroy()
+	if okGui and gui then
+		gui:Destroy()
+	end
+	return bought
+end
+
+-- Rod task failed: cancel its open offer (no charge). Safe to call any time.
+function M.cancelRodOffer(rodKey: any)
+	if startOk then
+		local id = offers.byRod[rodKey]
+		if id then
+			offers:cancel(id, "error")
+		end
+	end
 end
 
 -- Diagnostics (Command Bar during Play): require(...).stats()
