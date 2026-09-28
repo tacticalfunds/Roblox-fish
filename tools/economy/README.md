@@ -6,12 +6,18 @@ reviews and installs. Nothing here touches Studio on its own.
 | Milestone | State | Installable? |
 |---|---|---|
 | Core (`6081e33`): Config, Pricing, Ledger, MoneyStore, Offers | done | review only |
-| Sale-settlement patches (`dcf9c44`): grinder/bot/customer/truck/net/harpoon | parked WIP | **no** (no installer) |
-| Rod Buy/Pass (`8cb2554`): Money service + offers + RodShop compatibility | **installed** (Astra) | `InstallRodOffers.lua` at `8cb2554` |
-| **Rod-stand buy prompt** (this commit): proximity prompt instead of the panel | done | **yes**: `UpdateRodPrompt.lua` (on `8cb2554`), or the current `InstallRodOffers.lua` on a fresh place |
-| Sale settlement (finish `dcf9c44`, buyer identity through the aquarium) | next | - |
-| Paid aquarium upgrades | later | - |
-| Rebased visual features (jump, dwell, immediate cast, variants) | later | - |
+| Rod Buy/Pass (`8cb2554`): Money service + offers + RodShop compatibility | superseded | - |
+| Rod-stand buy prompt (`a826d73`) | **installed** (Astra, fresh `InstallRodOffers.lua`) | frozen release: `InstallRodOffers.lua`, or `UpdateRodPrompt.lua` on `8cb2554` |
+| **Aquarium v1.2** (this commit): buyer (`OwnerId`) through tank → river | done | **yes**: `UpgradeAquariumV12.lua` |
+| **Sale payouts** (this commit): grinder / bot / customer / truck / net / harpoon | done | **yes**: `InstallSales.lua` (after the aquarium upgrade) |
+| Paid aquarium upgrades | next | - |
+| Rebased visual features (jumps, variants, immediate cast, grinder dwell) | later | - |
+
+**Install order:** `InstallRodOffers` (a826d73) → `UpgradeAquariumV12` →
+`InstallSales`. **Roll back in reverse:** `RollbackSales` →
+`RollbackAquariumV12` → `UninstallRodOffers`. Each installer identifies what
+is installed by exact source, so it works on either rod-offers chain: a fresh
+`a826d73` install, or `8cb2554` + `UpdateRodPrompt`.
 
 `studio/live/` holds the live sources Astra supplied on 2026-09-28. Every
 patch and installer guard is built against these copies.
@@ -77,9 +83,9 @@ Prices come from `Pricing.offerPrice`:
 A new player gets **100 Money once**. Tank 6 (50) still leaves money for
 fish.
 
-**In this slice Money only goes down.** Nothing pays out yet; that is the
-sale-settlement milestone. Balances are saved in DataStore `FishEconomy_v1`,
-so Money spent while testing stays spent.
+**With only rod offers installed, Money only goes down.** Payouts come with
+`InstallSales` (below). Balances are saved in DataStore `FishEconomy_v1`, so
+Money spent while testing stays spent.
 
 ### Where the prompt sits
 
@@ -125,14 +131,12 @@ its `RodOffersEnabled` attribute isn't false.
   aquarium).
 - **Uninstalled:** the pre-install behaviour, as above.
 
-### Not in this slice: buyer identity
+### Buyer identity
 
-The installed aquarium is v1 (commit `2e320f9`, which Astra confirmed).
-Its `hook(rodKey, fishName)` and `land` carry no metadata. So this slice
-**does not** pass or claim the buyer's id through the tank or river. It
-doesn't need to, because nothing pays out yet. The sale-payout milestone
-will ship a guarded aquarium upgrade that carries the buyer, and it will
-refuse to install without it.
+With rod offers alone, the installed aquarium is v1: its `hook` and `land`
+carry no metadata, and nothing claims the buyer. `UpgradeAquariumV12` +
+`InstallSales` carry the buyer (`OwnerId`) with a bought fish from rod to
+tank to river to meat. `InstallSales` refuses to install on aquarium v1.
 
 ### Studio sessions and test clients
 
@@ -143,6 +147,103 @@ refuse to install without it.
   they can open and buy offers. Their Money lives in memory only and is
   never written to the DataStore.
 - Live servers accept only real, positive UserIds.
+
+## Sale payouts (`InstallSales.lua`)
+
+Money comes in **only when meat sells**: a customer buys it at the sale
+table, or a player drops it in a truck. Each meat piece pays **once**, its
+ledger value, to the piece's **owner**:
+
+| Fish came from | Owner (who is paid) |
+|---|---|
+| Net pad | the player on the pad |
+| A bought rod fish, caught again later by the net or harpoon | **its buyer** (carried rod → tank → river) |
+| Harpoon, fish nobody bought | the player set in `HarpoonGun`'s `OwnerUserId` attribute; otherwise **nobody**. The meat still sells, but no one is paid |
+
+- **Owner not in the server:** nobody is paid.
+- **Carrying:** carrying meat to a truck never pays the carrier.
+- **Value:** a fish's value (`4 × 1.3^(tier−1)`, e.g. tier 10 = 42) is
+  **split** across its meat pieces, not multiplied by them.
+
+**Nothing unpaid is destroyed:**
+
+- **The stack is full:** the belt waits.
+- **The blender pit is full (24 pieces):** new pieces are held as data and
+  come back out of the pipe later.
+- **A carrier respawns or leaves:** their carried pieces are held the same
+  way.
+- **Too much meat is held (150):** the net pad refuses to lift and the
+  harpoon skips shots until the meat clears.
+
+What each patched script does:
+
+- **GrinderProcessor:** creates the ledger pieces and stamps each meat part
+  (`PieceId`, `OwnerId`, `Value`, `Tier`).
+- **BotSystem:** copies that identity onto the piece it carries to the
+  table.
+- **CustomerSystem:** settles the piece before it's destroyed.
+- **TruckSystem:** settles when a piece is dropped in a truck. The truck UI
+  is unchanged.
+- **NetLiftScript and HarpoonSystem:** send the owner payload.
+- **RodFishingSystem:** a hooked fish in offer mode carries its caster as
+  `OwnerId`. Only the caster can buy it, and an unbought fish's data is
+  discarded.
+
+### Aquarium v1.2 (`UpgradeAquariumV12.lua`)
+
+It changes 4 of the aquarium v1 scripts (Config, SharedTank,
+AquariumCycleServer, AquariumTankClient) and checks the rest are v1:
+
+- **Buyer carried:** `OwnerId`, and `Variant` when one exists, travel
+  unchanged from rod to tank to river fish attribute.
+- **Harpooned fish not despawned:** the river-release despawn timer no
+  longer deletes a fish the harpoon has hit.
+
+Until `InstallSales` passes a buyer, it behaves exactly like v1.
+
+### Install / rollback
+
+1. Edit mode → paste `tools/economy/UpgradeAquariumV12.lua`.
+2. Edit mode → paste `tools/economy/InstallSales.lua`. It refuses if the
+   aquarium isn't v1.2.
+
+Each installer:
+
+- **Checks first:** it changes nothing if any script differs from the
+  expected version, if a script name isn't unique, if an economy object
+  isn't tagged as ours, or in Play mode.
+- **Records one undo step.**
+- **Backs up what it changes:** `InstallSales` backs up 10 scripts to
+  `ServerStorage.EconomySalesBackup`; the aquarium upgrade backs up 4 to
+  `EconomyAquariumBackup`.
+
+`InstallSales` changes:
+
+- the six live sale scripts
+- RodFishingSystem
+- EconomyService, plus its Ledger and PieceTags modules. Studio test clients
+  (negative UserIds) can own pieces and be paid in Studio only.
+
+**Rollback:** `RollbackSales.lua`, then `RollbackAquariumV12.lua`. Each one
+restores the exact previous sources and refuses while a later milestone is
+installed.
+
+### Sale payouts checklist (Studio)
+
+Run Play with the aquarium enabled.
+
+| # | Do | Expect |
+|---|---|---|
+| S1 | Step on the net pad and catch fish | Nobody paid yet; the meat on the stack has `PieceId`, `OwnerId` = you, and `Value` attributes |
+| S2 | Carry meat to a truck (as any player) | The **owner's** Money goes up by each piece's `Value`; the carrier gets nothing unless they own it; truck UI unchanged |
+| S3 | Let the Blender Bot sell to a customer | The owner is paid once when the customer takes it |
+| S4 | Buy a rod fish, release it from the tank, net it (any player) | That meat pays **the buyer** |
+| S5 | Harpoon a fish, with no `OwnerUserId` on `HarpoonGun` | The meat sells; nobody is paid |
+| S6 | Set `Workspace.HarpoonGun.OwnerUserId` to your UserId, harpoon | You are paid when it sells |
+| S7 | Pick up meat, then reset your character | Your carried pieces come back out of the grinder pipe later (same owner) |
+| S8 | Fill the stack to the top | The belt pauses; no meat disappears; it resumes when meat is taken |
+| S9 | Leave and rejoin | Money earned from sales is saved |
+| S10 | Edit mode: `RollbackSales`, then `RollbackAquariumV12` | Back to the rod-offers install (buying works, no payouts) |
 
 ## Install / update / rollback (Astra)
 
@@ -220,9 +321,10 @@ changes; the rest re-check behaviour that already worked.
 ## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau          # 260 checks
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # 80 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 71 checks
+python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80 + sales 37 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 100 checks
+python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 
 - **Core:** pricing, ledger, MoneyStore against a fake DataStore that fails
@@ -240,6 +342,17 @@ python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 71 checks
   - buy once under spam; server reach from the stand
   - not enough Money
   - cleanup on buy, timeout, pass, death, leave and switch-off
+- **Sales simulation:** the **real patched GrinderProcessor and
+  TruckSystem** with the real EconomyService on the fake engine
+  (`tests/sim/`). It checks:
+  - who is paid on each route: the net player, the buyer, the bound
+    harpoon, nobody, never the carrier
+  - value split across pieces, and one payment per piece
+  - respawn/leave while carrying: pieces held, then re-emitted with the same
+    identity
+  - a full stack: the pit stays bounded, overflow is held, nothing is lost,
+    and everything flows once there is room
+  - the customer route
 - **Installer dry run:** the real fresh installer and uninstaller, plus
   `UpdateRodPrompt` / `RollbackRodPrompt`, against a place set up by the
   **real 8cb2554 installer** (from git). It checks:

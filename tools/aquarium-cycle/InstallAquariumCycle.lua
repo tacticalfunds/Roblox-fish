@@ -868,7 +868,8 @@ Config.Scene = {
 	RiverSpeed = { 4, 6.5 }, -- matches FishSpawner SPEED
 	RiverSeedBase = 1000000, -- keeps released fish seeds apart from FishSpawner's 1..N
 	-- Fish attributes carried unchanged rod -> tank -> river (never rerolled).
-	PassthroughAttributes = { "Variant" },
+	-- OwnerId (v1.2): the player who bought a rod fish, so its meat pays them.
+	PassthroughAttributes = { "Variant", "OwnerId" },
 }
 
 return Config
@@ -1880,7 +1881,7 @@ local SERVER = [[
 --   active()                -> bool
 --   reserve(rods, player)   -> rods allowed to cast (a tank spot is reserved for each)
 --   hasFreeSpot(player)     -> bool (tells the player when the tank is full)
---   hook(rodKey, fishName, meta?) -> bool  (meta: e.g. { Variant = "Gold" }, carried unchanged)
+--   hook(rodKey, fishName, meta?) -> bool  (meta: e.g. { Variant = "Gold", OwnerId = 123 }, carried unchanged)
 --   land(rodKey)            -> bool
 --   abort(rodKey)           -- frees the rod's spot; safe to call any time
 --   entryPoint()            -> Vector3 above the tank water
@@ -2148,7 +2149,8 @@ local function spawnIntoRiver(name: string?, meta)
 	model:PivotTo(CFrame.lookAt(at, at + Vector3.new(0, 0, 1)))
 	model.Parent = river
 	task.delay(s.lifetime, function()
-		if model.Parent and not model:GetAttribute("CaughtT") then
+		-- v1.2: a fish the harpoon has already hit is the harpoon's to remove
+		if model.Parent and not model:GetAttribute("CaughtT") and not model:GetAttribute("HarpoonT") then
 			model:Destroy()
 		end
 	end)

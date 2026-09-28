@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Generates the guarded update installers (and their rollbacks) that build
+on what is installed in Studio, from build/SourceUpdate.template.lua and
+build/Rollback.template.lua:
+
+  UpgradeAquariumV12.lua / RollbackAquariumV12.lua
+      aquarium v1 (commit 2e320f9, installed) -> v1.2: carries OwnerId (and
+      Variant) rod -> tank -> river; the river-release despawn leaves
+      harpooned fish alone.
+  InstallSales.lua / RollbackSales.lua
+      sale payouts: the grinder issues ledger pieces, bots / customers /
+      trucks settle them once, net / harpoon send the owner, a bought rod
+      fish carries its buyer. Needs rod offers (a826d73: fresh install, or
+      8cb2554 + UpdateRodPrompt - both leave the same sources) and aquarium
+      v1.2.
+
+Every "old" source comes from git at the installed commit, so the checks
+match exactly what the earlier installers wrote.
+
+Usage:  python3 tools/economy/build/build_updates.py
+"""
+import pathlib
+import subprocess
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import build_rod_offers_installer as bi  # noqa: E402
+import make_sales  # noqa: E402
+
+ROOT = bi.ROOT
+REPO = ROOT.parent.parent
+AQUARIUM_V1 = "2e320f9"
+ROD_OFFERS = "a826d73"
+AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
+LATER_THAN_SALES = ["EconomyUpgradesBackup"]
+
+
+def git_show(commit: str, path: str) -> str:
+    return subprocess.run(["git", "show", f"{commit}:{path}"], cwd=REPO, capture_output=True, text=True, check=True).stdout
+
+
+def lua(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, str):
+        return '"' + v + '"'
+    if isinstance(v, list):
+        return "{ " + ", ".join(lua(x) for x in v) + " }"
+    raise TypeError(v)
+
+
+def target(t: dict, old: str, new: str) -> tuple[str, bool]:
+    """Returns (lua table text, changed?)."""
+    fields = [f'key = "{t["key"]}"', f'where = "{t["where"]}"', f'class = "{t["class"]}"']
+    if t.get("tag"):
+        fields.append(f'tag = "{t["tag"]}"')
+    if t.get("tagOnParent"):
+        fields.append("tagOnParent = true")
+    if old == new:
+        return "\t{ " + ", ".join(fields) + f", source = {bi.long_string(old)} }},", False
+    return "\t{ " + ", ".join(fields) + f", old = {bi.long_string(old)}, new = {bi.long_string(new)} }},", True
+
+
+def fill(template: str, values: dict) -> str:
+    for marker, value in values.items():
+        assert marker in template, marker
+        template = template.replace(marker, value)
+    assert "--[[@" not in template, "unfilled marker"
+    return template
+
+
+def write_pair(file: str, rollback: str, about: str, backup: str, requires, forbids, later, targets) -> list[str]:
+    changes, unchanged, changed_keys = [], [], []
+    for t, old, new in targets:
+        text, changed = target(t, old, new)
+        (changes if changed else unchanged).append(text)
+        if changed:
+            changed_keys.append(t["key"])
+    name = file.removesuffix(".lua")
+    rb_name = rollback.removesuffix(".lua")
+    install = fill(
+        (ROOT / "build" / "SourceUpdate.template.lua").read_text(),
+        {
+            "--[[@FILE]]": file,
+            "--[[@ABOUT]]": "\n".join("\t" + line if line else "" for line in about.strip("\n").split("\n")),
+            "--[[@BACKUP]]": backup,
+            "--[[@ROLLBACK]]": rollback,
+            "--[[@NAME]]": name,
+            "--[[@REQUIRES]]": "{ " + ", ".join(lua(r) for r in requires) + " }",
+            "--[[@FORBIDS]]": lua(forbids),
+            "--[[@CHANGES]]": "{\n" + "\n".join(changes) + "\n}",
+            "--[[@UNCHANGED]]": "{\n" + "\n".join(unchanged) + "\n}",
+        },
+    )
+    (ROOT / file).write_text(install)
+    rb = fill(
+        (ROOT / "build" / "Rollback.template.lua").read_text(),
+        {
+            "--[[@FILE]]": rollback,
+            "--[[@INSTALLER]]": file,
+            "--[[@BACKUP]]": backup,
+            "--[[@NAME]]": rb_name,
+            "--[[@LATER]]": lua(later),
+        },
+    )
+    (ROOT / rollback).write_text(rb)
+    print(f"wrote tools/economy/{file} ({len(install)} chars; changes {', '.join(changed_keys)}) + {rollback}")
+    return changed_keys
+
+
+def aquarium() -> list[str]:
+    aq = REPO / "tools" / "aquarium-cycle" / "src"
+    targets = []
+    for name in AQ_SHARED:
+        targets.append((
+            {"key": name, "where": f"ReplicatedStorage/AquariumCycle/{name}", "class": "ModuleScript", "tag": "AquariumCycleOwned", "tagOnParent": True},
+            git_show(AQUARIUM_V1, f"tools/aquarium-cycle/src/shared/{name}.luau"),
+            (aq / "shared" / f"{name}.luau").read_text(),
+        ))
+    for name in ("AquariumCycleServer", "AquariumEconomy"):
+        targets.append((
+            {"key": name, "where": f"ServerScriptService/{name}", "class": "ModuleScript", "tag": "AquariumCycleOwned"},
+            git_show(AQUARIUM_V1, f"tools/aquarium-cycle/src/server/{name}.luau"),
+            (aq / "server" / f"{name}.luau").read_text(),
+        ))
+    targets.append((
+        {"key": "AquariumTankClient", "where": "StarterPlayer/StarterPlayerScripts/AquariumTankClient", "class": "LocalScript", "tag": "AquariumCycleOwned"},
+        git_show(AQUARIUM_V1, "tools/aquarium-cycle/src/client/AquariumTankClient.client.luau"),
+        (aq / "client" / "AquariumTankClient.client.luau").read_text(),
+    ))
+    keys = write_pair(
+        "UpgradeAquariumV12.lua",
+        "RollbackAquariumV12.lua",
+        """
+Aquarium v1 -> v1.2 (the aquarium installed from commit 2e320f9).
+  * A fish can carry OwnerId (the player who bought it) and Variant
+    rod -> tank -> river, unchanged; nothing is rerolled or invented.
+  * The river-release despawn timer leaves a fish the harpoon has hit
+    (HarpoonT) to the harpoon.
+  * The tank client shows variant effects only if
+    ReplicatedStorage.FishVariantVisuals exists (it doesn't yet).
+Behaves like v1 until something passes metadata (InstallSales.lua does).
+Requires: the aquarium (ServerStorage.AquariumCycleBackup).
+""",
+        "EconomyAquariumBackup",
+        [["AquariumCycleBackup"]],
+        ["EconomyAquariumBackup", "EconomySalesBackup", *LATER_THAN_SALES],
+        ["EconomySalesBackup", *LATER_THAN_SALES],
+        targets,
+    )
+    assert keys == ["Config", "SharedTank", "AquariumCycleServer", "AquariumTankClient"], keys
+    return keys
+
+
+def sales() -> list[str]:
+    outputs = make_sales.build()
+    make_sales.main()
+    targets = []
+    for name in make_sales.LIVE_SCRIPTS:
+        targets.append(({"key": name, "where": f"script:{name}", "class": "Script"}, (bi.mro.LIVE / f"{name}.lua").read_text(), outputs[name]))
+    targets.append((
+        {"key": "RodFishingSystem", "where": "script:RodFishingSystem", "class": "Script"},
+        make_sales.rod_base(),
+        outputs["RodFishingSystem"],
+    ))
+    rod_shop = git_show(ROD_OFFERS, "tools/economy/studio/rod-offers/RodShopServer.lua")
+    targets.append(({"key": "RodShopServer", "where": "script:RodShopServer", "class": "Script"}, rod_shop, rod_shop))
+    targets.append((
+        {"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
+        git_show(ROD_OFFERS, "tools/economy/src/server/EconomyService.luau"),
+        (ROOT / "src" / "server" / "EconomyService.luau").read_text(),
+    ))
+    for name in bi.CORE:
+        targets.append((
+            {"key": name, "where": f"ServerScriptService/EconomyService/{name}", "class": "ModuleScript", "tag": "EconomyOwned"},
+            git_show(ROD_OFFERS, f"tools/economy/src/core/{name}.luau"),
+            (ROOT / "src" / "core" / f"{name}.luau").read_text(),
+        ))
+    targets.append((
+        {"key": "EconomyClient", "where": "StarterPlayer/StarterPlayerScripts/EconomyClient", "class": "LocalScript", "tag": "EconomyOwned"},
+        git_show(ROD_OFFERS, "tools/economy/src/client/EconomyClient.client.luau"),
+        (ROOT / "src" / "client" / "EconomyClient.client.luau").read_text(),
+    ))
+    # aquarium v1.2 must be in place (it carries the buyer through the tank)
+    aq = REPO / "tools" / "aquarium-cycle" / "src"
+    for name in ("Config", "SharedTank"):
+        src = (aq / "shared" / f"{name}.luau").read_text()
+        targets.append(({"key": "aquarium " + name, "where": f"ReplicatedStorage/AquariumCycle/{name}", "class": "ModuleScript", "tag": "AquariumCycleOwned", "tagOnParent": True}, src, src))
+    src = (aq / "server" / "AquariumCycleServer.luau").read_text()
+    targets.append(({"key": "aquarium AquariumCycleServer", "where": "ServerScriptService/AquariumCycleServer", "class": "ModuleScript", "tag": "AquariumCycleOwned"}, src, src))
+    keys = write_pair(
+        "InstallSales.lua",
+        "RollbackSales.lua",
+        """
+Sale payouts: Money is paid once per meat piece, when it SELLS (customer at
+the sale table, or dropped in a truck), to the piece's owner:
+  * a bought rod fish: its buyer, wherever it is caught later
+  * a net catch: the player on the pad
+  * a harpoon catch: the fish's buyer, else the player set in HarpoonGun's
+    OwnerUserId attribute, else nobody (it sells, nobody is paid)
+The carrier is never paid for carrying. A fish's value is split across its
+meat pieces. Full pit/stack: pieces wait (held as data) instead of being
+destroyed; a carrier who leaves or respawns gives their pieces back.
+Requires: rod offers a826d73 (fresh InstallRodOffers, or 8cb2554 +
+UpdateRodPrompt) and aquarium v1.2 (UpgradeAquariumV12.lua).
+""",
+        "EconomySalesBackup",
+        [["EconomyRodOffersBackup"]],  # aquarium v1.2 is checked by source (upgrade, or a fresh v1.2 install)
+        ["EconomySalesBackup", *LATER_THAN_SALES],
+        LATER_THAN_SALES,
+        targets,
+    )
+    assert set(keys) >= set(make_sales.LIVE_SCRIPTS) | {"RodFishingSystem", "EconomyService"}, keys
+    return keys
+
+
+def main() -> None:
+    # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
+    # release Astra installed; they are not rebuilt here.
+    aquarium()
+    sales()
+
+
+if __name__ == "__main__":
+    main()

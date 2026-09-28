@@ -96,8 +96,19 @@ values are never rerolled.
 - If `ReplicatedStorage.FishVariantVisuals` exists, the tank client and river
   releases show the variant effects.
 - Without variants installed, v1.1 behaves exactly like v1.
-- Fresh installs get v1.1. The fish-variants installer upgrades an installed
-  v1 in place, and its uninstaller restores v1.
+- The fish-variants installer (not installed) upgrades v1 to v1.1 in place.
+
+## v1.2: buyer identity
+
+- **`OwnerId` pass-through:** `OwnerId` is also in `PassthroughAttributes`.
+  A bought rod fish keeps its buyer through the tank and back into the
+  river, so its meat pays them.
+- **Harpooned fish not despawned:** the river-release despawn timer no
+  longer deletes a fish the harpoon has hit (`HarpoonT`).
+- **Fresh installs:** they get v1.2.
+- **Upgrading Studio's installed v1:** use
+  `tools/economy/UpgradeAquariumV12.lua`; `RollbackAquariumV12.lua`
+  restores v1.
 
 ## Known limitations (please review)
 

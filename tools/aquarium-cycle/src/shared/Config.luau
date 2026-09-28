@@ -65,7 +65,8 @@ Config.Scene = {
 	RiverSpeed = { 4, 6.5 }, -- matches FishSpawner SPEED
 	RiverSeedBase = 1000000, -- keeps released fish seeds apart from FishSpawner's 1..N
 	-- Fish attributes carried unchanged rod -> tank -> river (never rerolled).
-	PassthroughAttributes = { "Variant" },
+	-- OwnerId (v1.2): the player who bought a rod fish, so its meat pays them.
+	PassthroughAttributes = { "Variant", "OwnerId" },
 }
 
 return Config

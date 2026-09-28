@@ -53,14 +53,15 @@ end
 --   meta.OwnerId (a bought rod fish, carried through tank/river/net/harpoon)
 --   else the triggering player (manual net pad)
 --   else nobody (harpoon with no bound owner) - it sells but pays nobody.
+-- (Test ids are let through here; the ledger drops them outside Studio.)
 function PieceTags.ownerFor(playerUserId: number?, meta: any): number?
 	if type(meta) == "table" then
-		local owner = Ledger.validOwner(meta.OwnerId)
+		local owner = Ledger.validOwner(meta.OwnerId, true)
 		if owner then
 			return owner
 		end
 	end
-	return Ledger.validOwner(playerUserId)
+	return Ledger.validOwner(playerUserId, true)
 end
 
 -- Variant from a catch payload (validated by the ledger/pricing later).

@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-"""Generates the Milestone 2 (money + sale settlement) patches.
+"""Patch builders for the live scripts (a library: make_rod_offers.py and
+make_sales.py call these; nothing to run here).
 
 Bases are the live sources Astra supplied (tools/economy/studio/live/).
-Every edit is asserted to match exactly once; the output goes to
-tools/economy/studio/patched/. Each patched script loads EconomyService
-optionally: if it is missing or not running, the script behaves exactly
-like its live base.
-
-Usage:  python3 tools/economy/build/make_patches.py
+Every edit is asserted to match exactly once. Each patched script loads
+EconomyService optionally: if it is missing or not running, the script
+behaves exactly like its live base.
 """
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LIVE = ROOT / "studio" / "live"
-OUT = ROOT / "studio" / "patched"
 
-SCRIPTS = ["GrinderProcessor", "BotSystem", "CustomerSystem", "TruckSystem", "NetLiftScript", "HarpoonSystem", "RodShopServer"]
 
 
 def loader(tag: str) -> str:
@@ -495,17 +491,3 @@ BUILDERS = {
     "HarpoonSystem": harpoon,
     "RodShopServer": rodshop,
 }
-
-
-def main() -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
-    for name in SCRIPTS:
-        base = (LIVE / f"{name}.lua").read_text()
-        out = BUILDERS[name](base)
-        assert out != base
-        (OUT / f"{name}.lua").write_text(out)
-        print(f"wrote studio/patched/{name}.lua")
-
-
-if __name__ == "__main__":
-    main()

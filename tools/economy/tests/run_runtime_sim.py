@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Runs tests/runtime_sim.luau: the REAL EconomyService (+ core modules) and
-the REAL EconomyClient against a small fake engine (signals, virtual clock,
-remotes, a ProximityPrompt model). Covers the rod-stand buy prompt: caster
-only, range, the custom panel, buy once, and cleanup on buy / timeout / pass /
-death / leave / switch-off.
+"""Runs the simulations in tests/sim/*_sim.luau on the fake engine
+(tests/sim/engine.luau): the REAL EconomyService (+ core modules), the REAL
+EconomyClient and, for the sale routes, the REAL patched live scripts.
+
+  prompt_sim: the rod-stand buy prompt (caster only, range, custom panel,
+              buy once, cleanup on buy / timeout / pass / death / leave / off)
+  sales_sim:  sale payouts through the real patched grinder and truck
 
 Usage:  python3 tools/economy/tests/run_runtime_sim.py [path/to/luau]
 Fake-engine simulation only; not a Roblox runtime test.
@@ -25,25 +27,38 @@ def long_string(text: str) -> str:
     return f"[{eq}[\n{text}]{eq}]"
 
 
+SIM = ROOT / "tests" / "sim"
+
+
 def sources() -> dict:
     out = {name: (ROOT / "src" / "core" / f"{name}.luau").read_text() for name in CORE}
     out["EconomyService"] = (ROOT / "src" / "server" / "EconomyService.luau").read_text()
     out["EconomyClient"] = (ROOT / "src" / "client" / "EconomyClient.client.luau").read_text()
+    for patched in sorted((ROOT / "studio" / "sales").glob("*.lua")):
+        out["Sales_" + patched.stem] = patched.read_text()
     return out
 
 
-def run(luau: str, srcs: dict) -> int:
+def run(luau: str, srcs: dict, only: str | None = None) -> int:
     prelude = "SOURCES = {\n" + "".join(f"\t{k} = {long_string(v)},\n" for k, v in srcs.items()) + "}\n"
-    body = (ROOT / "tests" / "runtime_sim.luau").read_text()
-    with tempfile.TemporaryDirectory() as tmp:
-        path = pathlib.Path(tmp) / "runtime_sim.luau"
-        path.write_text(prelude + body)
-        return subprocess.run([luau, str(path)]).returncode
+    engine = (SIM / "engine.luau").read_text()
+    failed = 0
+    for scenario in sorted(SIM.glob("*_sim.luau")):
+        if only and scenario.stem != only:
+            continue
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / scenario.name
+            path.write_text(prelude + engine + "\ndo\n" + scenario.read_text() + "\nend\n")
+            print(f"== {scenario.name}")
+            if subprocess.run([luau, str(path)]).returncode != 0:
+                failed += 1
+    return 1 if failed else 0
 
 
 def main() -> int:
     luau = sys.argv[1] if len(sys.argv) > 1 else "luau"
-    return run(luau, sources())
+    only = sys.argv[2] if len(sys.argv) > 2 else None
+    return run(luau, sources(), only)
 
 
 if __name__ == "__main__":

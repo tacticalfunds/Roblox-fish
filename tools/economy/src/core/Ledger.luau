@@ -42,6 +42,7 @@ Ledger.__index = Ledger
 
 export type Ledger = typeof(setmetatable(
 	{} :: {
+		allowTestIds: boolean,
 		pieces: { [string]: Piece },
 		held: { string }, -- FIFO of held ids (may contain stale ids; skipped)
 		heldCount: number,
@@ -52,8 +53,12 @@ export type Ledger = typeof(setmetatable(
 	Ledger
 ))
 
-function Ledger.new(prefix: string?): Ledger
+-- allowTestIds: Studio test clients have negative UserIds (-1, -2, ...);
+-- the service passes RunService:IsStudio() so they can own pieces there.
+-- Live servers only ever see positive UserIds.
+function Ledger.new(prefix: string?, allowTestIds: boolean?): Ledger
 	return setmetatable({
+		allowTestIds = allowTestIds == true,
 		pieces = {},
 		held = {},
 		heldCount = 0,
@@ -63,8 +68,8 @@ function Ledger.new(prefix: string?): Ledger
 	}, Ledger)
 end
 
-local function validOwner(v: any): number?
-	if type(v) == "number" and v == v and v > 0 and v == math.floor(v) then
+local function validOwner(v: any, allowTestIds: boolean?): number?
+	if type(v) == "number" and v == v and v == math.floor(v) and (v > 0 or (allowTestIds == true and v < 0)) then
 		return v
 	end
 	return nil
@@ -82,7 +87,7 @@ function Ledger.issueFish(self: Ledger, info: FishInfo): { string }
 		local id = self.prefix .. tostring(self.nextId)
 		self.pieces[id] = {
 			id = id,
-			ownerId = validOwner(info.ownerId),
+			ownerId = validOwner(info.ownerId, self.allowTestIds),
 			value = value,
 			variant = variant,
 			tier = tier,

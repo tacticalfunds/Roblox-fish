@@ -273,6 +273,14 @@ do
 		"invalid owners become unowned",
 		l:get(id2).ownerId == nil and l:get(id3).ownerId == nil and l:get(id4).ownerId == nil
 	)
+	local studio = Ledger.new("S", true)
+	local t1 = studio:issueFish({ ownerId = -1, tier = 1 })[1]
+	check("studio ledger: test client (-1) owns its piece", studio:get(t1).ownerId == -1)
+	check(
+		"studio ledger: zero / fraction still unowned",
+		studio:get(studio:issueFish({ ownerId = 0, tier = 1 })[1]).ownerId == nil
+			and studio:get(studio:issueFish({ ownerId = -1.5, tier = 1 })[1]).ownerId == nil
+	)
 	check(
 		"unknown variant becomes normal",
 		l:get(l:issueFish({ ownerId = 1, tier = 1, variant = "Diamond" })[1]).variant == nil

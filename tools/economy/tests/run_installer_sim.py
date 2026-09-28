@@ -148,9 +148,15 @@ SOURCES = {
 }
 
 
-def git_show(rel: str) -> str:
+RELEASE_COMMIT = "a826d73"  # the rod-offers release installed in Studio (fresh InstallRodOffers)
+AQUARIUM_V1 = "2e320f9"
+AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
+SALES_LIVE = ["GrinderProcessor", "BotSystem", "CustomerSystem", "TruckSystem", "NetLiftScript", "HarpoonSystem"]
+
+
+def git_show(rel: str, commit: str = BASE_COMMIT, prefix: str = "tools/economy/") -> str:
     return subprocess.run(
-        ["git", "show", f"{BASE_COMMIT}:tools/economy/{rel}"], cwd=ROOT, capture_output=True, text=True, check=True
+        ["git", "show", f"{commit}:{prefix}{rel}"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout
 
 
@@ -425,6 +431,169 @@ do
 	check("rollback without the update: refused", refused() and snapshot(g) == before)
 end
 
+------------------------------------------------------------ aquarium v1.2 + sales (on the a826d73 release)
+
+-- The place as Astra has it now: the aquarium v1 objects exactly as its
+-- installer made them, the six live scripts, and the FRESH a826d73
+-- InstallRodOffers (the file in this repo, frozen at that release).
+local function aquariumV1(sv)
+	local folder = new("Folder", "AquariumCycle")
+	folder:SetAttribute("AquariumCycleOwned", true)
+	folder:SetAttribute("Enabled", true)
+	for name, src in pairs(AQV1.shared) do
+		local m = new("ModuleScript", name) m.Source = src m.Parent = folder
+	end
+	new("Folder", "Bindings").Parent = folder
+	folder.Parent = sv.ReplicatedStorage
+	for _, name in ipairs({ "AquariumCycleServer", "AquariumEconomy" }) do
+		local m = new("ModuleScript", name) m.Source = AQV1[name] m:SetAttribute("AquariumCycleOwned", true) m.Parent = sv.ServerScriptService
+	end
+	local c = new("LocalScript", "AquariumTankClient") c.Source = AQV1.AquariumTankClient c:SetAttribute("AquariumCycleOwned", true)
+	c.Parent = sv.StarterPlayer.StarterPlayerScripts
+	local b = new("Folder", "AquariumCycleBackup") b:SetAttribute("AquariumCycleOwned", true) b.Parent = sv.ServerStorage
+end
+local function astraPlace(opts)
+	opts = opts or {}
+	local g, sv, history = makeGame()
+	local rfs = new("Script", "RodFishingSystem") rfs.Source = LIVE.RodFishingSystem rfs.Parent = sv.ServerScriptService
+	local shop = new("Script", "RodShopServer") shop.Source = LIVE.RodShopServer shop.Parent = sv.Workspace
+	local scripts = { RodFishingSystem = rfs, RodShopServer = shop }
+	for name, src in pairs(LIVE6) do
+		local sc = new("Script", name) sc.Source = src sc.Parent = if name == "NetLiftScript" then sv.Workspace else sv.ServerScriptService
+		scripts[name] = sc
+	end
+	aquariumV1(sv)
+	if opts.chain8cb then
+		oldInstall(g, sv)
+		update(g, sv)
+	else
+		install(g, sv)
+	end
+	assert(sv.ServerStorage:FindFirstChild("EconomyRodOffersBackup"), "rod offers not installed")
+	return g, sv, history, scripts
+end
+local function upgradeAq(g, s) warnings = {} runUpgradeAq(g, s.Workspace) end
+local function rollbackAq(g, s) warnings = {} runRollbackAq(g, s.Workspace) end
+local function installSales(g, s) warnings = {} runInstallSales(g, s.Workspace) end
+local function rollbackSales(g, s) warnings = {} runRollbackSales(g, s.Workspace) end
+
+do
+	local g, sv, history, sc = astraPlace()
+	check("baseline: fresh a826d73 install = the release sources", sc.RodFishingSystem.Source == NEW.RodFishingSystem
+		and sv.ServerScriptService.EconomyService.Source == NEW.EconomyService)
+	local base = snapshot(g)
+	local rodBackup = subtree(sv.ServerStorage.EconomyRodOffersBackup)
+
+	installSales(g, sv)
+	check("sales before the aquarium upgrade: refused, nothing changed", refused() and snapshot(g) == base)
+
+	local commits = history.commits
+	upgradeAq(g, sv)
+	check("aquarium upgrade: one undo step", not refused() and history.commits == commits + 1)
+	local aq = sv.ReplicatedStorage.AquariumCycle
+	check("aquarium upgrade: Config/SharedTank/server/client = v1.2", aq.Config.Source == AQV12.Config and aq.SharedTank.Source == AQV12.SharedTank
+		and sv.ServerScriptService.AquariumCycleServer.Source == AQV12.AquariumCycleServer
+		and sv.StarterPlayer.StarterPlayerScripts.AquariumTankClient.Source == AQV12.AquariumTankClient)
+	check("aquarium upgrade: other modules untouched", aq.CycleState.Source == AQV1.shared.CycleState and sv.ServerScriptService.AquariumEconomy.Source == AQV1.AquariumEconomy)
+	local ab = sv.ServerStorage:FindFirstChild("EconomyAquariumBackup")
+	check("aquarium upgrade: backup with 4 entries", ab and ab:GetAttribute("EconomyOwned") == true and #ab:GetChildren() == 4)
+	check("aquarium upgrade: rod scripts untouched", sc.RodFishingSystem.Source == NEW.RodFishingSystem)
+	local afterAq = snapshot(g)
+	upgradeAq(g, sv)
+	check("aquarium upgrade twice: refused", refused() and snapshot(g) == afterAq)
+
+	commits = history.commits
+	installSales(g, sv)
+	check("sales: one undo step", not refused() and history.commits == commits + 1)
+	local ok = true
+	for name, src in pairs(SALES) do
+		if sc[name] and sc[name].Source ~= src then ok = false print_real("  mismatch " .. name) end
+	end
+	check("sales: the 6 live scripts + RodFishingSystem = sales patches", ok and sc.GrinderProcessor.Source == SALES.GrinderProcessor)
+	local svc = sv.ServerScriptService.EconomyService
+	check("sales: EconomyService, Ledger, PieceTags = current", svc.Source == CUR.EconomyService and svc.Ledger.Source == CUR.Ledger and svc.PieceTags.Source == CUR.PieceTags)
+	check("sales: shop, client, other modules untouched", sc.RodShopServer.Source == NEW.RodShopServer and svc.Offers.Source == NEW.Offers
+		and sv.StarterPlayer.StarterPlayerScripts.EconomyClient.Source == NEW.EconomyClient)
+	local sb = sv.ServerStorage:FindFirstChild("EconomySalesBackup")
+	check("sales: backup with 10 entries", sb and #sb:GetChildren() == 10)
+	check("sales: original rod backup untouched", subtree(sv.ServerStorage.EconomyRodOffersBackup) == rodBackup)
+	local afterSales = snapshot(g)
+	installSales(g, sv)
+	check("sales twice: refused", refused() and snapshot(g) == afterSales)
+	rollbackAq(g, sv)
+	check("aquarium rollback while sales installed: refused", refused() and snapshot(g) == afterSales)
+	uninstall(g, sv)
+	check("rod uninstall while sales installed: refused", refused() and snapshot(g) == afterSales)
+
+	rollbackSales(g, sv)
+	check("sales rollback: exactly the state before sales", not refused() and snapshot(g) == afterAq)
+	rollbackAq(g, sv)
+	check("aquarium rollback: exactly the a826d73 + aquarium v1 place", not refused() and snapshot(g) == base)
+	uninstall(g, sv)
+	check("then the rod uninstall restores the live scripts", not refused() and sc.RodFishingSystem.Source == LIVE.RodFishingSystem
+		and sc.RodShopServer.Source == LIVE.RodShopServer and sv.ServerScriptService:FindFirstChild("EconomyService") == nil)
+	check("live sale scripts never touched by the rod install", sc.GrinderProcessor.Source == LIVE6.GrinderProcessor)
+end
+
+-- the 8cb2554 + UpdateRodPrompt chain ends in the same sources: sales installs there too
+do
+	local g, sv, _, sc = astraPlace({ chain8cb = true })
+	upgradeAq(g, sv)
+	installSales(g, sv)
+	check("8cb2554 + update chain: aquarium + sales install", not refused() and sc.TruckSystem.Source == SALES.TruckSystem)
+	rollbackSales(g, sv)
+	rollbackAq(g, sv)
+	check("8cb2554 + update chain: both roll back", not refused() and sv.ServerStorage:FindFirstChild("EconomyRodPromptBackup") ~= nil
+		and sc.RodFishingSystem.Source == NEW.RodFishingSystem)
+end
+
+-- refusals change nothing
+do
+	local g, sv, _, sc = astraPlace()
+	sv.RunService.running = true
+	local before = snapshot(g)
+	upgradeAq(g, sv)
+	check("aquarium upgrade in Play: refused", refused() and snapshot(g) == before)
+	sv.RunService.running = false
+	sv.ReplicatedStorage.AquariumCycle.SharedTank.Source ..= "\n-- tuned"
+	before = snapshot(g)
+	upgradeAq(g, sv)
+	check("aquarium upgrade over an edited module: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv, _, sc = astraPlace()
+	upgradeAq(g, sv)
+	sc.GrinderProcessor.Source ..= "\n-- hand edit"
+	local before = snapshot(g)
+	installSales(g, sv)
+	check("sales over an edited live script: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv, _, sc = astraPlace()
+	upgradeAq(g, sv)
+	local dup = new("Script", "TruckSystem") dup.Source = LIVE6.TruckSystem dup.Parent = sv.Workspace
+	local before = snapshot(g)
+	installSales(g, sv)
+	check("sales with two TruckSystem scripts: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraPlace()
+	upgradeAq(g, sv)
+	sv.ServerScriptService.EconomyService.Ledger:SetAttribute("EconomyOwned", nil)
+	local before = snapshot(g)
+	installSales(g, sv)
+	check("sales when an economy module isn't ours: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv, _, sc = astraPlace()
+	upgradeAq(g, sv)
+	installSales(g, sv)
+	sc.CustomerSystem.Source ..= "\n-- hand edit"
+	local before = snapshot(g)
+	rollbackSales(g, sv)
+	check("sales rollback over an edited script: refused", refused() and snapshot(g) == before)
+end
+
 print_real(string.format("%d passed, %d failed", passes, failures))
 if failures > 0 then error("installer simulation failed") end
 """
@@ -446,14 +615,39 @@ def main() -> int:
     )
     prelude = "local print_real = print\n" + prelude
     installer = (ROOT / "InstallRodOffers.lua").read_text()
+    # the fresh installer and the rod-prompt update are frozen at the release Astra installed
+    for frozen in ("InstallRodOffers.lua", "UninstallRodOffers.lua", "UpdateRodPrompt.lua", "RollbackRodPrompt.lua"):
+        if (ROOT / frozen).read_text() != git_show(frozen, RELEASE_COMMIT):
+            print(f"FAIL: {frozen} differs from the {RELEASE_COMMIT} release installed in Studio")
+            return 1
     uninstaller = (ROOT / "UninstallRodOffers.lua").read_text()
     # the rod-offers install Astra has in Studio: the REAL 8cb2554 scripts
     old_installer = git_show("InstallRodOffers.lua")
     old_uninstaller = git_show("UninstallRodOffers.lua")
     old = {k: git_show(v) for k, v in SOURCES.items()}
-    new = {k: (ROOT / v).read_text() for k, v in SOURCES.items()}
+    new = {k: git_show(v, RELEASE_COMMIT) for k, v in SOURCES.items()}
     tables = "local OLD = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in old.items()) + "}\n"
     tables += "local NEW = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in new.items()) + "}\n"
+    cur = {k: (ROOT / v).read_text() for k, v in SOURCES.items()}
+    cur["Ledger"] = (ROOT / "src/core/Ledger.luau").read_text()
+    cur["PieceTags"] = (ROOT / "src/core/PieceTags.luau").read_text()
+    tables += "local CUR = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in cur.items()) + "}\n"
+    live6 = {k: (live / f"{k}.lua").read_text() for k in SALES_LIVE}
+    tables += "local LIVE6 = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in live6.items()) + "}\n"
+    sales = {p.stem: p.read_text() for p in sorted((ROOT / "studio" / "sales").glob("*.lua"))}
+    tables += "local SALES = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in sales.items()) + "}\n"
+    aq = "tools/aquarium-cycle/src/"
+    aqv1 = {n: git_show(f"shared/{n}.luau", AQUARIUM_V1, aq) for n in AQ_SHARED}
+    tables += "local AQV1 = { shared = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in aqv1.items()) + "},\n"
+    for n in ("AquariumCycleServer", "AquariumEconomy"):
+        tables += f"\t{n} = {lua_string(git_show(f'server/{n}.luau', AQUARIUM_V1, aq))},\n"
+    tables += f"\tAquariumTankClient = {lua_string(git_show('client/AquariumTankClient.client.luau', AQUARIUM_V1, aq))},\n}}\n"
+    aqroot = ROOT.parent / "aquarium-cycle" / "src"
+    tables += "local AQV12 = {\n"
+    for n in ("Config", "SharedTank"):
+        tables += f"\t{n} = {lua_string((aqroot / 'shared' / f'{n}.luau').read_text())},\n"
+    tables += f"\tAquariumCycleServer = {lua_string((aqroot / 'server' / 'AquariumCycleServer.luau').read_text())},\n"
+    tables += f"\tAquariumTankClient = {lua_string((aqroot / 'client' / 'AquariumTankClient.client.luau').read_text())},\n}}\n"
     source = (
         prelude
         + tables
@@ -463,6 +657,10 @@ def main() -> int:
         + wrap("runOldUninstall", old_uninstaller)
         + wrap("runUpdate", (ROOT / "UpdateRodPrompt.lua").read_text())
         + wrap("runRollback", (ROOT / "RollbackRodPrompt.lua").read_text())
+        + wrap("runUpgradeAq", (ROOT / "UpgradeAquariumV12.lua").read_text())
+        + wrap("runRollbackAq", (ROOT / "RollbackAquariumV12.lua").read_text())
+        + wrap("runInstallSales", (ROOT / "InstallSales.lua").read_text())
+        + wrap("runRollbackSales", (ROOT / "RollbackSales.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

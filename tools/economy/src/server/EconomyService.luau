@@ -357,7 +357,7 @@ function M._start(): boolean
 		return HttpService:GenerateGUID(false)
 	end)
 	money = MoneyStore.new(store, sessionId, os.time)
-	ledger = Ledger.new("P")
+	ledger = Ledger.new("P", RunService:IsStudio())
 
 	Players.PlayerAdded:Connect(function(p)
 		task.spawn(loadPlayer, p)

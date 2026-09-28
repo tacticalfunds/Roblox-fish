@@ -163,6 +163,42 @@ do
 	check("oversized meta values dropped", long.meta[next(long.meta) or 0] == nil)
 end
 
+-- v1.2: the buyer (OwnerId) rides rod -> tank -> river with the fish
+do
+	local tank = fresh()
+	tank:reserve({ 1, 2 }, 0)
+	tank:hook(1, "Salmon", BITE, { OwnerId = 4242 })
+	tank:hook(2, "Cod", BITE, { OwnerId = -1, Variant = "Silver" }) -- Studio test client
+	local _, _, _, _, m1 = tank:land(1, BITE + LIFT)
+	local _, _, _, _, m2 = tank:land(2, BITE + LIFT)
+	check("owner kept on land", m1 and m1.OwnerId == 4242)
+	check("test-client owner + variant kept", m2 and m2.OwnerId == -1 and m2.Variant == "Silver")
+	-- releases go out one batch at a time: release until both are back in the river
+	local owners, handed = {}, {}
+	local t = 10
+	while #handed < 2 and t < 10000 do
+		local _, _, fish = tank:release(t)
+		for _, f in ipairs(fish) do
+			owners[f.name] = f.meta and f.meta.OwnerId
+		end
+		t += Config.ReleaseSwimSeconds + 100
+		for _, h in ipairs(tank:step(t)) do
+			table.insert(handed, h)
+		end
+	end
+	check("release carries each fish's own buyer", owners.Salmon == 4242 and owners.Cod == -1)
+	local ok = #handed == 2
+	for _, h in ipairs(handed) do
+		ok = ok and h.meta ~= nil and h.meta.OwnerId == (if h.name == "Salmon" then 4242 else -1)
+	end
+	check("hand-off to the river keeps the buyer", ok)
+	local bad = fresh()
+	bad:reserve({ 1 }, 0)
+	bad:hook(1, "Eel", BITE, { OwnerId = 0 / 0 })
+	check("NaN owner dropped", bad.meta[next(bad.meta) or 0] == nil)
+	healthy(tank, "owner bookkeeping")
+end
+
 -- Upgrades: unavailable without currency, never free.
 do
 	local tank = fresh()

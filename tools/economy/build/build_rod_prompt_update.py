@@ -33,6 +33,12 @@ def at_base(rel: str) -> str:
 
 
 def main() -> None:
+    if "--rebuild-release" not in sys.argv:
+        sys.exit(
+            "InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73 release installed in Studio;"
+            " later milestones ship as update installers (build/build_updates.py)."
+            " Pass --rebuild-release only when cutting a new fresh-install release."
+        )
     bi.main()
     changes, unchanged = [], []
     for key, rel in PATHS.items():
