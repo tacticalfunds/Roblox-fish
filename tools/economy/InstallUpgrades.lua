@@ -636,6 +636,7 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 	-- keep the line full
 	local last = queue[#queue]
+	-- cars only come once someone has bought Car Sales; Max Line + Car Speed upgrades
 	local maxQ = workspace:GetAttribute("CarsMaxQueue") or MAX_TRUCKS
 	if workspace:GetAttribute("CarsUnlocked") and #queue + #departing < maxQ + 2 and #queue < maxQ and (not last or last.s >= Path.SPACING) and os.clock() >= nextTruckAt then
 		spawnTruck()
@@ -798,6 +799,7 @@ end
 Players.PlayerAdded:Connect(bindPlayer)
 for _, p in ipairs(Players:GetPlayers()) do bindPlayer(p) end
 Players.PlayerRemoving:Connect(function(p) bound[p] = nil end)
+
 ]] },
 	{ key = "EconomyService", where = "ServerScriptService/EconomyService", class = "ModuleScript", tag = "EconomyOwned", source = [[
 -- EconomyService (ModuleScript in ServerScriptService; its children are the

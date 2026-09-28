@@ -1090,6 +1090,7 @@ end
 
 task.wait(4)
 while true do
+	-- Customers upgrade (CarSalesServer) publishes rate + line cap on workspace
 	local cap = workspace:GetAttribute("CustomersLineCap") or MAX_IN_LINE
 	if #Players:GetPlayers() > 0 and #line < cap then
 		spawnCustomer()
@@ -1102,6 +1103,7 @@ while true do
 		task.wait(math.random(SPAWN_DELAY[1] * 10, SPAWN_DELAY[2] * 10) / 10)
 	end
 end
+
 ]], new = [[
 -- Customers: avatars of the server owner's friends walk out of the shops in the city,
 -- down the sidewalk to the meat table at the end of the conveyor, buy a piece of meat
@@ -1363,6 +1365,7 @@ end
 
 task.wait(4)
 while true do
+	-- Customers upgrade (CarSalesServer) publishes rate + line cap on workspace
 	local cap = workspace:GetAttribute("CustomersLineCap") or MAX_IN_LINE
 	if #Players:GetPlayers() > 0 and #line < cap then
 		spawnCustomer()
@@ -1375,6 +1378,7 @@ while true do
 		task.wait(math.random(SPAWN_DELAY[1] * 10, SPAWN_DELAY[2] * 10) / 10)
 	end
 end
+
 ]] },
 	{ key = "TruckSystem", where = "script:TruckSystem", class = "Script", old = [[
 -- Delivery trucks: a line of trucks comes out of Cave1, waits at the U-turn next to the dock,
@@ -1574,6 +1578,7 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 	-- keep the line full
 	local last = queue[#queue]
+	-- cars only come once someone has bought Car Sales; Max Line + Car Speed upgrades
 	local maxQ = workspace:GetAttribute("CarsMaxQueue") or MAX_TRUCKS
 	if workspace:GetAttribute("CarsUnlocked") and #queue + #departing < maxQ + 2 and #queue < maxQ and (not last or last.s >= Path.SPACING) and os.clock() >= nextTruckAt then
 		spawnTruck()
@@ -1711,6 +1716,7 @@ Players.PlayerAdded:Connect(function(p)
 		p:SetAttribute("CarryMeat", 0)
 	end)
 end)
+
 ]], new = [[
 -- Delivery trucks: a line of trucks comes out of Cave1, waits at the U-turn next to the dock,
 -- players carry meat from the stack at the end of the conveyor and drop it in the front truck's bucket.
@@ -1934,6 +1940,7 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 	-- keep the line full
 	local last = queue[#queue]
+	-- cars only come once someone has bought Car Sales; Max Line + Car Speed upgrades
 	local maxQ = workspace:GetAttribute("CarsMaxQueue") or MAX_TRUCKS
 	if workspace:GetAttribute("CarsUnlocked") and #queue + #departing < maxQ + 2 and #queue < maxQ and (not last or last.s >= Path.SPACING) and os.clock() >= nextTruckAt then
 		spawnTruck()
@@ -2096,6 +2103,7 @@ end
 Players.PlayerAdded:Connect(bindPlayer)
 for _, p in ipairs(Players:GetPlayers()) do bindPlayer(p) end
 Players.PlayerRemoving:Connect(function(p) bound[p] = nil end)
+
 ]] },
 	{ key = "NetLiftScript", where = "script:NetLiftScript", class = "Script", old = [[
 -- Server: handles the step pad. The net animation + splash runs on each client (NetLiftClient).

@@ -195,6 +195,7 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 	-- keep the line full
 	local last = queue[#queue]
+	-- cars only come once someone has bought Car Sales; Max Line + Car Speed upgrades
 	local maxQ = workspace:GetAttribute("CarsMaxQueue") or MAX_TRUCKS
 	if workspace:GetAttribute("CarsUnlocked") and #queue + #departing < maxQ + 2 and #queue < maxQ and (not last or last.s >= Path.SPACING) and os.clock() >= nextTruckAt then
 		spawnTruck()
@@ -332,3 +333,4 @@ Players.PlayerAdded:Connect(function(p)
 		p:SetAttribute("CarryMeat", 0)
 	end)
 end)
+

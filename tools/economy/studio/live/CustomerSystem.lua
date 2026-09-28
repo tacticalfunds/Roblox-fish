@@ -233,6 +233,7 @@ end
 
 task.wait(4)
 while true do
+	-- Customers upgrade (CarSalesServer) publishes rate + line cap on workspace
 	local cap = workspace:GetAttribute("CustomersLineCap") or MAX_IN_LINE
 	if #Players:GetPlayers() > 0 and #line < cap then
 		spawnCustomer()
@@ -245,3 +246,4 @@ while true do
 		task.wait(math.random(SPAWN_DELAY[1] * 10, SPAWN_DELAY[2] * 10) / 10)
 	end
 end
+

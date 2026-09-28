@@ -29,10 +29,11 @@ existing paid-upgrade hooks that weren't in the baseline:
   - `CarsMaxQueue` caps the line
   - `CarsGapSeconds` sets the spacing
 
-`studio/live/` now includes both, and the sales patch keeps them, with build
-guards and a runtime test. These baselines were rebuilt from Astra's
-descriptions. If a guard still refuses, the refusal names the first
-differing line; please paste that block.
+`studio/live/` now holds Astra's **exact pasted live sources** for both,
+including their comments. The first rebuild from descriptions missed one
+comment line in each, and the exact guard correctly refused it. The sales
+patch keeps the hooks, with build guards and a runtime test. The installer
+dry run also checks that the comment-less rebuilds are still refused.
 
 **Install order:** `InstallRodOffers` (a826d73) → `UpgradeAquariumV12` →
 `InstallSales` → `InstallUpgrades` → `InstallRodCast` → `InstallGrinderDwell` →
@@ -402,7 +403,7 @@ changes; the rest re-check behaviour that already worked.
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
 python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 175 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 179 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

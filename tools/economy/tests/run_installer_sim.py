@@ -762,6 +762,17 @@ do
 	check("sales over the pre-hook CustomerSystem: refused", refused() and snapshot(g) == before)
 	check("refusal names the first differing line", (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
 end
+-- the 58dcd56 baselines were rebuilt from descriptions and lacked one comment
+-- line each: the exact guard must refuse them (it did in Studio)
+for _, case in ipairs({ { name = "CustomerSystem", src = RECON.CustomerSystem }, { name = "TruckSystem", src = RECON.TruckSystem } }) do
+	local g, sv, _, sc = astraPlace()
+	upgradeAq(g, sv)
+	sc[case.name].Source = case.src
+	local before = snapshot(g)
+	installSales(g, sv)
+	check("sales over the comment-less " .. case.name .. " reconstruction: refused", refused() and snapshot(g) == before)
+	check(case.name .. " refusal names the missing comment line", (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
 do
 	local g, sv = astraPlace()
 	upgradeAq(g, sv)
@@ -830,6 +841,9 @@ def main() -> int:
     tables += f"\tAquariumTankClient = {lua_string(git_show('client/AquariumTankClient.client.luau', AQUARIUM_V1, aq))},\n}}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
+    tables += "local RECON = {\n" + "".join(
+        f"\t{n} = {lua_string(git_show(f'studio/live/{n}.lua', '58dcd56'))},\n" for n in ("CustomerSystem", "TruckSystem")
+    ) + "}\n"
     vis = {
         "LiveFishSwimClient": (live / "FishSwimClient.lua").read_text(),
         "JumpPatched": (ROOT.parent / "fish-jump" / "studio" / "FishSwimClient.patched.lua").read_text(),
