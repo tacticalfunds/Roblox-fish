@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generates the rod Buy/Pass slice patches (installable milestone).
+"""Generates the rod-fish buying slice patches (installable milestone).
 
-  RodFishingSystem: rod-fish offers (base = live, aquarium v1 + Astra's tweaks)
+  RodFishingSystem: rod-fish offers, bought at the rod stand (base = live, aquarium v1 + Astra's tweaks)
   RodShopServer:    compatibility - charge through EconomyService (base = live)
 
 Every edit is asserted to match exactly once. Output:
@@ -30,15 +30,51 @@ def rod_fishing(src: str) -> str:
                 "Rod-fish offers. While offers are configured (ReplicatedStorage.Economy exists",
                 "and its RodOffersEnabled attribute is not false), each cast needs the money",
                 "service AND the aquarium, and the revealed fish WAITS on the line for its",
-                "caster (the player who pressed the button) to Buy it (price shown; charged",
-                "once, then it goes to the aquarium) or Pass (it slips back into the water and",
-                "is gone). Timeout, the caster leaving, or the aquarium closing also end the",
-                "offer with no charge. An unpaid rod fish NEVER goes to the aquarium or the",
-                "grinder. Configured but EconomyService not running = FAIL CLOSED (no cast,",
-                "notice). Only RodOffersEnabled = false or uninstalling (no Economy folder)",
-                "restores the aquarium v1 behaviour above.",
+                "caster (the player who pressed the button) to walk up to that rod's stand and",
+                "Buy it with the proximity prompt (price shown; charged once, then it goes to",
+                "the aquarium). Otherwise it slips back into the water and is gone: timeout,",
+                "the caster dying or leaving, or the aquarium closing end the offer with no",
+                "charge. An unpaid rod fish NEVER goes to the aquarium or the grinder.",
+                "Configured but EconomyService not running = FAIL CLOSED (no cast, notice).",
+                "Only RodOffersEnabled = false or uninstalling (no Economy folder) restores the",
+                "aquarium v1 behaviour above.",
             ]
         ),
+    )
+    p.rep(
+        """local function pickFish()
+	local r = math.random() * total
+	for _, e in ipairs(pool) do r -= e.w if r <= 0 then return e.name end end
+	return pool[1].name
+end
+""",
+        """local function pickFish()
+	local r = math.random() * total
+	for _, e in ipairs(pool) do r -= e.w if r <= 0 then return e.name end end
+	return pool[1].name
+end
+-- Economy: a fish's real roll chance on the rods (the same weights pickFish uses)
+local function rodChance(name)
+	if total <= 0 then return nil end
+	local w = 0
+	for _, e in ipairs(pool) do if e.name == name then w += e.w end end
+	return w / total
+end
+""",
+    )
+    p.rep(
+        "\t\tlocal best, bp, bpart = -math.huge, nil, nil\n",
+        "\t\tlocal best, bp, bpart = -math.huge, nil, nil\n"
+        "\t\tlocal low, stand = math.huge, nil -- Economy: rod stand = lowest corner (buy prompt)\n",
+    )
+    p.rep(
+        "\t\t\t\t\tif c.Y > best then best, bp, bpart = c.Y, c, p end\n",
+        "\t\t\t\t\tif c.Y > best then best, bp, bpart = c.Y, c, p end\n"
+        "\t\t\t\t\tif c.Y < low then low, stand = c.Y, c end\n",
+    )
+    p.rep(
+        '\t\ttable.insert(rods, { model = m, tip = bp, tipAtt = att, state = "idle" })\n',
+        '\t\ttable.insert(rods, { model = m, tip = bp, tipAtt = att, state = "idle", stand = stand })\n',
     )
     p.rep(
         "------------------------------------------------------------ button look / lock\n",
@@ -78,7 +114,9 @@ end
 				fishName = finalName,
 				tier = tpl and tpl:GetAttribute("Tier") or 1,
 				variant = nil,
+				chance = rodChance(finalName),
 				fish = shown,
+				stand = rod.stand,
 				stillValid = function() return Aquarium ~= nil and Aquarium.active() end,
 				reservationOk = function() return Aquarium ~= nil and Aquarium.active() end,
 				deliver = function() return Aquarium ~= nil and Aquarium.land(rod.key) end,
@@ -156,6 +194,7 @@ def check_offer_block(src: str) -> None:
     press = src[src.index("local function press(player)"):]
     assert press.index("offersConfigured()") < press.index("Economy.running()") < press.index("Aquarium.reserve("), \
         "fail closed before any reservation when offers are configured but the service is down"
+    assert "chance = rodChance(finalName)," in block and "stand = rod.stand," in block
     # the free-delivery code below stays reachable only when not in offer mode
     assert src.index("if not Aquarium.land(rod.key) then") > j
 

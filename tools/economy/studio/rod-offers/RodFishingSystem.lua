@@ -15,13 +15,14 @@
 -- Rod-fish offers. While offers are configured (ReplicatedStorage.Economy exists
 -- and its RodOffersEnabled attribute is not false), each cast needs the money
 -- service AND the aquarium, and the revealed fish WAITS on the line for its
--- caster (the player who pressed the button) to Buy it (price shown; charged
--- once, then it goes to the aquarium) or Pass (it slips back into the water and
--- is gone). Timeout, the caster leaving, or the aquarium closing also end the
--- offer with no charge. An unpaid rod fish NEVER goes to the aquarium or the
--- grinder. Configured but EconomyService not running = FAIL CLOSED (no cast,
--- notice). Only RodOffersEnabled = false or uninstalling (no Economy folder)
--- restores the aquarium v1 behaviour above.
+-- caster (the player who pressed the button) to walk up to that rod's stand and
+-- Buy it with the proximity prompt (price shown; charged once, then it goes to
+-- the aquarium). Otherwise it slips back into the water and is gone: timeout,
+-- the caster dying or leaving, or the aquarium closing end the offer with no
+-- charge. An unpaid rod fish NEVER goes to the aquarium or the grinder.
+-- Configured but EconomyService not running = FAIL CLOSED (no cast, notice).
+-- Only RodOffersEnabled = false or uninstalling (no Economy folder) restores the
+-- aquarium v1 behaviour above.
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -60,6 +61,13 @@ local function pickFish()
 	for _, e in ipairs(pool) do r -= e.w if r <= 0 then return e.name end end
 	return pool[1].name
 end
+-- Economy: a fish's real roll chance on the rods (the same weights pickFish uses)
+local function rodChance(name)
+	if total <= 0 then return nil end
+	local w = 0
+	for _, e in ipairs(pool) do if e.name == name then w += e.w end end
+	return w / total
+end
 
 ------------------------------------------------------------ rods
 local rods = {}
@@ -67,11 +75,13 @@ for _, m in ipairs(workspace:GetChildren()) do
 	if m.Name == "FishingRod1" and m:IsA("Model") then
 		-- tip = highest corner of the rod
 		local best, bp, bpart = -math.huge, nil, nil
+		local low, stand = math.huge, nil -- Economy: rod stand = lowest corner (buy prompt)
 		for _, p in ipairs(m:GetDescendants()) do
 			if p:IsA("BasePart") then
 				for _, sx in ipairs({ -1, 1 }) do for _, sy in ipairs({ -1, 1 }) do for _, sz in ipairs({ -1, 1 }) do
 					local c = p.CFrame * Vector3.new(sx * p.Size.X / 2, sy * p.Size.Y / 2, sz * p.Size.Z / 2)
 					if c.Y > best then best, bp, bpart = c.Y, c, p end
+					if c.Y < low then low, stand = c.Y, c end
 				end end end
 			end
 		end
@@ -80,7 +90,7 @@ for _, m in ipairs(workspace:GetChildren()) do
 		att.Parent = bpart
 		att.WorldPosition = bp
 		m:SetAttribute("RestPivot", m:GetPivot())
-		table.insert(rods, { model = m, tip = bp, tipAtt = att, state = "idle" })
+		table.insert(rods, { model = m, tip = bp, tipAtt = att, state = "idle", stand = stand })
 	end
 end
 table.sort(rods, function(a, b) return a.tip.Z < b.tip.Z end)
@@ -338,7 +348,9 @@ local function runRod(rod, player)
 				fishName = finalName,
 				tier = tpl and tpl:GetAttribute("Tier") or 1,
 				variant = nil,
+				chance = rodChance(finalName),
 				fish = shown,
+				stand = rod.stand,
 				stillValid = function() return Aquarium ~= nil and Aquarium.active() end,
 				reservationOk = function() return Aquarium ~= nil and Aquarium.active() end,
 				deliver = function() return Aquarium ~= nil and Aquarium.land(rod.key) end,

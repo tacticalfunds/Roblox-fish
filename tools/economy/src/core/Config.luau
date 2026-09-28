@@ -82,11 +82,16 @@ Config.OfferPrice = {
 }
 
 Config.Offer = {
-	TimeoutSeconds = 20, -- unanswered offers are passed automatically
-	-- Server-side range check: the buyer's character must be within this many
-	-- studs of the fish on the line. The button accepts presses from 80 studs,
-	-- so this keeps buying to the dock area; tune after measuring in Studio.
-	MaxBuyDistance = 100,
+	TimeoutSeconds = 20, -- unanswered offers slip off the hook (no charge)
+	-- The caster buys at the ROD STAND with a proximity prompt (E / gamepad /
+	-- tap). Distances are measured from the stand, never from the fish (the
+	-- fish on the line is animated on clients, its server position is stale).
+	PromptDistance = 10, -- ProximityPrompt.MaxActivationDistance, studs
+	-- The server accepts a Buy up to PromptDistance + ReachSlack from the
+	-- stand (movement between the key press and the request arriving).
+	ReachSlack = 4,
+	-- The prompt anchor sits this far above the stand's lowest point.
+	StandHeight = 2.5,
 	ActionCooldown = 0.25, -- per player, between Buy/Pass requests
 }
 -- Attribute on ReplicatedStorage.Economy: set false to switch rod offers off
@@ -140,6 +145,10 @@ function Config.check(firstTankUpgradeCost: number?): (boolean, string?)
 		if def.Price >= def.Sale then
 			return false, "variant " .. name .. " price multiplier eats its sale multiplier"
 		end
+	end
+	local o = Config.Offer
+	if not (o.PromptDistance > 0 and o.PromptDistance <= 30 and o.ReachSlack >= 0 and o.ReachSlack <= 10) then
+		return false, "buy prompt distance must be in (0, 30] and slack in [0, 10]"
 	end
 	for _, band in ipairs(Config.OfferPrice.Factors) do
 		if band.Factor <= 0 or band.Factor >= 1 then

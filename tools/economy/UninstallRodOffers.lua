@@ -10,7 +10,8 @@
 
 	Safety: if either script was edited after install (its source no longer
 	matches the recorded After copy), nothing is changed unless FORCE_RESTORE.
-	Uninstall later economy milestones FIRST (they build on EconomyService).
+	Roll back updates / later economy milestones FIRST (they build on this):
+	with UpdateRodPrompt installed, run RollbackRodPrompt.lua first.
 	Saved Money in the DataStore is NOT deleted.
 ]]
 
@@ -24,8 +25,9 @@ local StarterPlayer = game:GetService("StarterPlayer")
 
 local TAG = "EconomyOwned"
 local BACKUP = "EconomyRodOffersBackup"
--- backups of later economy milestones; they must be uninstalled first
-local LATER = { "EconomySalesBackup", "EconomyAquariumBackup" }
+-- backups of later economy milestones / updates; they must be rolled back
+-- first (RollbackRodPrompt.lua for EconomyRodPromptBackup)
+local LATER = { "EconomyRodPromptBackup", "EconomySalesBackup", "EconomyAquariumBackup" }
 
 local function fail(msg)
 	warn("[UninstallRodOffers] " .. msg .. " - nothing changed.")

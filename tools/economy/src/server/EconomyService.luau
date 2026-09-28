@@ -46,9 +46,10 @@ local root: Folder -- ReplicatedStorage.Economy (installed)
 local notice: RemoteEvent
 local storeKind = "DataStore"
 local offers: Offers.Offers
-local offersFolder: Folder -- ReplicatedStorage.Economy.Offers: one Configuration per open offer
+local offersFolder: Folder -- ReplicatedStorage.Economy.Offers (kept empty; offers live on buy stands)
+local standsFolder: Folder -- Workspace.EconomyBuyStands: one invisible buy-stand part per open offer
 local offerAction: RemoteFunction
-local offerRecs = {} -- offer id -> { fish, deps, cfg, gui }
+local offerRecs = {} -- offer id -> { stand, reservationOk, deliver }
 local lastOfferAction: { [Player]: number } = {}
 local lastLockWarn = {}
 
@@ -307,6 +308,18 @@ function M._start(): boolean
 	for _, old in ipairs(offersFolder:GetChildren()) do
 		old:Destroy() -- nothing from a previous run survives
 	end
+	-- runtime folder (Play only, never saved): the caster's client puts its
+	-- buy prompt on these parts
+	if workspace:FindFirstChild("EconomyBuyStands") then
+		-- ours is created here and never saved: an existing one is someone else's
+		warn("[Economy] Workspace.EconomyBuyStands already exists and isn't ours; economy off")
+		return false
+	end
+	local sf = Instance.new("Folder")
+	sf.Name = "EconomyBuyStands"
+	sf.Archivable = false
+	sf.Parent = workspace
+	standsFolder = sf :: Folder
 	local oa = root:FindFirstChild("OfferAction")
 	if not (oa and oa:IsA("RemoteFunction")) then
 		oa = Instance.new("RemoteFunction")
@@ -536,13 +549,43 @@ function M.rodOffersEnabled(): boolean
 end
 
 local VARIANT_TEXT = { Silver = "SILVER ", Gold = "GOLD " }
+local LIME = Color3.fromRGB(120, 255, 40)
+local OUTLINE = Color3.fromRGB(10, 10, 12)
 
+local function outlinedLabel(
+	parent: Instance,
+	name: string,
+	text: string,
+	color: Color3,
+	y: number,
+	h: number
+): TextLabel
+	local label = Instance.new("TextLabel")
+	label.Name = name
+	label.BackgroundTransparency = 1
+	label.Position = UDim2.fromScale(0, y)
+	label.Size = UDim2.fromScale(1, h)
+	label.Font = Enum.Font.FredokaOne
+	label.TextScaled = true
+	label.TextColor3 = color
+	label.Text = text
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = OUTLINE
+	stroke.Thickness = 2.5
+	stroke.Parent = label
+	label.Parent = parent
+	return label
+end
+
+-- Everyone sees the catch's label above the fish: the real roll chance (only
+-- when the rod supplied it), the species and the server price. It follows the
+-- fish as clients animate it (adorned to the fish's part).
 local function offerBillboard(
 	fish: Model,
-	caster: Player,
 	fishName: string,
 	variant: string?,
-	price: number
+	price: number,
+	chance: any
 ): BillboardGui?
 	local adornee = fish.PrimaryPart or fish:FindFirstChildWhichIsA("BasePart", true)
 	if not adornee then
@@ -550,34 +593,56 @@ local function offerBillboard(
 	end
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "OfferGui"
-	gui.Size = UDim2.fromOffset(240, 58)
-	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.2, 0)
+	gui.Size = UDim2.fromOffset(200, 96)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.4, 0)
 	gui.AlwaysOnTop = true
 	gui.MaxDistance = 140
 	gui.LightInfluence = 0
 	gui.Adornee = adornee
-	local top = Instance.new("TextLabel")
-	top.Name = "Price"
-	top.Size = UDim2.fromScale(1, 0.6)
-	top.BackgroundTransparency = 1
-	top.Font = Enum.Font.FredokaOne
-	top.TextScaled = true
-	top.TextColor3 = if variant == "Gold"
+	local chanceText = Offers.chanceText(chance)
+	if chanceText then
+		outlinedLabel(gui, "Chance", "\u{1F340} " .. chanceText, LIME, 0, 0.24)
+	end
+	local nameColor = if variant == "Gold"
 		then Color3.fromRGB(255, 205, 60)
 		elseif variant == "Silver" then Color3.fromRGB(215, 230, 245)
 		else Color3.new(1, 1, 1)
-	top.TextStrokeTransparency = 0.2
-	top.Text = string.format("%s%s - %d %s", VARIANT_TEXT[variant or ""] or "", fishName, price, Config.CurrencyName)
-	top.Parent = gui
-	local sub = top:Clone()
-	sub.Name = "Who"
-	sub.Position = UDim2.fromScale(0, 0.6)
-	sub.Size = UDim2.fromScale(1, 0.4)
-	sub.TextColor3 = Color3.fromRGB(220, 230, 240)
-	sub.Text = caster.DisplayName .. "'s catch: Buy or Pass"
-	sub.Parent = gui
+	outlinedLabel(gui, "FishName", (VARIANT_TEXT[variant or ""] or "") .. fishName, nameColor, 0.24, 0.32)
+	outlinedLabel(gui, "Price", "$" .. tostring(price), LIME, 0.56, 0.44)
 	gui.Parent = adornee
 	return gui
+end
+
+-- The caster's buy point: an invisible anchored part at the rod stand. The
+-- caster's EconomyClient puts a ProximityPrompt on it (only the caster's);
+-- its attributes carry the offer for that client. Destroyed with the offer.
+local function standAnchor(offer: Offers.Offer, stand: Vector3, expiresAt: number): Part
+	local part = Instance.new("Part")
+	part.Name = "BuyStand" .. offer.id
+	part.Size = Vector3.new(1, 1, 1)
+	part.Transparency = 1
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CastShadow = false
+	part.Archivable = false
+	part.CFrame = CFrame.new(stand)
+	part:SetAttribute("OfferId", offer.id)
+	part:SetAttribute("CasterUserId", offer.casterId)
+	part:SetAttribute("FishName", offer.fishName)
+	part:SetAttribute("Variant", offer.variant)
+	part:SetAttribute("Price", offer.price)
+	part:SetAttribute("ExpiresAt", expiresAt)
+	part:SetAttribute("PromptDistance", Config.Offer.PromptDistance)
+	part.Parent = standsFolder
+	return part
+end
+
+local function alive(player: Player): boolean
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	return humanoid ~= nil and humanoid.Health > 0
 end
 
 local RESULT_TEXT = {
@@ -587,7 +652,7 @@ local RESULT_TEXT = {
 	unknown = "That fish is gone",
 	notYours = "Only the player who cast can buy this fish",
 	expired = "Too late - it slipped off the hook",
-	tooFar = "Get closer to the rods to buy",
+	tooFar = "Walk up to the rod to buy",
 	tankUnavailable = "The aquarium can't take it - not charged",
 	funds = "Not enough Money",
 	notLoaded = "Money is still loading - try again",
@@ -620,13 +685,17 @@ function M._offerAction(player: Player, offerId: any, action: any): (boolean, st
 	-- the debit and the delivery.
 	local r = offers:buy(offerId, player.UserId, now, {
 		inRange = function(): boolean
+			-- measured from the rod stand (where the prompt is), not the fish
 			local character = player.Character
 			local hrp = character and character:FindFirstChild("HumanoidRootPart")
-			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-			if not (hrp and hrp:IsA("BasePart") and humanoid and humanoid.Health > 0 and rec.fish.Parent) then
+			if not (hrp and hrp:IsA("BasePart") and alive(player)) then
 				return false
 			end
-			return (hrp.Position - rec.fish:GetPivot().Position).Magnitude <= Config.Offer.MaxBuyDistance
+			return Offers.inReach(
+				(hrp.Position - rec.stand).Magnitude,
+				Config.Offer.PromptDistance,
+				Config.Offer.ReachSlack
+			)
 		end,
 		reservationOk = function(): boolean
 			return rec.reservationOk() == true
@@ -652,15 +721,18 @@ export type RodOfferParams = {
 	fishName: string,
 	tier: number,
 	variant: string?,
-	fish: Model, -- the revealed fish on the line (price label + range check)
+	chance: number?, -- the fish's real roll chance on the rods (display only)
+	fish: Model, -- the revealed fish on the line (price label)
+	stand: Vector3, -- the rod stand's lowest point (buy prompt + range check)
 	stillValid: () -> boolean, -- false = the aquarium can no longer take it
 	reservationOk: () -> boolean, -- checked right before charging
 	deliver: () -> boolean, -- puts the fish in the aquarium; false = failed (refund)
 }
 
 -- RodFishingSystem: offer a revealed fish to its caster and WAIT (yields)
--- until they buy it, pass, time out, leave, or the offer can't continue.
--- Returns true only if it was paid for AND delivered to the aquarium.
+-- until they buy it at the rod stand, it times out, they die or leave, or
+-- the offer can't continue. Returns true only if it was paid for AND
+-- delivered to the aquarium.
 function M.runRodOffer(p: RodOfferParams): boolean
 	if not M.rodOffersEnabled() then
 		return false
@@ -668,6 +740,13 @@ function M.runRodOffer(p: RodOfferParams): boolean
 	local caster = p.caster
 	if not (typeof(caster) == "Instance" and caster:IsA("Player") and caster.Parent == Players) then
 		return false
+	end
+	if typeof(p.stand) ~= "Vector3" then
+		warn("[Economy] rod offer not opened: no rod stand position")
+		return false
+	end
+	if not alive(caster) then
+		return false -- knocked out while reeling: it slips off, nothing charged
 	end
 	local variant = Pricing.variant(p.variant)
 	local tier = if type(p.tier) == "number" then p.tier else 1
@@ -677,18 +756,15 @@ function M.runRodOffer(p: RodOfferParams): boolean
 		warn("[Economy] rod offer not opened: " .. tostring(why))
 		return false
 	end
-	local cfg = Instance.new("Configuration")
-	cfg.Name = "Offer" .. offer.id
-	cfg:SetAttribute("OfferId", offer.id)
-	cfg:SetAttribute("CasterUserId", caster.UserId)
-	cfg:SetAttribute("FishName", p.fishName)
-	cfg:SetAttribute("Tier", tier)
-	cfg:SetAttribute("Variant", variant)
-	cfg:SetAttribute("Price", price)
-	cfg:SetAttribute("ExpiresAt", workspace:GetServerTimeNow() + Config.Offer.TimeoutSeconds)
-	cfg.Parent = offersFolder
-	local okGui, gui = pcall(offerBillboard, p.fish, caster, p.fishName, variant, price)
-	offerRecs[offer.id] = { fish = p.fish, reservationOk = p.reservationOk, deliver = p.deliver }
+	local standPos = p.stand + Vector3.new(0, Config.Offer.StandHeight, 0)
+	local okGui, gui = pcall(offerBillboard, p.fish, p.fishName, variant, price, p.chance)
+	local okStand, stand =
+		pcall(standAnchor, offer, standPos, workspace:GetServerTimeNow() + Config.Offer.TimeoutSeconds)
+	if not okStand then
+		offers:cancel(offer.id, "error")
+		warn("[Economy] buy stand failed: " .. tostring(stand))
+	end
+	offerRecs[offer.id] = { stand = standPos, reservationOk = p.reservationOk, deliver = p.deliver }
 
 	while offer.status == "Open" or offer.status == "Delivering" do
 		task.wait(0.1)
@@ -697,6 +773,8 @@ function M.runRodOffer(p: RodOfferParams): boolean
 				offers:expire(os.clock())
 			elseif caster.Parent ~= Players then
 				offers:cancel(offer.id, "left")
+			elseif not alive(caster) then
+				offers:cancel(offer.id, "died")
 			elseif not M.rodOffersEnabled() then
 				offers:cancel(offer.id, "disabled")
 			elseif not p.stillValid() or not p.fish.Parent then
@@ -708,12 +786,16 @@ function M.runRodOffer(p: RodOfferParams): boolean
 	local bought = offer.status == "Bought"
 	if offer.status == "Expired" then
 		M.notify(caster, p.fishName .. " slipped off the hook (not bought)", "info")
+	elseif offer.status == "Cancelled" and offer.reason == "died" then
+		M.notify(caster, p.fishName .. " slipped off the hook - not charged", "info")
 	elseif offer.status == "Cancelled" and offer.reason == "tankUnavailable" then
 		M.notify(caster, "The aquarium closed - " .. p.fishName .. " was not charged", "warn")
 	end
 	offerRecs[offer.id] = nil
 	offers:forget(offer.id)
-	cfg:Destroy()
+	if okStand and stand then
+		stand:Destroy()
+	end
 	if okGui and gui then
 		gui:Destroy()
 	end

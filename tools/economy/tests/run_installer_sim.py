@@ -3,6 +3,10 @@
 Luau CLI against a tiny fake Studio DataModel (Instances with Name, Parent,
 Source, attributes, Clone/Destroy; a ChangeHistoryService stub).
 
+Also dry-runs UpdateRodPrompt.lua / RollbackRodPrompt.lua against a place
+set up by the REAL 8cb2554 installer (read from git): update, refusals,
+rollback to exactly 8cb2554, then the original uninstall chain.
+
 Checks: a mismatched live source or a missing aquarium changes nothing;
 another script creating leaderstats blocks the install; a clean install
 patches both scripts, adds every object tagged, backs up Before/After; a
@@ -92,6 +96,8 @@ local function makeGame()
 	end
 	new("StarterPlayerScripts", "StarterPlayerScripts").Parent = services.StarterPlayer
 	local history = { commits = 0 }
+	services.RunService = { running = false }
+	function services.RunService:IsRunning() return self.running end
 	services.ChangeHistoryService = {
 		TryBeginRecording = function(_, name) return "rec" end,
 		FinishRecording = function(_, id, op) if op == "Commit" then history.commits += 1 end end,
@@ -129,6 +135,25 @@ end
 """
 
 
+BASE_COMMIT = "8cb2554"
+SOURCES = {
+    "RodFishingSystem": "studio/rod-offers/RodFishingSystem.lua",
+    "RodShopServer": "studio/rod-offers/RodShopServer.lua",
+    "EconomyService": "src/server/EconomyService.luau",
+    "EconomyClient": "src/client/EconomyClient.client.luau",
+    "Config": "src/core/Config.luau",
+    "Offers": "src/core/Offers.luau",
+    "MoneyStore": "src/core/MoneyStore.luau",
+    "Pricing": "src/core/Pricing.luau",
+}
+
+
+def git_show(rel: str) -> str:
+    return subprocess.run(
+        ["git", "show", f"{BASE_COMMIT}:tools/economy/{rel}"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout
+
+
 def wrap(name: str, src: str) -> str:
     return f"local function {name}(game, workspace)\n{src}\nend\n"
 
@@ -136,6 +161,11 @@ def wrap(name: str, src: str) -> str:
 TESTS = r"""
 local function install(game, s) warnings = {} runInstall(game, s.Workspace) end
 local function uninstall(game, s) warnings = {} runUninstall(game, s.Workspace) end
+local function oldInstall(game, s) warnings = {} runOldInstall(game, s.Workspace) end
+local function oldUninstall(game, s) warnings = {} runOldUninstall(game, s.Workspace) end
+local function update(game, s) warnings = {} runUpdate(game, s.Workspace) end
+local function rollback(game, s) warnings = {} runRollback(game, s.Workspace) end
+local function refused(label) return #warnings > 0 and warnings[#warnings]:find("nothing changed", 1, true) ~= nil end
 
 -- refusals change nothing
 for _, case in ipairs({
@@ -252,6 +282,149 @@ do
 	check("no backup: uninstall refuses and deletes nothing", snapshot(g) == before and tagged.Parent ~= nil)
 end
 
+-- Fresh install refuses in Play mode and when the runtime stands folder exists
+do
+	local g, sv = scene()
+	sv.RunService.running = true
+	local before = snapshot(g)
+	install(g, sv)
+	check("fresh install: Play mode refused", refused() and snapshot(g) == before)
+	sv.RunService.running = false
+	local stray = new("Folder", "EconomyBuyStands")
+	stray.Parent = sv.Workspace
+	before = snapshot(g)
+	install(g, sv)
+	check("fresh install: existing Workspace.EconomyBuyStands refused", refused() and snapshot(g) == before)
+end
+
+------------------------------------------------------------ UpdateRodPrompt (from the installed 8cb2554)
+
+local function subtree(inst)
+	local out = {}
+	for _, d in ipairs(inst:GetDescendants()) do
+		table.insert(out, d:GetFullName() .. "|" .. tostring(d._props.Source) .. "|" .. tostring(d._props.Value))
+	end
+	table.sort(out)
+	return table.concat(out, "\n")
+end
+
+-- the place as Astra has it: aquarium v1 + the REAL 8cb2554 installer
+local function installed8cb()
+	local g, sv, history, rfsX, shopX = scene()
+	oldInstall(g, sv)
+	assert(sv.ServerStorage:FindFirstChild("EconomyRodOffersBackup"), "8cb2554 installer did not install")
+	return g, sv, history, rfsX, shopX
+end
+
+do
+	local g, sv, history, rfsX, shopX = installed8cb()
+	local baseline = snapshot(g)
+	local baseBackup = subtree(sv.ServerStorage.EconomyRodOffersBackup)
+	local commits = history.commits
+	update(g, sv)
+	check("update: one undo step", history.commits == commits + 1 and not refused())
+	check("update: RodFishingSystem = new patch", rfsX.Source == NEW.RodFishingSystem)
+	check("update: RodShopServer untouched", shopX.Source == OLD.RodShopServer)
+	local svc = sv.ServerScriptService.EconomyService
+	check("update: EconomyService = new", svc.Source == NEW.EconomyService)
+	check("update: Config + Offers = new", svc.Config.Source == NEW.Config and svc.Offers.Source == NEW.Offers)
+	check("update: other core modules untouched", svc.MoneyStore.Source == OLD.MoneyStore and svc.Pricing.Source == OLD.Pricing)
+	check("update: EconomyClient = new", sv.StarterPlayer.StarterPlayerScripts.EconomyClient.Source == NEW.EconomyClient)
+	local ub = sv.ServerStorage:FindFirstChild("EconomyRodPromptBackup")
+	check("update: backup with 5 entries, tagged", ub and ub:GetAttribute("EconomyOwned") == true and #ub:GetChildren() == 5)
+	local ok = true
+	for _, e in ipairs(ub and ub:GetChildren() or {}) do
+		if not (e.Target and e.Target.Value and e.Before and e.After and e.After.Source == e.Target.Value.Source and #e.Before:GetChildren() == 0) then ok = false end
+		if e.Before.ClassName == "LocalScript" and e.Before.Enabled ~= false then ok = false end
+	end
+	check("update: every entry has Target + Before + After (childless, disabled)", ok)
+	check("update: original uninstall backup untouched", subtree(sv.ServerStorage.EconomyRodOffersBackup) == baseBackup)
+	check("update: Economy root untouched", sv.ReplicatedStorage.Economy:GetAttribute("RodOffersEnabled") == true)
+
+	local afterUpdate = snapshot(g)
+	update(g, sv)
+	check("update twice: refused, nothing changed", refused() and snapshot(g) == afterUpdate)
+	install(g, sv)
+	check("fresh install over the update: refused", refused() and snapshot(g) == afterUpdate)
+	uninstall(g, sv)
+	check("uninstall while updated: refused (roll back first)", refused() and snapshot(g) == afterUpdate)
+	oldUninstall(g, sv)
+	check("the 8cb2554 uninstaller while updated: refused too", refused() and snapshot(g) == afterUpdate)
+
+	rollback(g, sv)
+	check("rollback: back to exactly the 8cb2554 install", not refused() and snapshot(g) == baseline)
+	rollback(g, sv)
+	check("rollback twice: refused", refused() and snapshot(g) == baseline)
+	uninstall(g, sv)
+	check("then uninstall: live sources restored", rfsX.Source == LIVE.RodFishingSystem and shopX.Source == LIVE.RodShopServer)
+	check("then uninstall: all economy objects removed", sv.ServerScriptService:FindFirstChild("EconomyService") == nil
+		and sv.ReplicatedStorage:FindFirstChild("Economy") == nil and sv.ServerStorage:FindFirstChild("EconomyRodOffersBackup") == nil)
+end
+
+-- update refusals change nothing
+do
+	local g, sv = scene()
+	local before = snapshot(g)
+	update(g, sv)
+	check("update without the 8cb2554 install: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = installed8cb()
+	sv.RunService.running = true
+	local before = snapshot(g)
+	update(g, sv)
+	check("update in Play: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = installed8cb()
+	sv.ServerScriptService.EconomyService.Config.Source ..= "\n-- tuned by hand"
+	local before = snapshot(g)
+	update(g, sv)
+	check("update over an edited Config: refused, nothing changed", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = installed8cb()
+	sv.ServerScriptService.EconomyService.MoneyStore.Source ..= "\n-- edited"
+	local before = snapshot(g)
+	update(g, sv)
+	check("update over an edited unchanged module: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = installed8cb()
+	sv.ServerScriptService.EconomyService.Offers:SetAttribute("EconomyOwned", nil)
+	local before = snapshot(g)
+	update(g, sv)
+	check("update when a target isn't ours (untagged): refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = installed8cb()
+	new("Folder", "EconomyBuyStands").Parent = sv.Workspace
+	local before = snapshot(g)
+	update(g, sv)
+	check("update with Workspace.EconomyBuyStands present: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = installed8cb()
+	new("Folder", "EconomySalesBackup").Parent = sv.ServerStorage
+	local before = snapshot(g)
+	update(g, sv)
+	check("update with a later milestone present: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = installed8cb()
+	update(g, sv)
+	sv.StarterPlayer.StarterPlayerScripts.EconomyClient.Source ..= "\n-- hand edit"
+	local before = snapshot(g)
+	rollback(g, sv)
+	check("rollback over an edited script: refused, nothing changed", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = installed8cb()
+	local before = snapshot(g)
+	rollback(g, sv)
+	check("rollback without the update: refused", refused() and snapshot(g) == before)
+end
+
 print_real(string.format("%d passed, %d failed", passes, failures))
 if failures > 0 then error("installer simulation failed") end
 """
@@ -274,7 +447,24 @@ def main() -> int:
     prelude = "local print_real = print\n" + prelude
     installer = (ROOT / "InstallRodOffers.lua").read_text()
     uninstaller = (ROOT / "UninstallRodOffers.lua").read_text()
-    source = prelude + wrap("runInstall", installer) + wrap("runUninstall", uninstaller) + TESTS
+    # the rod-offers install Astra has in Studio: the REAL 8cb2554 scripts
+    old_installer = git_show("InstallRodOffers.lua")
+    old_uninstaller = git_show("UninstallRodOffers.lua")
+    old = {k: git_show(v) for k, v in SOURCES.items()}
+    new = {k: (ROOT / v).read_text() for k, v in SOURCES.items()}
+    tables = "local OLD = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in old.items()) + "}\n"
+    tables += "local NEW = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in new.items()) + "}\n"
+    source = (
+        prelude
+        + tables
+        + wrap("runInstall", installer)
+        + wrap("runUninstall", uninstaller)
+        + wrap("runOldInstall", old_installer)
+        + wrap("runOldUninstall", old_uninstaller)
+        + wrap("runUpdate", (ROOT / "UpdateRodPrompt.lua").read_text())
+        + wrap("runRollback", (ROOT / "RollbackRodPrompt.lua").read_text())
+        + TESTS
+    )
     with tempfile.TemporaryDirectory() as tmp:
         path = pathlib.Path(tmp) / "installer_sim.luau"
         path.write_text(source)

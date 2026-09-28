@@ -243,6 +243,30 @@ function Offers.forget(self: Offers, id: any)
 	end
 end
 
+-- Buy reach, measured from the rod stand: the prompt shows within
+-- promptDistance; the server accepts up to promptDistance + slack.
+function Offers.inReach(distance: any, promptDistance: number, slack: number): boolean
+	return type(distance) == "number" and distance == distance and distance >= 0 and distance <= promptDistance + slack
+end
+
+-- A catch's real roll chance (0..1] as display text, e.g. "12%", "3.4%",
+-- "0.45%". nil for anything that isn't a valid probability (nothing shown;
+-- never an invented number).
+function Offers.chanceText(chance: any): string?
+	if type(chance) ~= "number" or chance ~= chance or chance <= 0 or chance > 1 then
+		return nil
+	end
+	local pct = chance * 100
+	if pct >= 10 then
+		return string.format("%d%%", math.floor(pct + 0.5))
+	elseif pct >= 1 then
+		return string.format("%.1f%%", pct)
+	elseif pct >= 0.01 then
+		return string.format("%.2f%%", pct)
+	end
+	return "<0.01%"
+end
+
 function Offers.openCount(self: Offers): number
 	local n = 0
 	for _, offer in pairs(self.offers) do

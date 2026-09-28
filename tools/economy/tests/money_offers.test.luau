@@ -565,6 +565,54 @@ do
 	)
 end
 
+-- Buy reach from the rod stand: prompt distance + slack, nothing beyond
+do
+	local o = Config.Offer
+	local limit = o.PromptDistance + o.ReachSlack
+	check("config sane with the prompt distances", (Config.check()))
+	check("at the stand", Offers.inReach(0, o.PromptDistance, o.ReachSlack))
+	check("at the prompt edge", Offers.inReach(o.PromptDistance, o.PromptDistance, o.ReachSlack))
+	check("inside the slack", Offers.inReach(limit, o.PromptDistance, o.ReachSlack))
+	check("just beyond the slack", not Offers.inReach(limit + 0.01, o.PromptDistance, o.ReachSlack))
+	check("far away (old 100-stud fish range)", not Offers.inReach(100, o.PromptDistance, o.ReachSlack))
+	check(
+		"NaN / negative / non-number refused",
+		not Offers.inReach(0 / 0, 10, 4) and not Offers.inReach(-1, 10, 4) and not Offers.inReach("1", 10, 4)
+	)
+	check("prompt range is short (<= 15 studs)", o.PromptDistance <= 15)
+end
+
+-- Roll chance text: formats a real probability, never invents one
+do
+	check("25%", Offers.chanceText(0.25) == "25%")
+	check("12.5% rounds to 13%", Offers.chanceText(0.125) == "13%")
+	check("3.4%", Offers.chanceText(0.034) == "3.4%")
+	check("0.45%", Offers.chanceText(0.0045) == "0.45%")
+	check("tiny", Offers.chanceText(0.00001) == "<0.01%")
+	check("certain", Offers.chanceText(1) == "100%")
+	check(
+		"nothing shown without a valid probability",
+		Offers.chanceText(nil) == nil
+			and Offers.chanceText(0) == nil
+			and Offers.chanceText(1.2) == nil
+			and Offers.chanceText(0 / 0) == nil
+			and Offers.chanceText("0.5") == nil
+	)
+	-- the rod pool: weights w^0.85, chance = weight / total (as rodChance does)
+	local weights = { Cod = 50, Salmon = 20, Tuna = 5, Shark = 1 }
+	local total, rw = 0, {}
+	for name, w in pairs(weights) do
+		rw[name] = w ^ 0.85
+		total += rw[name]
+	end
+	local sum = 0
+	for name in pairs(weights) do
+		sum += rw[name] / total
+	end
+	check("rod chances sum to 1", math.abs(sum - 1) < 1e-9)
+	check("flattened: Shark better than raw odds", rw.Shark / total > 1 / 76)
+end
+
 print(string.format("%d passed, %d failed", passes, failures))
 if failures > 0 then
 	error("money/offers tests failed")

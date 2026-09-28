@@ -52,6 +52,7 @@ local function world()
 	w.aquariumActive = true
 	w.offers = Offers.new(Config.Offer.TimeoutSeconds)
 	w.inRange = true
+	w.distance = nil -- when set: studs from the caster to the rod stand (the real reach rule)
 	w.grinder = 0 -- rod fish sent to the grinder (must stay 0)
 	function w.join(userId)
 		w.money:begin(userId)
@@ -79,6 +80,9 @@ local function world()
 		return (
 			w.offers:buy(offer.id, userId, w.now, {
 				inRange = function()
+					if w.distance then
+						return Offers.inReach(w.distance, Config.Offer.PromptDistance, Config.Offer.ReachSlack)
+					end
 					return w.inRange
 				end,
 				reservationOk = function()
@@ -232,6 +236,26 @@ do
 	check(
 		"too far: refused, kept, not charged",
 		w.buy(offer, CASTER) == "tooFar" and offer.status == "Open" and w.money:balance(CASTER) == 100
+	)
+end
+
+-- Buy reach is measured from the rod stand: walk up, then buy
+do
+	local w = world()
+	w.join(CASTER)
+	w.press({ 1 })
+	local offer = w.reveal(1, CASTER, "Cod", 1)
+	w.distance = 40 -- still near the button, far from the stand
+	check(
+		"from the button: too far, kept, not charged",
+		w.buy(offer, CASTER) == "tooFar" and offer.status == "Open" and w.money:balance(CASTER) == 100
+	)
+	w.distance = Config.Offer.PromptDistance + Config.Offer.ReachSlack + 1
+	check("just outside reach: refused", w.buy(offer, CASTER) == "tooFar")
+	w.distance = Config.Offer.PromptDistance - 1
+	check(
+		"at the prompt: bought once",
+		w.buy(offer, CASTER) == "bought" and w.money:balance(CASTER) == 100 - offer.price
 	)
 end
 
