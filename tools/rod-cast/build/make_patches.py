@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Regenerates the immediate-cast patches with asserted edits.
 
-Server (RodFishingSystem), two supported bases:
-  * variants-installed: tools/fish-variants/studio/RodFishingSystem.patched.lua
-  * aquarium-only:      tools/aquarium-cycle/studio/RodFishingSystem.patched.lua
-The same edits apply to both; the installer picks whichever base is live.
+Server (RodFishingSystem): rebased (2026-09-28) on the economy chain's
+sale-payout version, tools/economy/studio/sales/RodFishingSystem.lua (live
+rod script + aquarium + rod offers + buyer identity). The install order is
+rod offers -> aquarium v1.2 -> sales -> this.
 
-Client (RodFishingClient): studio/RodFishingClient.original.lua (supplied live source).
+Client (RodFishingClient): studio/RodFishingClient.original.lua (the live
+source Astra supplied; unchanged since).
 
 Usage:  python3 tools/rod-cast/build/make_patches.py
 """
@@ -15,8 +16,7 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOLS = ROOT.parent
 SERVER_BASES = {
-    "variants": TOOLS / "fish-variants" / "studio" / "RodFishingSystem.patched.lua",
-    "aquarium": TOOLS / "aquarium-cycle" / "studio" / "RodFishingSystem.patched.lua",
+    "sales": TOOLS / "economy" / "studio" / "sales" / "RodFishingSystem.lua",
 }
 
 
@@ -37,7 +37,7 @@ def server(base: str) -> str:
         "-- ServerStorage.AquariumCycleBackup by the installer.\n"
         "--\n"
         "-- [RodCast patch v1] Changes marked \"RodCast\": an accepted press casts every\n"
-        "-- eligible rod at once, right away (no 0.45 s press delay, no 0.12 s stagger),\n"
+        "-- eligible rod at once, right away (no press delay, no 0.12 s per-rod stagger),\n"
         "-- and each rod gets a CastT0 attribute so clients dip it toward the water\n"
         "-- immediately. Cooldown, busy checks and the aquarium slot reservation are\n"
         "-- unchanged; a rejected press starts nothing and doesn't animate the button.\n",
@@ -82,9 +82,15 @@ def server(base: str) -> str:
         "\tend\n\treturn true\nend\n",
     )
     p.rep(
-        "local PRESS_DELAY = 0.45   -- small pause after the click before the rods cast\n",
-        "-- RodCast: PRESS_DELAY (0.45 s) removed; accepted presses cast immediately\n",
+        "local PRESS_DELAY = 0.05   -- small pause after the click before the rods cast\n",
+        "-- RodCast: PRESS_DELAY removed; accepted presses cast immediately\n",
     )
+    # Economy's fail-closed refusals: explicitly not accepted (no button animation)
+    for notice in ("Fish buying is unavailable right now - rod fishing is paused", "The aquarium is closed - rod fishing is paused"):
+        p.rep(
+            f'\t\teconomyNotice(player, "{notice}")\n\t\treturn\n',
+            f'\t\teconomyNotice(player, "{notice}")\n\t\treturn false\n',
+        )
     p.rep(
         "\tbutton:SetAttribute(\"PressedAt\", workspace:GetServerTimeNow())\n"
         "\ttask.delay(PRESS_DELAY, function() press(player) end)\n",
@@ -128,6 +134,8 @@ def client() -> str:
 
 
 def main() -> None:
+    for old in (ROOT / "studio").glob("RodFishingSystem.patched.from-*.lua"):
+        old.unlink()  # earlier bases (pre-live originals) are gone from Studio
     for name, path in SERVER_BASES.items():
         out = ROOT / "studio" / f"RodFishingSystem.patched.from-{name}.lua"
         out.write_text(server(path.read_text()))

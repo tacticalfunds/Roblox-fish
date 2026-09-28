@@ -462,6 +462,9 @@ local function astraPlace(opts)
 		local sc = new("Script", name) sc.Source = src sc.Parent = if name == "NetLiftScript" then sv.Workspace else sv.ServerScriptService
 		scripts[name] = sc
 	end
+	local rodClient = new("LocalScript", "RodFishingClient") rodClient.Source = VIS.LiveRodFishingClient
+	rodClient.Parent = sv.StarterPlayer.StarterPlayerScripts
+	scripts.RodFishingClient = rodClient
 	aquariumV1(sv)
 	if opts.chain8cb then
 		oldInstall(g, sv)
@@ -599,6 +602,26 @@ do
 	check("jump install over a different client: refused", refused() and snapshot(g2) == b2)
 end
 
+-- immediate rod cast, on top of sales
+local function rodCast(g, s) warnings = {} runRodCast(g, s.Workspace) end
+local function rodCastBack(g, s) warnings = {} runRodCastBack(g, s.Workspace) end
+do
+	local g, sv, _, sc = astraPlace()
+	upgradeAq(g, sv)
+	local before = snapshot(g)
+	rodCast(g, sv)
+	check("rod cast before sales: refused (needs the sales RodFishingSystem)", refused() and snapshot(g) == before)
+	installSales(g, sv)
+	local afterSales = snapshot(g)
+	rodCast(g, sv)
+	check("rod cast: installed", not refused() and sc.RodFishingSystem.Source == VIS.RodCastServer and sc.RodFishingClient.Source == VIS.RodCastClient)
+	local afterCast = snapshot(g)
+	rollbackSales(g, sv)
+	check("sales rollback while rod cast installed: refused", refused() and snapshot(g) == afterCast)
+	rodCastBack(g, sv)
+	check("rod cast rollback: exactly the sales state", not refused() and snapshot(g) == afterSales)
+end
+
 -- refusals change nothing
 do
 	local g, sv, _, sc = astraPlace()
@@ -710,6 +733,9 @@ def main() -> int:
     vis = {
         "LiveFishSwimClient": (live / "FishSwimClient.lua").read_text(),
         "JumpPatched": (ROOT.parent / "fish-jump" / "studio" / "FishSwimClient.patched.lua").read_text(),
+        "LiveRodFishingClient": (live / "RodFishingClient.lua").read_text(),
+        "RodCastServer": (ROOT.parent / "rod-cast" / "studio" / "RodFishingSystem.patched.from-sales.lua").read_text(),
+        "RodCastClient": (ROOT.parent / "rod-cast" / "studio" / "RodFishingClient.patched.lua").read_text(),
     }
     tables += "local VIS = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in vis.items()) + "}\n"
     aqroot = ROOT.parent / "aquarium-cycle" / "src"
@@ -733,6 +759,8 @@ def main() -> int:
         + wrap("runRollbackSales", (ROOT / "RollbackSales.lua").read_text())
         + wrap("runInstallUpg", (ROOT / "InstallUpgrades.lua").read_text())
         + wrap("runJumpInstall", (ROOT.parent / "fish-jump" / "InstallFishJump.lua").read_text())
+        + wrap("runRodCast", (ROOT.parent / "rod-cast" / "InstallRodCast.lua").read_text())
+        + wrap("runRodCastBack", (ROOT.parent / "rod-cast" / "RollbackRodCast.lua").read_text())
         + wrap("runJumpUninstall", (ROOT.parent / "fish-jump" / "UninstallFishJump.lua").read_text())
         + wrap("runRollbackUpg", (ROOT / "RollbackUpgrades.lua").read_text())
         + TESTS

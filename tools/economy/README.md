@@ -10,8 +10,10 @@ reviews and installs. Nothing here touches Studio on its own.
 | Rod-stand buy prompt (`a826d73`) | **installed** (Astra, fresh `InstallRodOffers.lua`) | frozen release: `InstallRodOffers.lua`, or `UpdateRodPrompt.lua` on `8cb2554` |
 | Aquarium v1.2 (`d39b00b`): buyer (`OwnerId`) through tank → river | done | **yes**: `UpgradeAquariumV12.lua` |
 | Sale payouts (`d39b00b`): grinder / bot / customer / truck / net / harpoon | done | **yes**: `InstallSales.lua` (after the aquarium upgrade) |
-| **Paid aquarium upgrades** (this commit) | done | **yes**: `InstallUpgrades.lua` (after sales) |
-| Rebased visual features (jumps, variants, immediate cast, grinder dwell) | later | - |
+| Paid aquarium upgrades (`de507bf`) | done | **yes**: `InstallUpgrades.lua` (after sales) |
+| Fish jumps, rebased on live (`d5fec9b`) | done | **yes**: `tools/fish-jump/InstallFishJump.lua` (independent) |
+| **Immediate rod cast**, rebased on sales (this commit) | done | **yes**: `tools/rod-cast/InstallRodCast.lua` (after sales) |
+| Grinder dwell (~1 s on the rollers), rare Silver/Gold variants | next | - |
 
 **Studio now (Astra, 2026-09-28):** fresh `a826d73` rod install + aquarium
 v1.2 (`UpgradeAquariumV12` installed: `EconomyRodOffersBackup` +
@@ -32,9 +34,10 @@ descriptions. If a guard still refuses, the refusal names the first
 differing line; please paste that block.
 
 **Install order:** `InstallRodOffers` (a826d73) → `UpgradeAquariumV12` →
-`InstallSales` → `InstallUpgrades`. **Roll back in reverse:**
-`RollbackUpgrades` → `RollbackSales` → `RollbackAquariumV12` →
-`UninstallRodOffers`. Each installer identifies what
+`InstallSales` → `InstallUpgrades` → `InstallRodCast`. Fish jumps can go in
+any time. `InstallUpgrades` and `InstallRodCast` don't depend on each other.
+**Roll back in reverse:** `RollbackRodCast` / `RollbackUpgrades` →
+`RollbackSales` → `RollbackAquariumV12` → `UninstallRodOffers`. Each installer identifies what
 is installed by exact source, so it works on either rod-offers chain: a fresh
 `a826d73` install, or `8cb2554` + `UpdateRodPrompt`.
 
@@ -396,8 +399,8 @@ changes; the rest re-check behaviour that already worked.
 
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80 + sales 40 + upgrades 18 + jump 10 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 113 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 117 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

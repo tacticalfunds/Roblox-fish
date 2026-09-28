@@ -45,6 +45,9 @@ def sources() -> dict:
     out["Jump_Module"] = (jump / "src" / "FishJump.luau").read_text()
     out["Jump_Client"] = (jump / "studio" / "FishSwimClient.patched.lua").read_text()
     out["Live_FishSwimClient"] = (ROOT / "studio" / "live" / "FishSwimClient.lua").read_text()
+    rodcast = ROOT.parent / "rod-cast" / "studio"
+    out["RodCast_Server"] = (rodcast / "RodFishingSystem.patched.from-sales.lua").read_text()
+    out["RodCast_Client"] = (rodcast / "RodFishingClient.patched.lua").read_text()
     return out
 
 

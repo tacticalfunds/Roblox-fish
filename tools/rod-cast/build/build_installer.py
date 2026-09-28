@@ -1,53 +1,64 @@
 #!/usr/bin/env python3
-"""Generates tools/rod-cast/InstallRodCast.lua (run build/make_patches.py first).
+"""Generates tools/rod-cast/InstallRodCast.lua and RollbackRodCast.lua from
+the economy's guarded update template (exact-source checks, one undo step,
+Target/Before/After backup, rollback that refuses over later edits).
+
+Base: RodFishingSystem = the sale-payout version (tools/economy/studio/sales),
+RodFishingClient = the live source. Runs make_patches.py first.
 
 Usage:  python3 tools/rod-cast/build/build_installer.py
 """
+import importlib.util
 import pathlib
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-TOOLS = ROOT.parent
+sys.path.insert(0, str(ROOT.parent / "economy" / "build"))
+import build_updates as bu  # noqa: E402
 
+# this tool's own make_patches.py (the economy build dir has one of the same name)
+_spec = importlib.util.spec_from_file_location("rodcast_make_patches", ROOT / "build" / "make_patches.py")
+make_patches = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(make_patches)
 
-def long_string(text: str) -> str:
-    level = 0
-    while f"]{'=' * level}]" in text or f"[{'=' * level}[" in text or (level == 0 and text.endswith("]")):
-        level += 1
-    eq = "=" * level
-    return f"[{eq}[\n{text}]{eq}]"
-
-
-def candidate(label: str, base: pathlib.Path, patched: pathlib.Path) -> str:
-    return f'{{ label = "{label}", base = {long_string(base.read_text())}, patched = {long_string(patched.read_text())} }}'
+LATER = ["GrinderDwellBackup", "EconomyVariantsBackup"]
 
 
 def main() -> None:
+    make_patches.main()
     studio = ROOT / "studio"
-    targets = (
-        "{\n"
-        '\t{ name = "RodFishingSystem", localScript = false, candidates = {\n\t\t'
-        + candidate(
-            "variants+aquarium",
-            TOOLS / "fish-variants" / "studio" / "RodFishingSystem.patched.lua",
-            studio / "RodFishingSystem.patched.from-variants.lua",
-        )
-        + ",\n\t\t"
-        + candidate(
-            "aquarium only",
-            TOOLS / "aquarium-cycle" / "studio" / "RodFishingSystem.patched.lua",
-            studio / "RodFishingSystem.patched.from-aquarium.lua",
-        )
-        + "\n\t} },\n"
-        '\t{ name = "RodFishingClient", localScript = true, candidates = {\n\t\t'
-        + candidate("original", studio / "RodFishingClient.original.lua", studio / "RodFishingClient.patched.lua")
-        + "\n\t} },\n}"
+    targets = [
+        (
+            {"key": "RodFishingSystem", "where": "script:RodFishingSystem", "class": "Script"},
+            (ROOT.parent / "economy" / "studio" / "sales" / "RodFishingSystem.lua").read_text(),
+            (studio / "RodFishingSystem.patched.from-sales.lua").read_text(),
+        ),
+        (
+            {"key": "RodFishingClient", "where": "StarterPlayer/StarterPlayerScripts/RodFishingClient", "class": "LocalScript"},
+            (studio / "RodFishingClient.original.lua").read_text(),
+            (studio / "RodFishingClient.patched.lua").read_text(),
+        ),
+    ]
+    keys = bu.write_pair(
+        "InstallRodCast.lua",
+        "RollbackRodCast.lua",
+        """
+Immediate rod cast: an accepted button press casts every eligible rod at
+once, right away (no press delay, no per-rod stagger), and the rods dip
+toward the water the moment they cast (RodFishingClient, CastT0). A refused
+press (cooldown, busy, tank full, buying unavailable) starts nothing and
+doesn't animate the button. Rod offers, sale payouts and the aquarium work
+exactly as before.
+Requires: sale payouts (RodFishingSystem = the InstallSales version).
+""",
+        "RodCastBackup",
+        [["EconomyRodOffersBackup"]],
+        ["RodCastBackup", *LATER],
+        LATER,
+        targets,
+        out_dir=ROOT,
     )
-    text = (ROOT / "build" / "InstallRodCast.template.lua").read_text()
-    assert text.count("--[[@TARGETS]]") == 1
-    text = text.replace("--[[@TARGETS]]", targets)
-    out = ROOT / "InstallRodCast.lua"
-    out.write_text(text)
-    print(f"wrote {out.relative_to(TOOLS.parent)} ({len(text)} chars)")
+    assert keys == ["RodFishingSystem", "RodFishingClient"], keys
 
 
 if __name__ == "__main__":
