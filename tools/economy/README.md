@@ -8,14 +8,15 @@ reviews and installs. Nothing here touches Studio on its own.
 | Core (`6081e33`): Config, Pricing, Ledger, MoneyStore, Offers | done | review only |
 | Rod Buy/Pass (`8cb2554`): Money service + offers + RodShop compatibility | superseded | - |
 | Rod-stand buy prompt (`a826d73`) | **installed** (Astra, fresh `InstallRodOffers.lua`) | frozen release: `InstallRodOffers.lua`, or `UpdateRodPrompt.lua` on `8cb2554` |
-| **Aquarium v1.2** (this commit): buyer (`OwnerId`) through tank → river | done | **yes**: `UpgradeAquariumV12.lua` |
-| **Sale payouts** (this commit): grinder / bot / customer / truck / net / harpoon | done | **yes**: `InstallSales.lua` (after the aquarium upgrade) |
-| Paid aquarium upgrades | next | - |
+| Aquarium v1.2 (`d39b00b`): buyer (`OwnerId`) through tank → river | done | **yes**: `UpgradeAquariumV12.lua` |
+| Sale payouts (`d39b00b`): grinder / bot / customer / truck / net / harpoon | done | **yes**: `InstallSales.lua` (after the aquarium upgrade) |
+| **Paid aquarium upgrades** (this commit) | done | **yes**: `InstallUpgrades.lua` (after sales) |
 | Rebased visual features (jumps, variants, immediate cast, grinder dwell) | later | - |
 
 **Install order:** `InstallRodOffers` (a826d73) → `UpgradeAquariumV12` →
-`InstallSales`. **Roll back in reverse:** `RollbackSales` →
-`RollbackAquariumV12` → `UninstallRodOffers`. Each installer identifies what
+`InstallSales` → `InstallUpgrades`. **Roll back in reverse:**
+`RollbackUpgrades` → `RollbackSales` → `RollbackAquariumV12` →
+`UninstallRodOffers`. Each installer identifies what
 is installed by exact source, so it works on either rod-offers chain: a fresh
 `a826d73` install, or `8cb2554` + `UpdateRodPrompt`.
 
@@ -245,6 +246,51 @@ Run Play with the aquarium enabled.
 | S9 | Leave and rejoin | Money earned from sales is saved |
 | S10 | Edit mode: `RollbackSales`, then `RollbackAquariumV12` | Back to the rod-offers install (buying works, no payouts) |
 
+## Paid aquarium upgrades (`InstallUpgrades.lua`)
+
+The aquarium's two upgrade prompts now cost **Money**, at the aquarium's own
+prices:
+
+| Upgrade | Levels | Costs |
+|---|---|---|
+| Tank Capacity | 3 → 6 → 10 → 15 | 50, 150, 400 |
+| Release Rate | 1 → 2 → 4 → 6 fish per release | 40, 120, 350 |
+
+(The levels are `Config.Upgrades` in `tools/aquarium-cycle/src/shared/Config.luau`.)
+
+- **Who pays:** the player who triggers the prompt pays. The server checks
+  that they're alive and within range before charging.
+- **Shared tank:** the level applies to the one shared tank **for this
+  server session**. It isn't saved, and it's never per player.
+- **One step:** the charge and the level-up happen in one step with no
+  yields in between.
+- **Nothing charged:** when the player can't afford it, at max level, or
+  while their Money is still loading ("try again in a moment").
+
+**Early game:** the 100 Money grant buys Tank 6 (50) and still leaves 50 for
+starter rod fish (1–3 Money each). Tier 1–5 meat sells for 4–11 Money per
+fish.
+
+**What it changes:** one module, `ServerScriptService.AquariumEconomy`.
+Before, it returned nil, meaning "upgrades unavailable".
+
+**What it requires:** `InstallSales` and aquarium v1.2, checked by source.
+
+**Rollback:** `RollbackUpgrades.lua` puts back the nil module, so the
+upgrades show "unavailable" again. `RollbackSales` refuses while this is
+installed.
+
+### Paid upgrades checklist (Studio)
+
+| # | Do | Expect |
+|---|---|---|
+| U1 | Look at the upgrade prompts | They show the price (e.g. `3 → 6 (50)`), not "unavailable" |
+| U2 | New player: buy Tank Capacity | Money 100 → 50; count shows `x/6`; toast "Tank Capacity upgraded to 6!" |
+| U3 | Try the next level (150) with 50 Money | "You can't afford that upgrade yet."; nothing changes |
+| U4 | A second player buys a level | Only they pay; both see the bigger tank |
+| U5 | Buy to the max level | Prompt shows "Maxed"; further triggers charge nothing |
+| U6 | Stop, Play again | Tank levels are back to the start (session-scoped); Money stays spent |
+
 ## Install / update / rollback (Astra)
 
 **Studio has 8cb2554 installed → use the update:**
@@ -322,8 +368,8 @@ changes; the rest re-check behaviour that already worked.
 
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80 + sales 37 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 100 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80 + sales 37 + upgrades 18 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 106 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

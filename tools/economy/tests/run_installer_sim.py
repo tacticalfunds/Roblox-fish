@@ -547,6 +547,30 @@ do
 		and sc.RodFishingSystem.Source == NEW.RodFishingSystem)
 end
 
+-- paid upgrades on top of sales
+local function installUpg(g, s) warnings = {} runInstallUpg(g, s.Workspace) end
+local function rollbackUpg(g, s) warnings = {} runRollbackUpg(g, s.Workspace) end
+do
+	local g, sv = astraPlace()
+	upgradeAq(g, sv)
+	local beforeSales = snapshot(g)
+	installUpg(g, sv)
+	check("upgrades before sales: refused", refused() and snapshot(g) == beforeSales)
+	installSales(g, sv)
+	local afterSales = snapshot(g)
+	installUpg(g, sv)
+	check("upgrades: installed", not refused() and sv.ServerScriptService.AquariumEconomy.Source == UPG.AquariumEconomy)
+	check("upgrades: backup with 1 entry", #sv.ServerStorage.EconomyUpgradesBackup:GetChildren() == 1)
+	local afterUpg = snapshot(g)
+	rollbackSales(g, sv)
+	check("sales rollback while upgrades installed: refused", refused() and snapshot(g) == afterUpg)
+	installUpg(g, sv)
+	check("upgrades twice: refused", refused() and snapshot(g) == afterUpg)
+	rollbackUpg(g, sv)
+	check("upgrades rollback: exactly the sales state", not refused() and snapshot(g) == afterSales
+		and sv.ServerScriptService.AquariumEconomy.Source == AQV1.AquariumEconomy)
+end
+
 -- refusals change nothing
 do
 	local g, sv, _, sc = astraPlace()
@@ -642,6 +666,7 @@ def main() -> int:
     for n in ("AquariumCycleServer", "AquariumEconomy"):
         tables += f"\t{n} = {lua_string(git_show(f'server/{n}.luau', AQUARIUM_V1, aq))},\n"
     tables += f"\tAquariumTankClient = {lua_string(git_show('client/AquariumTankClient.client.luau', AQUARIUM_V1, aq))},\n}}\n"
+    tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     aqroot = ROOT.parent / "aquarium-cycle" / "src"
     tables += "local AQV12 = {\n"
     for n in ("Config", "SharedTank"):
@@ -661,6 +686,8 @@ def main() -> int:
         + wrap("runRollbackAq", (ROOT / "RollbackAquariumV12.lua").read_text())
         + wrap("runInstallSales", (ROOT / "InstallSales.lua").read_text())
         + wrap("runRollbackSales", (ROOT / "RollbackSales.lua").read_text())
+        + wrap("runInstallUpg", (ROOT / "InstallUpgrades.lua").read_text())
+        + wrap("runRollbackUpg", (ROOT / "RollbackUpgrades.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

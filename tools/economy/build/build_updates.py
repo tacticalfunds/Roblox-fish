@@ -32,7 +32,10 @@ REPO = ROOT.parent.parent
 AQUARIUM_V1 = "2e320f9"
 ROD_OFFERS = "a826d73"
 AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
+# (InstallSales.lua is released as of d39b00b: its lists stay as they are;
+# later installs still can't be skipped - they change scripts it checks.)
 LATER_THAN_SALES = ["EconomyUpgradesBackup"]
+LATER_THAN_UPGRADES = ["EconomyVariantsBackup"]
 
 
 def git_show(commit: str, path: str) -> str:
@@ -214,11 +217,50 @@ UpdateRodPrompt) and aquarium v1.2 (UpgradeAquariumV12.lua).
     return keys
 
 
+def upgrades() -> list[str]:
+    targets = [(
+        {"key": "AquariumEconomy", "where": "ServerScriptService/AquariumEconomy", "class": "ModuleScript", "tag": "AquariumCycleOwned"},
+        git_show(AQUARIUM_V1, "tools/aquarium-cycle/src/server/AquariumEconomy.luau"),
+        (ROOT / "src" / "server" / "AquariumEconomy.luau").read_text(),
+    )]
+    # needs sale payouts (Money comes in) and aquarium v1.2: checked by source
+    for name in ("GrinderProcessor", "TruckSystem"):
+        src = (ROOT / "studio" / "sales" / f"{name}.lua").read_text()
+        targets.append(({"key": name + " (sales)", "where": f"script:{name}", "class": "Script"}, src, src))
+    svc = (ROOT / "src" / "server" / "EconomyService.luau").read_text()
+    targets.append(({"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"}, svc, svc))
+    src = (REPO / "tools" / "aquarium-cycle" / "src" / "server" / "AquariumCycleServer.luau").read_text()
+    targets.append(({"key": "aquarium AquariumCycleServer", "where": "ServerScriptService/AquariumCycleServer", "class": "ModuleScript", "tag": "AquariumCycleOwned"}, src, src))
+    keys = write_pair(
+        "InstallUpgrades.lua",
+        "RollbackUpgrades.lua",
+        """
+Paid aquarium upgrades: Tank Capacity and Release Rate are bought with Money
+at the aquarium's upgrade prompts, at the aquarium's own prices
+(capacity 50 / 150 / 400, release rate 40 / 120 / 350). The player who
+triggers the prompt pays; the level applies to the one shared tank for this
+server session (not saved, never per player). Not enough Money or money not
+loaded: nothing charged, nothing applied. Nothing is ever free.
+Changes one module (ServerScriptService.AquariumEconomy: it used to return
+nil = "upgrades unavailable").
+Requires: sale payouts (InstallSales.lua) and aquarium v1.2.
+""",
+        "EconomyUpgradesBackup",
+        [["EconomyRodOffersBackup"]],
+        ["EconomyUpgradesBackup", *LATER_THAN_UPGRADES],
+        LATER_THAN_UPGRADES,
+        targets,
+    )
+    assert keys == ["AquariumEconomy"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
     aquarium()
     sales()
+    upgrades()
 
 
 if __name__ == "__main__":

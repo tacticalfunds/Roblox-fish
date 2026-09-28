@@ -36,6 +36,10 @@ def sources() -> dict:
     out["EconomyClient"] = (ROOT / "src" / "client" / "EconomyClient.client.luau").read_text()
     for patched in sorted((ROOT / "studio" / "sales").glob("*.lua")):
         out["Sales_" + patched.stem] = patched.read_text()
+    # aquarium v1.2 pure modules + the economy's AquariumEconomy binding
+    for module in sorted((ROOT.parent / "aquarium-cycle" / "src" / "shared").glob("*.luau")):
+        out["Aq_" + module.stem] = module.read_text()
+    out["AquariumEconomy"] = (ROOT / "src" / "server" / "AquariumEconomy.luau").read_text()
     return out
 
 
