@@ -465,6 +465,8 @@ local function astraPlace(opts)
 	local rodClient = new("LocalScript", "RodFishingClient") rodClient.Source = VIS.LiveRodFishingClient
 	rodClient.Parent = sv.StarterPlayer.StarterPlayerScripts
 	scripts.RodFishingClient = rodClient
+	local spawner = new("Script", "FishSpawner") spawner.Source = VIS.LiveFishSpawner spawner.Parent = sv.ServerScriptService
+	scripts.FishSpawner = spawner
 	local swimClient = new("LocalScript", "FishSwimClient") swimClient.Source = VIS.LiveFishSwimClient
 	swimClient.Parent = sv.StarterPlayer.StarterPlayerScripts
 	scripts.FishSwimClient = swimClient
@@ -681,6 +683,45 @@ do
 	check("dwell rollback over an edited module: refused", refused() and snapshot(g) == before)
 end
 
+-- rare variants: on every rod version (sales / rod cast / dwell / both)
+local function variants(g, s) warnings = {} runVariants(g, s.Workspace) end
+local function variantsBack(g, s) warnings = {} runVariantsBack(g, s.Workspace) end
+do
+	local g, sv = astraPlace()
+	upgradeAq(g, sv)
+	local before = snapshot(g)
+	variants(g, sv)
+	check("variants before sales: refused", refused() and snapshot(g) == before)
+end
+for _, combo in ipairs({ { cast = false, dwell = false, rod = "sales" }, { cast = true, dwell = false, rod = "rodcast" },
+	{ cast = false, dwell = true, rod = "dwell-sales" }, { cast = true, dwell = true, rod = "dwell-rodcast" } }) do
+	local label = "variants on " .. combo.rod
+	local g, sv, _, sc = astraPlace()
+	upgradeAq(g, sv)
+	installSales(g, sv)
+	if combo.cast then rodCast(g, sv) end
+	if combo.dwell then dwell(g, sv) end
+	assert(not refused(), label .. ": setup")
+	local before = snapshot(g)
+	variants(g, sv)
+	check(label .. ": installed", not refused())
+	check(label .. ": the matching rod patch", sc.RodFishingSystem.Source == VAR["Rod_" .. combo.rod])
+	check(label .. ": spawner + grinder patched", sc.FishSpawner.Source == VAR.Spawner and sc.GrinderProcessor.Source == VAR.Grinder)
+	check(label .. ": both modules added, tagged", sv.ReplicatedStorage:FindFirstChild("FishVariants") and sv.ReplicatedStorage.FishVariants:GetAttribute("EconomyOwned") == true
+		and sv.ReplicatedStorage:FindFirstChild("FishVariantVisuals") ~= nil)
+	local after = snapshot(g)
+	if combo.dwell then
+		dwellBack(g, sv)
+		check(label .. ": dwell rollback refused while variants are in", refused() and snapshot(g) == after)
+	end
+	if combo.cast then
+		rodCastBack(g, sv)
+		check(label .. ": rod cast rollback refused while variants are in", refused() and snapshot(g) == after)
+	end
+	variantsBack(g, sv)
+	check(label .. ": rollback restores exactly (modules removed)", not refused() and snapshot(g) == before)
+end
+
 -- refusals change nothing
 do
 	local g, sv, _, sc = astraPlace()
@@ -793,6 +834,7 @@ def main() -> int:
         "LiveFishSwimClient": (live / "FishSwimClient.lua").read_text(),
         "JumpPatched": (ROOT.parent / "fish-jump" / "studio" / "FishSwimClient.patched.lua").read_text(),
         "LiveRodFishingClient": (live / "RodFishingClient.lua").read_text(),
+        "LiveFishSpawner": (live / "FishSpawner.lua").read_text(),
         "RodCastServer": (ROOT.parent / "rod-cast" / "studio" / "RodFishingSystem.patched.from-sales.lua").read_text(),
         "RodCastClient": (ROOT.parent / "rod-cast" / "studio" / "RodFishingClient.patched.lua").read_text(),
     }
@@ -807,6 +849,13 @@ def main() -> int:
         "Module": (dw / "src" / "GrinderDwell.luau").read_text(),
     }
     tables += "local DWELL = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in dwell.items()) + "}\n"
+    ve = ROOT.parent / "fish-variants" / "studio" / "economy"
+    var = {
+        "Spawner": (ve / "FishSpawner.patched.from-live.lua").read_text(),
+        "Grinder": (ve / "GrinderProcessor.patched.from-sales.lua").read_text(),
+        **{f'["Rod_{k}"]': (ve / f"RodFishingSystem.patched.from-{k}.lua").read_text() for k in ("sales", "rodcast", "dwell-sales", "dwell-rodcast")},
+    }
+    tables += "local VAR = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in var.items()) + "}\n"
     tables += "local VIS = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in vis.items()) + "}\n"
     aqroot = ROOT.parent / "aquarium-cycle" / "src"
     tables += "local AQV12 = {\n"
@@ -831,6 +880,8 @@ def main() -> int:
         + wrap("runJumpInstall", (ROOT.parent / "fish-jump" / "InstallFishJump.lua").read_text())
         + wrap("runRodCast", (ROOT.parent / "rod-cast" / "InstallRodCast.lua").read_text())
         + wrap("runDwell", (ROOT.parent / "grinder-dwell" / "InstallGrinderDwell.lua").read_text())
+        + wrap("runVariants", (ROOT.parent / "fish-variants" / "InstallFishVariants.lua").read_text())
+        + wrap("runVariantsBack", (ROOT.parent / "fish-variants" / "RollbackFishVariants.lua").read_text())
         + wrap("runDwellBack", (ROOT.parent / "grinder-dwell" / "RollbackGrinderDwell.lua").read_text())
         + wrap("runRodCastBack", (ROOT.parent / "rod-cast" / "RollbackRodCast.lua").read_text())
         + wrap("runJumpUninstall", (ROOT.parent / "fish-jump" / "UninstallFishJump.lua").read_text())

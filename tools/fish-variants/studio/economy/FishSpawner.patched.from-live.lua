@@ -2,14 +2,12 @@
 -- Rarity: each template in ReplicatedStorage.SwimTemplates has a SpawnWeight attribute (edit to tune odds).
 -- Movement is animated on clients (FishSwimClient) from these attributes:
 --   SpawnT, StartZ, Speed, LaneX, Seed   -> z = StartZ + Speed * (serverTime - SpawnT)
-
 --
--- [FishVariants patch v1] Changes vs. the base are marked "FishVariants".
--- Rare Silver/Gold fish: the variant is rolled once when a fish is created
--- and carried unchanged to every meat piece and sale. Needs
--- ReplicatedStorage.FishVariants (and optionally FishVariantVisuals and
--- ServerScriptService.FishPayout); without them this script behaves exactly
--- like the base version. Nothing is paid unless FishPayout is connected.
+-- [FishVariants patch v2] Changes marked "FishVariants": rare Silver/Gold fish.
+-- The variant is rolled once when a fish is created and only copied after
+-- that; the economy applies its extra value once, when the meat sells.
+-- Needs ReplicatedStorage.FishVariants (+ FishVariantVisuals for effects);
+-- without them this script behaves exactly like its base version.
 local RS = game:GetService("ReplicatedStorage")
 local templates = RS:WaitForChild("SwimTemplates")
 local folder = workspace:WaitForChild("SwimmingFish")
@@ -27,8 +25,8 @@ local rng = Random.new()
 local Variants, VariantFx = nil, nil
 do
 	local rs = game:GetService("ReplicatedStorage")
-	local function load(parent, name)
-		local mod = parent:FindFirstChild(name)
+	local function load(name)
+		local mod = rs:FindFirstChild(name)
 		if not (mod and mod:IsA("ModuleScript")) then return nil end
 		local ok, result = pcall(require, mod)
 		if not ok then
@@ -37,10 +35,8 @@ do
 		end
 		return result
 	end
-	Variants = load(rs, "FishVariants")
-	if Variants then
-		VariantFx = load(rs, "FishVariantVisuals")
-	end
+	Variants = load("FishVariants")
+	if Variants then VariantFx = load("FishVariantVisuals") end
 end
 
 local pool, total = {}, 0

@@ -8,9 +8,10 @@
 -- river, the net catch payload, every meat piece, carried and loaded meat, and
 -- the sale. Nothing rerolls.
 --
--- Money: this place has no currency consumer. Sale value is metadata only
--- (ValueMultiplier); an optional ServerScriptService.FishPayout adapter
--- decides whether anything is paid.
+-- Money: the economy's meat ledger prices each piece with the variant's
+-- sale multiplier (tools/economy Config.Variants, which must use the same
+-- names) and pays it once, when the piece sells. saleInfo() below is kept for
+-- the pre-economy FishPayout adapter and is not used by the economy.
 
 local FishVariants = {}
 

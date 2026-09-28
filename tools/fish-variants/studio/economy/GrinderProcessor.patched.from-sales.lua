@@ -3,6 +3,19 @@
 -- 2) In the blender the blade spins and knocks the meat around (it can't leave the bowl).
 -- 3) After 5s in the blender each piece goes onto the conveyor, ONE at a time, rides slowly to the end,
 --    and stacks up neatly in the box at the end.
+--
+-- [FishVariants patch v2] Changes marked "FishVariants": rare Silver/Gold fish.
+-- The variant is rolled once when a fish is created and only copied after
+-- that; the economy applies its extra value once, when the meat sells.
+-- Needs ReplicatedStorage.FishVariants (+ FishVariantVisuals for effects);
+-- without them this script behaves exactly like its base version.
+--
+-- [Economy patch v1] Changes vs. the live script are marked "Economy".
+-- With ServerScriptService.EconomyService running, every meat piece gets a ledger
+-- record (PieceId; owner and value fixed here) that is paid once when it sells.
+-- Nothing is destroyed unpaid any more: when the pit or the stack is full, pieces
+-- wait (in the blender queue, or as held ledger data) and come back out of the
+-- pipe when there is room. Without EconomyService this runs exactly as before.
 local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
 
@@ -12,6 +25,43 @@ local caught = workspace:WaitForChild("NetLift"):WaitForChild("FishCaught")
 local meatTemplate = ServerStorage:WaitForChild("MeatTemplate")
 local pitMeat = workspace:WaitForChild("PitMeat")
 local pit = workspace:WaitForChild("Pit")
+
+-- FishVariants: optional modules (missing -> base behaviour)
+local Variants, VariantFx = nil, nil
+do
+	local rs = game:GetService("ReplicatedStorage")
+	local function load(name)
+		local mod = rs:FindFirstChild(name)
+		if not (mod and mod:IsA("ModuleScript")) then return nil end
+		local ok, result = pcall(require, mod)
+		if not ok then
+			warn("[FishVariants] " .. name .. " failed to load: " .. tostring(result))
+			return nil
+		end
+		return result
+	end
+	Variants = load("FishVariants")
+	if Variants then VariantFx = load("FishVariantVisuals") end
+end
+
+-- Economy: optional money service (missing or not running -> original behaviour)
+local Economy = nil
+do
+	local mod = game:GetService("ServerScriptService"):FindFirstChild("EconomyService")
+	if mod and mod:IsA("ModuleScript") then
+		local ok, api = pcall(require, mod)
+		if ok and type(api) == "table" then
+			local ran, running = pcall(api.start)
+			if ran and running then
+				Economy = api
+			else
+				warn("[GrinderProcessor] economy not running, original behaviour: " .. tostring(running))
+			end
+		else
+			warn("[GrinderProcessor] could not load EconomyService, original behaviour: " .. tostring(api))
+		end
+	end
+end
 
 -- tuning
 local GRIND_TIME = 4        -- seconds in the grinder
@@ -116,6 +166,23 @@ local function stackSlot(n)
 	return stackOrigin + Vector3.new((i % 4) * 1.75, layer * 0.3, (i // 4) * 2.9)
 end
 
+-- Economy: backpressure. A piece goes onto the belt only if the stack will
+-- have room for it, and new pieces are shot into the pit only while the pit
+-- has room; otherwise they wait (blender queue / held ledger data).
+local onBelt = 0
+local function stackHasRoom()
+	if not Economy then return true end
+	local stackFolder = workspace:FindFirstChild("MeatStack") or pitMeat
+	return #stackFolder:GetChildren() + onBelt < MAX_STACK
+end
+local function pitHasRoom()
+	local n = 0
+	for _, m in ipairs(pitMeat:GetChildren()) do
+		if m:GetAttribute("StackIndex") == nil then n += 1 end
+	end
+	return n < Economy.pipeline().MaxPitObjects
+end
+
 ------------------------------------------------------------------ BELT (one at a time)
 local beltLen = (beltEnd - beltStart).Magnitude
 local beltDir = (beltEnd - beltStart).Unit
@@ -141,6 +208,8 @@ local function runBelt(meat)
 	local stackFolder = workspace:FindFirstChild("MeatStack") or pitMeat
 	local count = #stackFolder:GetChildren()
 	if count >= MAX_STACK then
+		-- Economy: never lose unpaid meat - keep the piece as held ledger data
+		if Economy then Economy.hold(meat:GetAttribute("PieceId")) end
 		meat:Destroy() -- stack is full
 		return
 	end
@@ -164,22 +233,30 @@ task.spawn(function()
 				local traveled = (os.clock() - lastOnBelt.t0) * BELT_SPEED
 				clear = traveled >= BELT_GAP
 			end
-			if clear then
+			if clear and stackHasRoom() then -- Economy: wait while the stack is full
 				table.remove(beltQueue, 1)
 				lastOnBelt = { part = first, t0 = os.clock() + 0.5 } -- reserve while it hops on
-				task.spawn(runBelt, first)
+				onBelt += 1
+				task.spawn(function()
+					local ok, err = pcall(runBelt, first)
+					onBelt -= 1
+					if not ok then warn("[GrinderProcessor] belt: " .. tostring(err)) end
+				end)
 			end
 		end
 	end
 end)
 
 ------------------------------------------------------------------ GRINDER -> PIPE -> BLENDER
-local function shootMeat(info)
+local function shootMeat(info, pieceId)
 	local meat = meatTemplate:Clone()
 	meat.Name = "Meat"
 	meat:SetAttribute("FromFish", info.fishName)
 	meat:SetAttribute("Tier", info.tier)
 	if info.player then meat:SetAttribute("OwnerId", info.player.UserId) end
+	if Economy and pieceId then Economy.stamp(meat, pieceId) end -- Economy: PieceId, owner, value, variant
+	-- FishVariants: a small glow on rare meat (its value is in the ledger)
+	if VariantFx and meat:GetAttribute("Variant") then pcall(VariantFx.applyToPart, meat, meat:GetAttribute("Variant")) end
 	meat.CFrame = CFrame.new(pipeExit) * CFrame.Angles(rng:NextNumber(0, 6), rng:NextNumber(0, 6), 0)
 	meat.Parent = pitMeat
 	local ang = rng:NextNumber(0, math.pi * 2)
@@ -211,15 +288,44 @@ local function grind()
 	pending = {}
 	grinding = false
 	for _, info in ipairs(batch) do
-		for i = 1, meatFor(info.tier) do
-			task.spawn(shootMeat, info)
-			task.wait(0.22)
+		if Economy then
+			-- Economy: one ledger piece per meat piece (same count as meatFor);
+			-- pieces the pit has no room for are held as data, not dropped
+			for _, pieceId in ipairs(Economy.issueFish(info.player, info.fishName, info.tier, info.meta)) do
+				if pitHasRoom() then
+					task.spawn(shootMeat, info, pieceId)
+					task.wait(0.22)
+				else
+					Economy.hold(pieceId)
+				end
+			end
+		else
+			for i = 1, meatFor(info.tier) do
+				task.spawn(shootMeat, info)
+				task.wait(0.22)
+			end
 		end
 	end
 	if #pending > 0 and not grinding then task.spawn(grind) end
 end
 
-caught.Event:Connect(function(player, fishName, tier)
-	table.insert(pending, { player = player, fishName = fishName, tier = tier })
+caught.Event:Connect(function(player, fishName, tier, meta) -- Economy: meta = { OwnerId, Variant, Source }
+	table.insert(pending, { player = player, fishName = fishName, tier = tier, meta = meta })
 	if not grinding then task.spawn(grind) end
 end)
+
+-- Economy: held pieces (pit/stack was full, or a carrier left) come back out
+-- of the pipe, oldest first, whenever the pit has room again.
+if Economy then
+	task.spawn(function()
+		while true do
+			task.wait(0.5)
+			while pitHasRoom() do
+				local piece = Economy.takeHeld()
+				if not piece then break end
+				task.spawn(shootMeat, { fishName = piece.fishName, tier = piece.tier }, piece.id)
+				task.wait(0.22)
+			end
+		end
+	end)
+end

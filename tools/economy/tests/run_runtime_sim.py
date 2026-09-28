@@ -52,6 +52,12 @@ def sources() -> dict:
     out["Dwell_Module"] = (dwell / "src" / "GrinderDwell.luau").read_text()
     out["Dwell_Client"] = (dwell / "studio" / "FishSwimClient.patched.from-jump.lua").read_text()
     out["Dwell_Rod"] = (dwell / "studio" / "RodFishingSystem.patched.from-rodcast.lua").read_text()
+    var = ROOT.parent / "fish-variants"
+    out["Var_Rules"] = (var / "src" / "FishVariants.luau").read_text()
+    out["Var_Visuals"] = (var / "src" / "FishVariantVisuals.luau").read_text()
+    out["Var_Spawner"] = (var / "studio" / "economy" / "FishSpawner.patched.from-live.lua").read_text()
+    out["Var_Rod"] = (var / "studio" / "economy" / "RodFishingSystem.patched.from-sales.lua").read_text()
+    out["Var_Grinder"] = (var / "studio" / "economy" / "GrinderProcessor.patched.from-sales.lua").read_text()
     return out
 
 

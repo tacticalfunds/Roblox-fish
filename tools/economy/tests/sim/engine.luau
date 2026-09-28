@@ -268,6 +268,7 @@ local RaycastParams = {
 	end,
 }
 local ColorSequence, NumberSequence, NumberRange = dummy("ColorSequence"), dummy("NumberSequence"), dummy("NumberRange")
+local NumberSequenceKeypoint, ColorSequenceKeypoint = dummy("NumberSequenceKeypoint"), dummy("ColorSequenceKeypoint")
 local Vector2 = {
 	new = function(x, y)
 		return { X = x, Y = y }
@@ -1042,6 +1043,8 @@ function envFor(scriptInst)
 		ColorSequence = ColorSequence,
 		NumberSequence = NumberSequence,
 		NumberRange = NumberRange,
+		NumberSequenceKeypoint = NumberSequenceKeypoint,
+		ColorSequenceKeypoint = ColorSequenceKeypoint,
 		Random = Random,
 		RaycastParams = RaycastParams,
 		Enum = Enum,
