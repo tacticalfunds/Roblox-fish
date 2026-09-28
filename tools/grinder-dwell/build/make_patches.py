@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Regenerates the grinder-dwell patches for every base that can be live.
+"""Regenerates the grinder-dwell patches for every base that can be live
+(rebased 2026-09-28 on the economy chain and the live scripts):
 
-  FishSwimClient:   fish-jump patched (latest) | original
-  NetLiftScript:    fish-variants patched (latest) | original
-  RodFishingSystem: rod-cast (from variants) (latest) | rod-cast (from aquarium)
-                    | fish-variants patched | aquarium patched
+  FishSwimClient:   live | fish-jump (rebased on live)
+  NetLiftScript:    sales (InstallSales version)
+  HarpoonSystem:    sales (InstallSales version)   [new: harpooned fish dwell too]
+  RodFishingSystem: sales | rod-cast (on sales)
 All edits are asserted to match exactly once in each base.
 
 Usage:  python3 tools/grinder-dwell/build/make_patches.py
@@ -14,21 +15,18 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOLS = ROOT.parent
 OUT = ROOT / "studio"
+SALES = TOOLS / "economy" / "studio" / "sales"
 
 BASES = {
     "FishSwimClient": {
+        "live": TOOLS / "economy" / "studio" / "live" / "FishSwimClient.lua",
         "jump": TOOLS / "fish-jump" / "studio" / "FishSwimClient.patched.lua",
-        "original": TOOLS / "fish-jump" / "studio" / "FishSwimClient.original.lua",
     },
-    "NetLiftScript": {
-        "variants": TOOLS / "fish-variants" / "studio" / "NetLiftScript.patched.lua",
-        "original": TOOLS / "fish-variants" / "studio" / "NetLiftScript.original.lua",
-    },
+    "NetLiftScript": {"sales": SALES / "NetLiftScript.lua"},
+    "HarpoonSystem": {"sales": SALES / "HarpoonSystem.lua"},
     "RodFishingSystem": {
-        "rodcast-variants": TOOLS / "rod-cast" / "studio" / "RodFishingSystem.patched.from-variants.lua",
-        "rodcast-aquarium": TOOLS / "rod-cast" / "studio" / "RodFishingSystem.patched.from-aquarium.lua",
-        "variants": TOOLS / "fish-variants" / "studio" / "RodFishingSystem.patched.lua",
-        "aquarium": TOOLS / "aquarium-cycle" / "studio" / "RodFishingSystem.patched.lua",
+        "sales": SALES / "RodFishingSystem.lua",
+        "rodcast": TOOLS / "rod-cast" / "studio" / "RodFishingSystem.patched.from-sales.lua",
     },
 }
 
@@ -122,6 +120,29 @@ def swim_client(base: str) -> str:
         "\t\t\t\tlocal tumble = math.max(0, lt - LAUNCH_RISE - LAUNCH_FLY)\n"
         "\t\t\t\trot = startRot * CFrame.fromAxisAngle(f.spinAxis, flight * 11 + tumble * TUMBLE)\n",
     )
+    # harpooned fish (live harpoon branch): rest on the rollers too, then the original suck
+    p.rep(
+        "\t\t\telse\n"
+        "\t\t\t\tlocal u = math.clamp((lt - PULL - TOSS) / SUCK, 0, 1)\n"
+        "\t\t\t\tlocal e = u * u\n"
+        "\t\t\t\tlocal a = u * math.pi * 5\n"
+        "\t\t\t\tpos = grinder + Vector3.new(math.cos(a) * 1.2 * (1 - u), -3.2 * e, math.sin(a) * 1.2 * (1 - u))\n",
+        "\t\t\telseif lt < PULL + TOSS + DWELL then\n"
+        "\t\t\t\t-- GrinderDwell: a harpooned fish rests and tumbles on the rollers too\n"
+        "\t\t\t\tlocal d = lt - PULL - TOSS\n"
+        "\t\t\t\tlocal ox, oy, oz = Dwell.dwellOffset(d, f.phase)\n"
+        "\t\t\t\tpos = grinder + Vector3.new(ox, oy, oz)\n"
+        "\t\t\t\trot = CFrame.fromAxisAngle(f.spinAxis, 12 + d * TUMBLE)\n"
+        "\t\t\telse\n"
+        "\t\t\t\tlocal u = math.clamp((lt - PULL - TOSS - DWELL) / SUCK, 0, 1) -- GrinderDwell: after the rest\n"
+        "\t\t\t\tlocal e = u * u\n"
+        "\t\t\t\tlocal a = u * math.pi * 5\n"
+        "\t\t\t\tpos = grinder + Vector3.new(math.cos(a) * 1.2 * (1 - u), -3.2 * e, math.sin(a) * 1.2 * (1 - u))\n"
+        "\t\t\t\tif Dwell then -- GrinderDwell: spiral in from where the rest ended\n"
+        "\t\t\t\t\tlocal ox, oy, oz = Dwell.dropOffset(u)\n"
+        "\t\t\t\t\tpos = grinder + Vector3.new(ox, oy, oz)\n"
+        "\t\t\t\tend\n",
+    )
     return p.src
 
 
@@ -194,11 +215,29 @@ def rod_system(base: str) -> str:
     return p.src
 
 
-BUILDERS = {"FishSwimClient": swim_client, "NetLiftScript": net_lift, "RodFishingSystem": rod_system}
+def harpoon(base: str) -> str:
+    p = Patch(base)
+    p.rep(
+        "local PULL, TOSS, SUCK = 0.6, 0.8, 0.45   -- must match FishSwimClient\n",
+        "local PULL, TOSS, SUCK = 0.6, 0.8, 0.45   -- must match FishSwimClient\n"
+        + LOAD
+        + "-- GrinderDwell: the client rests a harpooned fish on the rollers first\n"
+        "local HARPOON_DWELL = if Dwell then Dwell.Dwell else 0\n",
+    )
+    p.rep(
+        "\t\ttask.delay(TOSS + SUCK, function()\n",
+        "\t\ttask.delay(TOSS + HARPOON_DWELL + SUCK, function() -- GrinderDwell\n",
+    )
+    return p.src
+
+
+BUILDERS = {"FishSwimClient": swim_client, "NetLiftScript": net_lift, "HarpoonSystem": harpoon, "RodFishingSystem": rod_system}
 
 
 def main() -> None:
     OUT.mkdir(exist_ok=True)
+    for old in OUT.glob("*.patched.from-*.lua"):
+        old.unlink()  # earlier bases (pre-live originals) are gone from Studio
     for name, bases in BASES.items():
         for label, path in bases.items():
             out = OUT / f"{name}.patched.from-{label}.lua"

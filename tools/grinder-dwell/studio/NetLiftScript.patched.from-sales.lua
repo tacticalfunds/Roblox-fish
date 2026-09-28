@@ -4,9 +4,11 @@
 -- once, when the client launch (now with ~1 s on the rollers) has finished:
 -- GrinderDwell.serverDelay() instead of 1.65 s. Payload and rewards unchanged.
 --
--- [FishVariants patch v1] FishCaught now fires (player, fishName, tier, payload)
--- where payload = { Variant = <the fish's Variant attribute>, Source = "Net" }.
--- Listeners that take three arguments are unaffected.
+-- [Economy patch v1] Changes vs. the live script are marked "Economy".
+-- Each catch also sends { OwnerId, Variant, Source = "Net" } as a 4th value, so a
+-- bought fish keeps its buyer (the grinder falls back to the pad player). While
+-- EconomyService reports the meat pipeline saturated, the pad refuses to lift
+-- (fish stay in the river). The MaxWeight rule is unchanged.
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 
@@ -50,8 +52,27 @@ do
 end
 local CATCH_DELAY = if Dwell then Dwell.serverDelay() else 1.65 -- GrinderDwell
 local caughtEvent = model:FindFirstChild("FishCaught") or Instance.new("BindableEvent")
-caughtEvent.Name = "FishCaught" -- fires (player, fishName, tier, payload) for each fish that lands in the grinder
+caughtEvent.Name = "FishCaught" -- fires (player, fishName, tier) for each fish that lands in the grinder
 caughtEvent.Parent = model
+
+-- Economy: optional money service (missing or not running -> original behaviour)
+local Economy = nil
+do
+	local mod = game:GetService("ServerScriptService"):FindFirstChild("EconomyService")
+	if mod and mod:IsA("ModuleScript") then
+		local ok, api = pcall(require, mod)
+		if ok and type(api) == "table" then
+			local ran, running = pcall(api.start)
+			if ran and running then
+				Economy = api
+			else
+				warn("[NetLiftScript] economy not running, original behaviour: " .. tostring(running))
+			end
+		else
+			warn("[NetLiftScript] could not load EconomyService, original behaviour: " .. tostring(api))
+		end
+	end
+end
 
 local function fishPos(m, t)
 	local seed = m:GetAttribute("Seed") or 1
@@ -66,14 +87,17 @@ local function catchFish(player)
 	local c = netRoot.Position
 	local count = 0
 	for _, m in ipairs(fishFolder:GetChildren()) do
-		if m:GetAttribute("SpawnT") and not m:GetAttribute("CaughtT") then
+		if m:GetAttribute("SpawnT") and not m:GetAttribute("CaughtT") and not m:GetAttribute("HarpoonT") then
 			local x, z = fishPos(m, t)
 			if math.abs(x - c.X) <= NET_L / 2 and math.abs(z - c.Z) <= NET_W / 2 then
 				m:SetAttribute("CaughtT", t)
 				count += 1
 				task.delay(CATCH_DELAY, function() -- GrinderDwell
-					-- FishVariants: optional 4th argument carries the variant to the grinder
-					caughtEvent:Fire(player, m.Name, m:GetAttribute("Tier"), { Variant = m:GetAttribute("Variant"), Source = "Net" })
+					caughtEvent:Fire(player, m.Name, m:GetAttribute("Tier"), {
+						OwnerId = m:GetAttribute("OwnerId"), -- Economy: a bought fish keeps its buyer
+						Variant = m:GetAttribute("Variant"),
+						Source = "Net",
+					})
 					if m.Parent then m:Destroy() end
 				end)
 			end
@@ -87,7 +111,7 @@ local function weightOverNet(t)
 	local c = netRoot.Position
 	local total = 0
 	for _, m in ipairs(fishFolder:GetChildren()) do
-		if m:GetAttribute("SpawnT") and not m:GetAttribute("CaughtT") then
+		if m:GetAttribute("SpawnT") and not m:GetAttribute("CaughtT") and not m:GetAttribute("HarpoonT") then
 			local x, z = fishPos(m, t)
 			if math.abs(x - c.X) <= NET_L / 2 and math.abs(z - c.Z) <= NET_W / 2 then
 				total += m:GetAttribute("Weight") or 1
@@ -114,6 +138,15 @@ hitbox.Touched:Connect(function(hit)
 	if not player or hum.Health <= 0 then return end
 	busy = true
 	pressPad(true)
+	-- Economy: grinder backed up -> no lift; the fish stay in the river
+	if Economy and Economy.saturated() then
+		Economy.notify(player, "The grinder is backed up - let the meat clear first", "warn")
+		task.wait(0.6)
+		pressPad(false)
+		task.wait(0.4)
+		busy = false
+		return
+	end
 	local maxW = model:GetAttribute("MaxWeight") or 40
 	local w = weightOverNet(workspace:GetServerTimeNow())
 	if w > maxW then

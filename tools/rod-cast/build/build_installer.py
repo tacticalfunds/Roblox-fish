@@ -27,19 +27,18 @@ LATER = ["GrinderDwellBackup", "EconomyVariantsBackup"]
 def main() -> None:
     make_patches.main()
     studio = ROOT / "studio"
-    targets = [
+    changes = [
         (
             {"key": "RodFishingSystem", "where": "script:RodFishingSystem", "class": "Script"},
-            (ROOT.parent / "economy" / "studio" / "sales" / "RodFishingSystem.lua").read_text(),
-            (studio / "RodFishingSystem.patched.from-sales.lua").read_text(),
+            [("sales", (ROOT.parent / "economy" / "studio" / "sales" / "RodFishingSystem.lua").read_text(),
+              (studio / "RodFishingSystem.patched.from-sales.lua").read_text())],
         ),
         (
-            {"key": "RodFishingClient", "where": "StarterPlayer/StarterPlayerScripts/RodFishingClient", "class": "LocalScript"},
-            (studio / "RodFishingClient.original.lua").read_text(),
-            (studio / "RodFishingClient.patched.lua").read_text(),
+            {"key": "RodFishingClient", "where": "localscript:RodFishingClient", "class": "LocalScript"},
+            [("live", (studio / "RodFishingClient.original.lua").read_text(), (studio / "RodFishingClient.patched.lua").read_text())],
         ),
     ]
-    keys = bu.write_pair(
+    keys = bu.write_pair_v2(
         "InstallRodCast.lua",
         "RollbackRodCast.lua",
         """
@@ -55,8 +54,10 @@ Requires: sale payouts (RodFishingSystem = the InstallSales version).
         [["EconomyRodOffersBackup"]],
         ["RodCastBackup", *LATER],
         LATER,
-        targets,
-        out_dir=ROOT,
+        changes,
+        [],
+        [],
+        ROOT,
     )
     assert keys == ["RodFishingSystem", "RodFishingClient"], keys
 

@@ -48,6 +48,10 @@ def sources() -> dict:
     rodcast = ROOT.parent / "rod-cast" / "studio"
     out["RodCast_Server"] = (rodcast / "RodFishingSystem.patched.from-sales.lua").read_text()
     out["RodCast_Client"] = (rodcast / "RodFishingClient.patched.lua").read_text()
+    dwell = ROOT.parent / "grinder-dwell"
+    out["Dwell_Module"] = (dwell / "src" / "GrinderDwell.luau").read_text()
+    out["Dwell_Client"] = (dwell / "studio" / "FishSwimClient.patched.from-jump.lua").read_text()
+    out["Dwell_Rod"] = (dwell / "studio" / "RodFishingSystem.patched.from-rodcast.lua").read_text()
     return out
 
 

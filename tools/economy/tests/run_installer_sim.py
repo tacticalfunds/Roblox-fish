@@ -62,7 +62,7 @@ local function new(className, name)
 	local o = setmetatable({ _props = { ClassName = className, Name = name or className }, _children = {}, _attrs = {} }, Inst)
 	return o
 end
-function Inst:IsA(c) return self.ClassName == c or (CLASS_ISA[self.ClassName] or {})[c] == true end
+function Inst:IsA(c) return c == "Instance" or self.ClassName == c or (CLASS_ISA[self.ClassName] or {})[c] == true end
 function Inst:GetChildren() return table.clone(self._children) end
 function Inst:GetDescendants()
 	local out = {}
@@ -465,6 +465,9 @@ local function astraPlace(opts)
 	local rodClient = new("LocalScript", "RodFishingClient") rodClient.Source = VIS.LiveRodFishingClient
 	rodClient.Parent = sv.StarterPlayer.StarterPlayerScripts
 	scripts.RodFishingClient = rodClient
+	local swimClient = new("LocalScript", "FishSwimClient") swimClient.Source = VIS.LiveFishSwimClient
+	swimClient.Parent = sv.StarterPlayer.StarterPlayerScripts
+	scripts.FishSwimClient = swimClient
 	aquariumV1(sv)
 	if opts.chain8cb then
 		oldInstall(g, sv)
@@ -622,6 +625,62 @@ do
 	check("rod cast rollback: exactly the sales state", not refused() and snapshot(g) == afterSales)
 end
 
+-- grinder dwell: every combination of fish jumps / rod cast on top of sales
+local function dwell(g, s) warnings = {} runDwell(g, s.Workspace) end
+local function dwellBack(g, s) warnings = {} runDwellBack(g, s.Workspace) end
+do
+	local g, sv = astraPlace()
+	upgradeAq(g, sv)
+	local before = snapshot(g)
+	dwell(g, sv)
+	check("dwell before sales: refused", refused() and snapshot(g) == before)
+end
+for _, combo in ipairs({ { jump = false, cast = false }, { jump = true, cast = false }, { jump = false, cast = true }, { jump = true, cast = true } }) do
+	local label = string.format("dwell (jump %s, rod cast %s)", tostring(combo.jump), tostring(combo.cast))
+	local g, sv, _, sc = astraPlace()
+	upgradeAq(g, sv)
+	installSales(g, sv)
+	if combo.jump then
+		jumpInstall(g, sv)
+	end
+	if combo.cast then
+		rodCast(g, sv)
+	end
+	assert(not refused(), label .. ": setup")
+	local before = snapshot(g)
+	dwell(g, sv)
+	check(label .. ": installed", not refused())
+	check(label .. ": the matching client patch", sc.FishSwimClient.Source == (if combo.jump then DWELL.ClientJump else DWELL.ClientLive))
+	check(label .. ": the matching rod patch", sc.RodFishingSystem.Source == (if combo.cast then DWELL.RodCast else DWELL.RodSales))
+	check(label .. ": net + harpoon patched", sc.NetLiftScript.Source == DWELL.Net and sc.HarpoonSystem.Source == DWELL.Harpoon)
+	local mod = sv.ReplicatedStorage:FindFirstChild("GrinderDwell")
+	check(label .. ": module added, tagged", mod and mod.Source == DWELL.Module and mod:GetAttribute("EconomyOwned") == true)
+	local after = snapshot(g)
+	if combo.cast then
+		rodCastBack(g, sv)
+		check(label .. ": rod cast rollback refused while dwell is in", refused() and snapshot(g) == after)
+	end
+	rollbackSales(g, sv)
+	check(label .. ": sales rollback refused while dwell is in", refused() and snapshot(g) == after)
+	dwellBack(g, sv)
+	check(label .. ": rollback restores exactly (module removed)", not refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraPlace()
+	upgradeAq(g, sv)
+	installSales(g, sv)
+	local mine = new("ModuleScript", "GrinderDwell") mine.Source = "return {}" mine.Parent = sv.ReplicatedStorage
+	local before = snapshot(g)
+	dwell(g, sv)
+	check("dwell with someone else's ReplicatedStorage.GrinderDwell: refused", refused() and snapshot(g) == before)
+	mine:Destroy()
+	dwell(g, sv)
+	sv.ReplicatedStorage.GrinderDwell.Source ..= "\n-- tuned"
+	before = snapshot(g)
+	dwellBack(g, sv)
+	check("dwell rollback over an edited module: refused", refused() and snapshot(g) == before)
+end
+
 -- refusals change nothing
 do
 	local g, sv, _, sc = astraPlace()
@@ -737,6 +796,17 @@ def main() -> int:
         "RodCastServer": (ROOT.parent / "rod-cast" / "studio" / "RodFishingSystem.patched.from-sales.lua").read_text(),
         "RodCastClient": (ROOT.parent / "rod-cast" / "studio" / "RodFishingClient.patched.lua").read_text(),
     }
+    dw = ROOT.parent / "grinder-dwell"
+    dwell = {
+        "ClientLive": (dw / "studio" / "FishSwimClient.patched.from-live.lua").read_text(),
+        "ClientJump": (dw / "studio" / "FishSwimClient.patched.from-jump.lua").read_text(),
+        "RodSales": (dw / "studio" / "RodFishingSystem.patched.from-sales.lua").read_text(),
+        "RodCast": (dw / "studio" / "RodFishingSystem.patched.from-rodcast.lua").read_text(),
+        "Net": (dw / "studio" / "NetLiftScript.patched.from-sales.lua").read_text(),
+        "Harpoon": (dw / "studio" / "HarpoonSystem.patched.from-sales.lua").read_text(),
+        "Module": (dw / "src" / "GrinderDwell.luau").read_text(),
+    }
+    tables += "local DWELL = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in dwell.items()) + "}\n"
     tables += "local VIS = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in vis.items()) + "}\n"
     aqroot = ROOT.parent / "aquarium-cycle" / "src"
     tables += "local AQV12 = {\n"
@@ -760,6 +830,8 @@ def main() -> int:
         + wrap("runInstallUpg", (ROOT / "InstallUpgrades.lua").read_text())
         + wrap("runJumpInstall", (ROOT.parent / "fish-jump" / "InstallFishJump.lua").read_text())
         + wrap("runRodCast", (ROOT.parent / "rod-cast" / "InstallRodCast.lua").read_text())
+        + wrap("runDwell", (ROOT.parent / "grinder-dwell" / "InstallGrinderDwell.lua").read_text())
+        + wrap("runDwellBack", (ROOT.parent / "grinder-dwell" / "RollbackGrinderDwell.lua").read_text())
         + wrap("runRodCastBack", (ROOT.parent / "rod-cast" / "RollbackRodCast.lua").read_text())
         + wrap("runJumpUninstall", (ROOT.parent / "fish-jump" / "UninstallFishJump.lua").read_text())
         + wrap("runRollbackUpg", (ROOT / "RollbackUpgrades.lua").read_text())

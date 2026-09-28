@@ -45,13 +45,15 @@ the sign of `CAST_DIP_DEG`**; the real pivot may differ from the test model.
 ## Install / rollback (Studio, Edit mode, Command Bar)
 
 - **Install:** `tools/rod-cast/InstallRodCast.lua`. It's built from the
-  economy's guarded update template:
+  economy's guarded update template (v2), and finds RodFishingClient by
+  unique name under StarterPlayer, StarterGui or ReplicatedFirst. It:
   - it checks both scripts' exact sources first, and a refusal names the
     first differing line
   - it records one undo step
   - it backs up both scripts to `ServerStorage.RodCastBackup`
 - **Rollback:** `tools/rod-cast/RollbackRodCast.lua` restores the sale-payout
-  versions exactly. `RollbackSales` refuses while this is installed.
+  versions exactly. `RollbackSales` refuses while this is installed, and
+  this refuses while grinder dwell is installed.
 
 ## Tests
 

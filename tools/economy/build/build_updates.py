@@ -112,6 +112,67 @@ def write_pair(file: str, rollback: str, about: str, backup: str, requires, forb
     return changed_keys
 
 
+def write_pair_v2(file: str, rollback: str, about: str, backup: str, requires, forbids, later, changes, unchanged, adds, out_dir: pathlib.Path) -> list[str]:
+    """v2 template: a change may list several known versions ("variants": the
+    one that matches Studio is used), and new objects can be added.
+      changes:   [(target spec, [(label, old, new), ...])]
+      unchanged: [(target spec, source)]
+      adds:      [{"where", "name", "class", "source"}]"""
+
+    def fields(t: dict) -> list[str]:
+        out = [f'key = "{t["key"]}"', f'where = "{t["where"]}"', f'class = "{t["class"]}"']
+        if t.get("tag"):
+            out.append(f'tag = "{t["tag"]}"')
+        if t.get("tagOnParent"):
+            out.append("tagOnParent = true")
+        return out
+
+    change_rows, keys = [], []
+    for t, variants in changes:
+        assert variants and all(old != new for _, old, new in variants), t["key"]
+        assert len({old for _, old, _ in variants}) == len(variants), "variants must have distinct bases"
+        vs = ", ".join(
+            f'{{ label = "{label}", old = {bi.long_string(old)}, new = {bi.long_string(new)} }}' for label, old, new in variants
+        )
+        change_rows.append("\t{ " + ", ".join(fields(t)) + f", variants = {{ {vs} }} }},")
+        keys.append(t["key"])
+    unchanged_rows = ["\t{ " + ", ".join(fields(t)) + f", source = {bi.long_string(src)} }}," for t, src in unchanged]
+    add_rows = [
+        f'\t{{ where = "{a["where"]}", name = "{a["name"]}", class = "{a["class"]}", source = {bi.long_string(a["source"])} }},'
+        for a in adds
+    ]
+    name = file.removesuffix(".lua")
+    install = fill(
+        (ROOT / "build" / "SourceUpdateV2.template.lua").read_text(),
+        {
+            "--[[@FILE]]": file,
+            "--[[@ABOUT]]": "\n".join("\t" + line if line else "" for line in about.strip("\n").split("\n")),
+            "--[[@BACKUP]]": backup,
+            "--[[@ROLLBACK]]": rollback,
+            "--[[@NAME]]": name,
+            "--[[@REQUIRES]]": "{ " + ", ".join(lua(r) for r in requires) + " }",
+            "--[[@FORBIDS]]": lua(forbids),
+            "--[[@CHANGES]]": "{\n" + "\n".join(change_rows) + "\n}",
+            "--[[@UNCHANGED]]": "{\n" + "\n".join(unchanged_rows) + "\n}",
+            "--[[@ADDS]]": "{\n" + "\n".join(add_rows) + "\n}",
+        },
+    )
+    (out_dir / file).write_text(install)
+    rb = fill(
+        (ROOT / "build" / "RollbackV2.template.lua").read_text(),
+        {
+            "--[[@FILE]]": rollback,
+            "--[[@INSTALLER]]": file,
+            "--[[@BACKUP]]": backup,
+            "--[[@NAME]]": rollback.removesuffix(".lua"),
+            "--[[@LATER]]": lua(later),
+        },
+    )
+    (out_dir / rollback).write_text(rb)
+    print(f"wrote {out_dir.relative_to(REPO)}/{file} ({len(install)} chars; changes {', '.join(keys)}; adds {', '.join(a['name'] for a in adds) or '-'}) + {rollback}")
+    return keys
+
+
 def aquarium() -> list[str]:
     aq = REPO / "tools" / "aquarium-cycle" / "src"
     targets = []

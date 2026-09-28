@@ -21,8 +21,9 @@
 	    (it identifies the installed version by source, not by folder names)
 	Then, in one undo step, it backs up each changed script to
 	ServerStorage.RodCastBackup (Target ObjectValue + disabled Before/After
-	copies) and writes the new sources. It adds and deletes nothing else.
-	RollbackRodCast.lua restores every Before source.
+	copies), writes the new sources and adds the listed new objects (tagged
+	EconomyOwned, recorded in the backup). It deletes nothing.
+	RollbackRodCast.lua restores every Before source and removes what it added.
 ]]
 
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
@@ -35,9 +36,11 @@ local BACKUP = "RodCastBackup"
 local REQUIRES = { { "EconomyRodOffersBackup" } }
 -- ServerStorage folders that must NOT exist (this install and later milestones)
 local FORBIDS = { "RodCastBackup", "GrinderDwellBackup", "EconomyVariantsBackup" }
--- { key, where, class, tag?, tagOnParent?, old, new } scripts this changes
+-- { key, where, class, tag?, tagOnParent?, old, new } scripts this changes;
+-- or { ..., variants = { { label, old, new }, ... } } when more than one
+-- version can be live (the matching one is used)
 local CHANGES = {
-	{ key = "RodFishingSystem", where = "script:RodFishingSystem", class = "Script", old = [[
+	{ key = "RodFishingSystem", where = "script:RodFishingSystem", class = "Script", variants = { { label = "sales", old = [[
 -- Red button fishing: press the big red button -> every idle rod on the pads casts a line into the river,
 -- waits a random time, then reels up a fish that spins on the line as a black silhouette,
 -- cycling through different fish before the real one is revealed in full color.
@@ -1043,8 +1046,8 @@ RS:WaitForChild("PressFishButton").OnServerEvent:Connect(function(player)
 end)
 Players.PlayerRemoving:Connect(function(p) lastPress[p] = nil end)
 setReady(true)
-]] },
-	{ key = "RodFishingClient", where = "StarterPlayer/StarterPlayerScripts/RodFishingClient", class = "LocalScript", old = [[
+]] } } },
+	{ key = "RodFishingClient", where = "localscript:RodFishingClient", class = "LocalScript", variants = { { label = "live", old = [[
 -- Smooth visuals for the button fishing:
 --  * fish rise slowly out of the water on the line while spinning (silhouettes swap on the server)
 --  * rods bend back and tug while reeling
@@ -1356,7 +1359,11 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 folder.ChildRemoved:Connect(function(m) spinBase[m] = nil end)
-]] },
+]] } } },
+}
+-- { where, name, class, source } objects this adds (must not exist yet)
+local ADDS = {
+
 }
 -- { key, where, class, tag?, tagOnParent?, source } scripts that must be exactly this version
 local UNCHANGED = {
@@ -1408,11 +1415,27 @@ for _, name in ipairs(FORBIDS) do
 end
 
 -- "script:Name" = the one Script with that name under ServerScriptService or
--- Workspace; otherwise a path from a service, e.g. "ReplicatedStorage/AquariumCycle/Config"
+-- Workspace; "localscript:Name" = the one LocalScript with that name under
+-- StarterPlayer, StarterGui or ReplicatedFirst; otherwise a path from a
+-- service, e.g. "ReplicatedStorage/AquariumCycle/Config"
 local function locate(spec)
 	local where = spec.where
 	local target
-	if where:sub(1, 7) == "script:" then
+	if where:sub(1, 12) == "localscript:" then
+		local name = where:sub(13)
+		local found = {}
+		for _, service in ipairs({ "StarterPlayer", "StarterGui", "ReplicatedFirst" }) do
+			for _, d in ipairs(game:GetService(service):GetDescendants()) do
+				if d.Name == name and d:IsA("LocalScript") then
+					table.insert(found, d)
+				end
+			end
+		end
+		if #found ~= 1 then
+			return nil, string.format("expected exactly 1 LocalScript named %s, found %d", name, #found)
+		end
+		target = found[1]
+	elseif where:sub(1, 7) == "script:" then
 		local name = where:sub(8)
 		local found = {}
 		for _, container in ipairs({ game:GetService("ServerScriptService"), workspace }) do
@@ -1468,10 +1491,30 @@ for _, entry in ipairs(CHANGES) do
 	if not target then
 		return fail(why)
 	end
-	if normalize(target.Source) ~= normalize(entry.old) then
-		return fail(target:GetFullName() .. " is not the expected version (" .. entry.key .. ")" .. firstDiff(target.Source, entry.old) .. "; send the current source")
+	local list = entry.variants or { { old = entry.old, new = entry.new } }
+	local pick
+	for _, v in ipairs(list) do
+		if normalize(target.Source) == normalize(v.old) then
+			pick = v
+			break
+		end
 	end
-	table.insert(changes, { target = target, key = entry.key, new = entry.new })
+	if not pick then
+		return fail(target:GetFullName() .. " is not an expected version (" .. entry.key .. ")" .. firstDiff(target.Source, list[1].old) .. "; send the current source")
+	end
+	table.insert(changes, { target = target, key = entry.key .. (if pick.label then "_" .. pick.label else ""), new = pick.new })
+end
+local adds = {}
+for _, spec in ipairs(ADDS) do
+	local parent, why = locate({ where = spec.where, class = "Instance" })
+	if not parent then
+		return fail(why)
+	end
+	local existing = parent:FindFirstChild(spec.name)
+	if existing then
+		return fail(existing:GetFullName() .. " already exists (installed already, or someone else's; remove or rename it first)")
+	end
+	table.insert(adds, { parent = parent, spec = spec })
 end
 
 ------------------------------------------------------------ update
@@ -1519,6 +1562,22 @@ local built, buildErr = pcall(function()
 		copyOf(change.target, "After", change.target.Source).Parent = entry
 		entry.Parent = backup
 	end
+	for i, add in ipairs(adds) do
+		local inst = Instance.new(add.spec.class)
+		inst.Name = add.spec.name
+		inst.Source = add.spec.source
+		inst:SetAttribute("EconomyOwned", true)
+		local entry = Instance.new("Folder")
+		entry.Name = string.format("%02d_add_%s", #changes + i, add.spec.name)
+		local addedValue = Instance.new("ObjectValue")
+		addedValue.Name = "Added"
+		addedValue.Value = inst
+		addedValue.Parent = entry
+		copyOf(inst, "After", add.spec.source).Parent = entry
+		entry.Parent = backup
+		inst.Parent = add.parent
+		add.inst = inst
+	end
 	backup.Parent = ServerStorage
 end)
 
@@ -1527,6 +1586,13 @@ if not built then
 		if originals[i] then
 			pcall(function()
 				change.target.Source = originals[i]
+			end)
+		end
+	end
+	for _, add in ipairs(adds) do
+		if add.inst then
+			pcall(function()
+				add.inst:Destroy()
 			end)
 		end
 	end
@@ -1553,6 +1619,9 @@ if not built then
 end
 print("[" .. NAME .. "] Installed:")
 for _, change in ipairs(changes) do
-	print("  updated " .. change.target:GetFullName())
+	print("  updated " .. change.target:GetFullName() .. " (" .. change.key .. ")")
+end
+for _, add in ipairs(adds) do
+	print("  added   " .. add.inst:GetFullName())
 end
 print("  backup  ServerStorage." .. BACKUP .. " (RollbackRodCast.lua restores the previous sources)")
