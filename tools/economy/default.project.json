@@ -1,0 +1,16 @@
+{
+  "name": "Economy",
+  "tree": {
+    "$className": "DataModel",
+    "ServerScriptService": {
+      "EconomyCore": {
+        "$className": "Folder",
+        "Config": { "$path": "src/core/Config.luau" },
+        "Pricing": { "$path": "src/core/Pricing.luau" },
+        "Ledger": { "$path": "src/core/Ledger.luau" },
+        "MoneyStore": { "$path": "src/core/MoneyStore.luau" },
+        "Offers": { "$path": "src/core/Offers.luau" }
+      }
+    }
+  }
+}
