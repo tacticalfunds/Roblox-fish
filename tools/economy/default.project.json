@@ -3,13 +3,42 @@
   "tree": {
     "$className": "DataModel",
     "ServerScriptService": {
-      "EconomyCore": {
-        "$className": "Folder",
-        "Config": { "$path": "src/core/Config.luau" },
-        "Pricing": { "$path": "src/core/Pricing.luau" },
-        "Ledger": { "$path": "src/core/Ledger.luau" },
-        "MoneyStore": { "$path": "src/core/MoneyStore.luau" },
-        "Offers": { "$path": "src/core/Offers.luau" }
+      "EconomyService": {
+        "$path": "src/server/EconomyService.luau",
+        "Config": {
+          "$path": "src/core/Config.luau"
+        },
+        "Pricing": {
+          "$path": "src/core/Pricing.luau"
+        },
+        "Ledger": {
+          "$path": "src/core/Ledger.luau"
+        },
+        "MoneyStore": {
+          "$path": "src/core/MoneyStore.luau"
+        },
+        "Offers": {
+          "$path": "src/core/Offers.luau"
+        },
+        "Sales": {
+          "$path": "src/core/Sales.luau"
+        },
+        "PieceTags": {
+          "$path": "src/core/PieceTags.luau"
+        }
+      },
+      "EconomyBoot": {
+        "$path": "src/server/EconomyBoot.server.luau"
+      },
+      "AquariumEconomy": {
+        "$path": "src/server/AquariumEconomy.luau"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "EconomyClient": {
+          "$path": "src/client/EconomyClient.client.luau"
+        }
       }
     }
   }
