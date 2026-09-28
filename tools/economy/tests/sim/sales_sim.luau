@@ -129,6 +129,24 @@ local function haul(p, n)
 	return ok
 end
 
+------------------------------------------------------------ 0) Car Sales hooks kept
+
+do
+	-- Car Sales hooks (live TruckSystem): the line only starts once cars are
+	-- unlocked (CarSalesServer's paid unlock); CarsMaxQueue caps it
+	advance(20)
+	check("Car Sales: no trucks while cars are locked", #ws.Trucks:GetChildren() == 0)
+	asServer(function()
+		workspaceInst:SetAttribute("CarsUnlocked", true)
+		workspaceInst:SetAttribute("CarsMaxQueue", 2)
+	end)
+	advance(40)
+	check("Car Sales: unlocked, the line fills up to CarsMaxQueue", #ws.Trucks:GetChildren() == 2)
+	asServer(function()
+		workspaceInst:SetAttribute("CarsMaxQueue", nil)
+	end)
+end
+
 ------------------------------------------------------------ 1) ownership routes
 
 local value = Pricing.fishValue

@@ -249,7 +249,11 @@ local C3 = {}
 C3.__index = C3
 function C3:Lerp(other, u)
 	return setmetatable(
-		{ R = self.R + (other.R - self.R) * u, G = self.G + (other.G - self.G) * u, B = self.B + (other.B - self.B) * u },
+		{
+			R = self.R + (other.R - self.R) * u,
+			G = self.G + (other.G - self.G) * u,
+			B = self.B + (other.B - self.B) * u,
+		},
 		C3
 	)
 end

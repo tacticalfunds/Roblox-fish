@@ -16,10 +16,20 @@ reviews and installs. Nothing here touches Studio on its own.
 **Studio now (Astra, 2026-09-28):** fresh `a826d73` rod install + aquarium
 v1.2 (`UpgradeAquariumV12` installed: `EconomyRodOffersBackup` +
 `EconomyAquariumBackup`). Sales and upgrades are not installed yet.
-`InstallSales` refused the first time because the live CustomerSystem has
-CarSalesServer's customer-upgrade hooks (3 more line slots,
-`CustomersLineCap`, `CustomersPerMin`). `studio/live/CustomerSystem.lua` now
-includes them and the sales patch keeps them.
+`InstallSales` refused the first time because two live scripts carry
+existing paid-upgrade hooks that weren't in the baseline:
+
+- **CustomerSystem** (CarSalesServer's customer upgrades): 3 more line
+  slots, `CustomersLineCap` and `CustomersPerMin`.
+- **TruckSystem** (Car Sales unlock, Max Line and Car Speed):
+  - trucks come only while `workspace.CarsUnlocked` is set
+  - `CarsMaxQueue` caps the line
+  - `CarsGapSeconds` sets the spacing
+
+`studio/live/` now includes both, and the sales patch keeps them, with build
+guards and a runtime test. These baselines were rebuilt from Astra's
+descriptions. If a guard still refuses, the refusal names the first
+differing line; please paste that block.
 
 **Install order:** `InstallRodOffers` (a826d73) → `UpgradeAquariumV12` →
 `InstallSales` → `InstallUpgrades`. **Roll back in reverse:**
@@ -386,7 +396,7 @@ changes; the rest re-check behaviour that already worked.
 
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80 + sales 38 + upgrades 18 + jump 10 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80 + sales 40 + upgrades 18 + jump 10 checks
 python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 113 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```

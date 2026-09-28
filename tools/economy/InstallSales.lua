@@ -1574,9 +1574,15 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 	-- keep the line full
 	local last = queue[#queue]
-	if #queue + #departing < MAX_TRUCKS + 2 and #queue < MAX_TRUCKS and (not last or last.s >= Path.SPACING) and os.clock() >= nextTruckAt then
+	local maxQ = workspace:GetAttribute("CarsMaxQueue") or MAX_TRUCKS
+	if workspace:GetAttribute("CarsUnlocked") and #queue + #departing < maxQ + 2 and #queue < maxQ and (not last or last.s >= Path.SPACING) and os.clock() >= nextTruckAt then
 		spawnTruck()
-		nextTruckAt = os.clock() + rng:NextNumber(TRUCK_DELAY[1], TRUCK_DELAY[2])
+		local gap = workspace:GetAttribute("CarsGapSeconds")
+		if gap then
+			nextTruckAt = os.clock() + gap * rng:NextNumber(0.85, 1.15)
+		else
+			nextTruckAt = os.clock() + rng:NextNumber(TRUCK_DELAY[1], TRUCK_DELAY[2])
+		end
 	end
 end)
 
@@ -1928,9 +1934,15 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 	-- keep the line full
 	local last = queue[#queue]
-	if #queue + #departing < MAX_TRUCKS + 2 and #queue < MAX_TRUCKS and (not last or last.s >= Path.SPACING) and os.clock() >= nextTruckAt then
+	local maxQ = workspace:GetAttribute("CarsMaxQueue") or MAX_TRUCKS
+	if workspace:GetAttribute("CarsUnlocked") and #queue + #departing < maxQ + 2 and #queue < maxQ and (not last or last.s >= Path.SPACING) and os.clock() >= nextTruckAt then
 		spawnTruck()
-		nextTruckAt = os.clock() + rng:NextNumber(TRUCK_DELAY[1], TRUCK_DELAY[2])
+		local gap = workspace:GetAttribute("CarsGapSeconds")
+		if gap then
+			nextTruckAt = os.clock() + gap * rng:NextNumber(0.85, 1.15)
+		else
+			nextTruckAt = os.clock() + rng:NextNumber(TRUCK_DELAY[1], TRUCK_DELAY[2])
+		end
 	end
 end)
 

@@ -68,6 +68,8 @@ def check_sales(outputs: dict) -> None:
     cs = outputs["CustomerSystem"]
     assert 'workspace:GetAttribute("CustomersLineCap")' in cs and 'workspace:GetAttribute("CustomersPerMin")' in cs, \
         "CarSalesServer customer-upgrade hooks kept"
+    for attr in ("CarsMaxQueue", "CarsUnlocked", "CarsGapSeconds"):
+        assert f'workspace:GetAttribute("{attr}")' in t, "Car Sales unlock / max line / speed hooks kept: " + attr
     n = outputs["NetLiftScript"]
     assert 'OwnerId = m:GetAttribute("OwnerId")' in n and 'Source = "Net"' in n
     h = outputs["HarpoonSystem"]
