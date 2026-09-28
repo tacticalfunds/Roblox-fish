@@ -19,6 +19,7 @@
 -- saves a player whose money failed to load.
 
 local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -313,7 +314,7 @@ function M._start(): boolean
 		oa.Parent = root
 	end
 	offerAction = oa :: RemoteFunction
-	offers = Offers.new(Config.Offer.TimeoutSeconds)
+	offers = Offers.new(Config.Offer.TimeoutSeconds, RunService:IsStudio())
 	offerAction.OnServerInvoke = function(player, offerId, action)
 		return M._offerAction(player, offerId, action)
 	end
@@ -327,7 +328,22 @@ function M._start(): boolean
 		lastOfferAction[player] = nil
 	end)
 
-	money = MoneyStore.new(pickStore(), game.JobId, os.time)
+	-- Studio test clients (negative UserIds) always use a memory store, so
+	-- local multi-client tests never write keys to the real DataStore.
+	local real = pickStore()
+	local testStore = memoryStore()
+	local store: MoneyStore.Store = {
+		update = function(key: string, transform: (any) -> any): any
+			if string.sub(key, #Config.KeyPrefix + 1, #Config.KeyPrefix + 1) == "-" then
+				return testStore.update(key, transform)
+			end
+			return real.update(key, transform)
+		end,
+	}
+	local sessionId = MoneyStore.sessionId(game.JobId, function()
+		return HttpService:GenerateGUID(false)
+	end)
+	money = MoneyStore.new(store, sessionId, os.time)
 	ledger = Ledger.new("P")
 
 	Players.PlayerAdded:Connect(function(p)

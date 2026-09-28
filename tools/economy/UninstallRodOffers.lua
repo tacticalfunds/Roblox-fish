@@ -67,16 +67,26 @@ for _, entry in ipairs(backup:GetChildren()) do
 	table.insert(restores, { target = target, source = before.Source })
 end
 
+-- Dense { parent, name } list, each slot checked explicitly; only objects
+-- tagged EconomyOwned are removed (an untagged object with the same name is
+-- someone else's and is left alone).
 local starterScripts = StarterPlayer:FindFirstChildOfClass("StarterPlayerScripts")
-local toRemove = {}
-for _, inst in ipairs({
-	ReplicatedStorage:FindFirstChild("Economy"),
-	ServerScriptService:FindFirstChild("EconomyService"),
-	ServerScriptService:FindFirstChild("EconomyBoot"),
-	starterScripts and starterScripts:FindFirstChild("EconomyClient"),
-}) do
-	if inst and inst:GetAttribute(TAG) == true then
-		table.insert(toRemove, inst)
+local OWN = {
+	{ ReplicatedStorage, "Economy" },
+	{ ServerScriptService, "EconomyService" },
+	{ ServerScriptService, "EconomyBoot" },
+	{ starterScripts, "EconomyClient" },
+}
+local toRemove, skipped = {}, {}
+for _, slot in ipairs(OWN) do
+	local parent, name = slot[1], slot[2]
+	local inst = parent and parent:FindFirstChild(name)
+	if inst then
+		if inst:GetAttribute(TAG) == true then
+			table.insert(toRemove, inst)
+		else
+			table.insert(skipped, inst:GetFullName())
+		end
 	end
 end
 
@@ -116,3 +126,6 @@ if not done then
 	return warn("[UninstallRodOffers] Failed: " .. tostring(err))
 end
 print(string.format("[UninstallRodOffers] Restored %d script(s) and removed %d object(s). Saved Money is kept.", #restores, #toRemove))
+for _, path in ipairs(skipped) do
+	warn("[UninstallRodOffers] left " .. path .. " in place: not tagged EconomyOwned (not ours)")
+end

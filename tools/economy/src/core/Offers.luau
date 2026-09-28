@@ -47,12 +47,26 @@ export type Offers = typeof(setmetatable(
 		byRod: { [any]: number },
 		nextId: number,
 		timeout: number,
+		allowTestIds: boolean,
 	},
 	Offers
 ))
 
-function Offers.new(timeoutSeconds: number): Offers
-	return setmetatable({ offers = {}, byRod = {}, nextId = 0, timeout = timeoutSeconds }, Offers)
+-- allowTestIds: accept Studio test clients' negative UserIds (-1, -2, ...).
+-- The service passes RunService:IsStudio(); live servers only accept real
+-- (positive) UserIds.
+function Offers.new(timeoutSeconds: number, allowTestIds: boolean?): Offers
+	return setmetatable(
+		{ offers = {}, byRod = {}, nextId = 0, timeout = timeoutSeconds, allowTestIds = allowTestIds == true },
+		Offers
+	)
+end
+
+function Offers.validCaster(self: Offers, id: any): boolean
+	if type(id) ~= "number" or id ~= id or id ~= math.floor(id) or id == 0 then
+		return false
+	end
+	return id > 0 or self.allowTestIds
 end
 
 local function closed(self: Offers, offer: Offer, status: Status, reason: string?)
@@ -81,7 +95,7 @@ function Offers.open(
 	if self.byRod[rodKey] then
 		return nil, "rodBusy"
 	end
-	if type(casterId) ~= "number" or casterId <= 0 then
+	if not self:validCaster(casterId) then
 		return nil, "noCaster"
 	end
 	if type(price) ~= "number" or price < 1 or price ~= math.floor(price) then

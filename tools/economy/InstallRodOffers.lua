@@ -433,14 +433,16 @@ setReady(true)
 -- ServerStorage.AquariumCycleBackup by the installer.
 --
 -- [Economy patch v1] Changes vs. the live script are marked "Economy".
--- Rod-fish offers. While ServerScriptService.EconomyService runs and offers are
--- on (ReplicatedStorage.Economy.RodOffersEnabled ~= false), each cast needs the
--- aquarium, and the revealed fish WAITS on the line for its caster (the player
--- who pressed the button) to Buy it (price shown; charged once, then it goes to
--- the aquarium) or Pass (it slips back into the water and is gone). Timeout,
--- the caster leaving, or the aquarium closing also end the offer with no charge.
--- An unpaid rod fish NEVER goes to the aquarium or the grinder. Offers switched
--- off (or EconomyService missing) = exactly the aquarium v1 behaviour above.
+-- Rod-fish offers. While offers are configured (ReplicatedStorage.Economy exists
+-- and its RodOffersEnabled attribute is not false), each cast needs the money
+-- service AND the aquarium, and the revealed fish WAITS on the line for its
+-- caster (the player who pressed the button) to Buy it (price shown; charged
+-- once, then it goes to the aquarium) or Pass (it slips back into the water and
+-- is gone). Timeout, the caster leaving, or the aquarium closing also end the
+-- offer with no charge. An unpaid rod fish NEVER goes to the aquarium or the
+-- grinder. Configured but EconomyService not running = FAIL CLOSED (no cast,
+-- notice). Only RodOffersEnabled = false or uninstalling (no Economy folder)
+-- restores the aquarium v1 behaviour above.
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -548,8 +550,17 @@ do
 		end
 	end
 end
-local function offersOn()
-	return Economy ~= nil and Economy.rodOffersEnabled()
+-- Economy: offers are CONFIGURED while ReplicatedStorage.Economy exists and
+-- its RodOffersEnabled attribute is not false (checked at every press).
+local function offersConfigured()
+	local root = RS:FindFirstChild("Economy")
+	return root ~= nil and root:GetAttribute("RodOffersEnabled") ~= false
+end
+-- works even when EconomyService itself failed to start
+local function economyNotice(player, text)
+	local root = RS:FindFirstChild("Economy")
+	local n = root and root:FindFirstChild("Notice")
+	if n and n:IsA("RemoteEvent") and player and player.Parent then n:FireClient(player, text, "warn") end
 end
 
 ------------------------------------------------------------ button look / lock
@@ -674,8 +685,7 @@ local function runRod(rod, player)
 	-- AquariumCycle: put this fish in the spot reserved when the button was pressed
 	local toTank = false
 	if Aquarium then
-		-- Economy: the caster's id rides along as fish metadata (kept by aquarium v1.1+ when whitelisted)
-		toTank = Aquarium.hook(rod.key, finalName, if rod.offerMode and player then { OwnerId = player.UserId } else nil)
+		toTank = Aquarium.hook(rod.key, finalName)
 		if not toTank then Aquarium.abort(rod.key) end
 	end
 	local REEL = 3.4
@@ -836,10 +846,15 @@ local function press(player)
 	for _, rod in ipairs(rods) do
 		if rod.state == "idle" then table.insert(toCast, rod) end
 	end
-	-- Economy: in offer mode every cast needs the aquarium (a bought fish goes there)
-	local offerMode = offersOn()
+	-- Economy: in offer mode every cast needs the money service and the
+	-- aquarium (a bought fish goes there). Fail closed: no cast without them.
+	local offerMode = offersConfigured()
+	if offerMode and not (Economy and Economy.running()) then
+		economyNotice(player, "Fish buying is unavailable right now - rod fishing is paused")
+		return
+	end
 	if offerMode and not (Aquarium and Aquarium.active()) then
-		Economy.notify(player, "The aquarium is closed - rod fishing is paused", "warn")
+		economyNotice(player, "The aquarium is closed - rod fishing is paused")
 		return
 	end
 	-- AquariumCycle: reserve a tank spot for each rod BEFORE any rod starts;
@@ -1049,6 +1064,7 @@ local SERVICE = [[
 -- saves a player whose money failed to load.
 
 local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -1343,7 +1359,7 @@ function M._start(): boolean
 		oa.Parent = root
 	end
 	offerAction = oa :: RemoteFunction
-	offers = Offers.new(Config.Offer.TimeoutSeconds)
+	offers = Offers.new(Config.Offer.TimeoutSeconds, RunService:IsStudio())
 	offerAction.OnServerInvoke = function(player, offerId, action)
 		return M._offerAction(player, offerId, action)
 	end
@@ -1357,7 +1373,22 @@ function M._start(): boolean
 		lastOfferAction[player] = nil
 	end)
 
-	money = MoneyStore.new(pickStore(), game.JobId, os.time)
+	-- Studio test clients (negative UserIds) always use a memory store, so
+	-- local multi-client tests never write keys to the real DataStore.
+	local real = pickStore()
+	local testStore = memoryStore()
+	local store: MoneyStore.Store = {
+		update = function(key: string, transform: (any) -> any): any
+			if string.sub(key, #Config.KeyPrefix + 1, #Config.KeyPrefix + 1) == "-" then
+				return testStore.update(key, transform)
+			end
+			return real.update(key, transform)
+		end,
+	}
+	local sessionId = MoneyStore.sessionId(game.JobId, function()
+		return HttpService:GenerateGUID(false)
+	end)
+	money = MoneyStore.new(store, sessionId, os.time)
 	ledger = Ledger.new("P")
 
 	Players.PlayerAdded:Connect(function(p)
@@ -2279,6 +2310,21 @@ local function validAmount(v: any): boolean
 	return type(v) == "number" and v == v and v > 0 and v <= Config.MaxBalance and v == math.floor(v)
 end
 
+-- Session-lock owner id. game.JobId is empty in Studio, so parallel Studio
+-- sessions would share one lock owner; use a fresh GUID instead.
+function MoneyStore.sessionId(jobId: string?, makeGuid: () -> string): string
+	if type(jobId) == "string" and jobId ~= "" then
+		return jobId
+	end
+	return "studio-" .. makeGuid()
+end
+
+-- Studio test clients have negative UserIds; their money is never written
+-- to the real DataStore (the service routes these keys to memory).
+function MoneyStore.isTestUser(userId: number): boolean
+	return userId < 0
+end
+
 function MoneyStore.key(userId: number): string
 	return Config.KeyPrefix .. tostring(userId)
 end
@@ -2582,12 +2628,26 @@ export type Offers = typeof(setmetatable(
 		byRod: { [any]: number },
 		nextId: number,
 		timeout: number,
+		allowTestIds: boolean,
 	},
 	Offers
 ))
 
-function Offers.new(timeoutSeconds: number): Offers
-	return setmetatable({ offers = {}, byRod = {}, nextId = 0, timeout = timeoutSeconds }, Offers)
+-- allowTestIds: accept Studio test clients' negative UserIds (-1, -2, ...).
+-- The service passes RunService:IsStudio(); live servers only accept real
+-- (positive) UserIds.
+function Offers.new(timeoutSeconds: number, allowTestIds: boolean?): Offers
+	return setmetatable(
+		{ offers = {}, byRod = {}, nextId = 0, timeout = timeoutSeconds, allowTestIds = allowTestIds == true },
+		Offers
+	)
+end
+
+function Offers.validCaster(self: Offers, id: any): boolean
+	if type(id) ~= "number" or id ~= id or id ~= math.floor(id) or id == 0 then
+		return false
+	end
+	return id > 0 or self.allowTestIds
 end
 
 local function closed(self: Offers, offer: Offer, status: Status, reason: string?)
@@ -2616,7 +2676,7 @@ function Offers.open(
 	if self.byRod[rodKey] then
 		return nil, "rodBusy"
 	end
-	if type(casterId) ~= "number" or casterId <= 0 then
+	if not self:validCaster(casterId) then
 		return nil, "noCaster"
 	end
 	if type(price) ~= "number" or price < 1 or price ~= math.floor(price) then
@@ -3140,15 +3200,19 @@ if not starterScripts then
 	return fail("StarterPlayer.StarterPlayerScripts not found")
 end
 
-for _, existing in ipairs({
-	ReplicatedStorage:FindFirstChild("Economy"),
-	ServerScriptService:FindFirstChild("EconomyService"),
-	ServerScriptService:FindFirstChild("EconomyBoot"),
-	starterScripts:FindFirstChild("EconomyClient"),
-	ServerStorage:FindFirstChild(BACKUP),
-}) do
+-- Dense { parent, name } list: every slot is checked (a table of
+-- FindFirstChild results would stop ipairs at the first missing one).
+local OWN = {
+	{ ReplicatedStorage, "Economy" },
+	{ ServerScriptService, "EconomyService" },
+	{ ServerScriptService, "EconomyBoot" },
+	{ starterScripts, "EconomyClient" },
+	{ ServerStorage, BACKUP },
+}
+for _, slot in ipairs(OWN) do
+	local existing = slot[1]:FindFirstChild(slot[2])
 	if existing then
-		return fail(existing:GetFullName() .. " already exists (run UninstallRodOffers.lua first)")
+		return fail(existing:GetFullName() .. " already exists (partial or earlier install? run UninstallRodOffers.lua, or remove it by hand if it isn't ours)")
 	end
 end
 

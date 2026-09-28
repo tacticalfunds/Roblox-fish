@@ -1,9 +1,10 @@
--- Offline integration test for the rod Buy/Pass slice: the REAL aquarium
--- tank core (SharedTank, capacity 3, reservations), the REAL MoneyStore
+-- Offline integration test for the rod Buy/Pass slice: the aquarium tank
+-- core EXACTLY AS INSTALLED (v1, commit 2e320f9: SharedTank, capacity 3,
+-- reservations; read from git by run_tests.py), the REAL MoneyStore
 -- (fake DataStore) and the REAL Offers state machine, wired the way
 -- EconomyService._offerAction / runRodOffer and the patched
 -- RodFishingSystem wire them:
---   press -> tank:reserve -> hook (+caster meta) -> offer at the offer price
+--   press -> tank:reserve -> hook (live v1 call: no metadata) -> offer at the offer price
 --   Buy  -> Offers.buy{ inRange, reservationOk = aquarium active,
 --                       debit = MoneyStore.tryDebit, deliver = tank:land,
 --                       refund = MoneyStore.credit }
@@ -66,7 +67,7 @@ local function world()
 	-- a reserved rod hooks and reveals a fish, then opens its offer
 	function w.reveal(rodKey, caster, fishName, tier)
 		w.now += 4 -- cast + bite wait (the live rod hooks >= 3 s after casting)
-		local ok = w.tank:hook(rodKey, fishName, w.now, { OwnerId = caster })
+		local ok = w.tank:hook(rodKey, fishName, w.now) -- exactly the live v1 call
 		if not ok then
 			return nil
 		end
@@ -131,7 +132,10 @@ do
 	w.join(CASTER)
 	check("3 of 5 rods reserved (tank capacity 3)", #w.press({ 1, 2, 3, 4, 5 }) == 3)
 	local offer = w.reveal(1, CASTER, "Salmon", 10)
-	check("offer opened at the server price", offer ~= nil and offer.price == Pricing.offerPrice(10) and offer.price == 17)
+	check(
+		"offer opened at the server price",
+		offer ~= nil and offer.price == Pricing.offerPrice(10) and offer.price == 17
+	)
 	check("tank still empty while the offer waits", w.count() == 0)
 	check("buy", w.buy(offer, CASTER) == "bought")
 	check("charged exactly the shown price", w.money:balance(CASTER) == 100 - 17)
@@ -170,7 +174,10 @@ do
 	check("pass frees the spot", w.free() == 3 and w.count() == 0)
 	check("pass costs nothing", w.money:balance(CASTER) == 100)
 	local late = w.buy(offer, CASTER) -- the record is gone after cleanup
-	check("buy after pass refused, no charge", (late == "closed" or late == "unknown") and w.money:balance(CASTER) == 100)
+	check(
+		"buy after pass refused, no charge",
+		(late == "closed" or late == "unknown") and w.money:balance(CASTER) == 100
+	)
 	check("never sent to the grinder", w.grinder == 0)
 	w.healthy("tank healthy after pass")
 end
@@ -207,7 +214,10 @@ do
 	w.press({ 1 })
 	local offer = w.reveal(1, CASTER, "Tuna", 14) -- 48
 	check("insufficient funds", w.buy(offer, CASTER) == "funds")
-	check("offer kept, spot kept, nothing charged", offer.status == "Open" and w.free() == 2 and w.money:balance(CASTER) == 10)
+	check(
+		"offer kept, spot kept, nothing charged",
+		offer.status == "Open" and w.free() == 2 and w.money:balance(CASTER) == 10
+	)
 	w.money:credit(CASTER, 40)
 	check("buy after topping up", w.buy(offer, CASTER) == "bought" and w.money:balance(CASTER) == 2 and w.count() == 1)
 end
@@ -219,7 +229,10 @@ do
 	w.press({ 1 })
 	local offer = w.reveal(1, CASTER, "Cod", 1)
 	w.inRange = false
-	check("too far: refused, kept, not charged", w.buy(offer, CASTER) == "tooFar" and offer.status == "Open" and w.money:balance(CASTER) == 100)
+	check(
+		"too far: refused, kept, not charged",
+		w.buy(offer, CASTER) == "tooFar" and offer.status == "Open" and w.money:balance(CASTER) == 100
+	)
 end
 
 -- Disconnect mid-offer: cancelled, spot freed, no charge, record untouched
@@ -262,7 +275,10 @@ do
 	check("disable cancels both", #w.offers:cancelAll("disabled") == 2)
 	w.finish(a)
 	w.finish(b)
-	check("disable: no charge, no fish, spots freed", w.money:balance(CASTER) == 100 and w.count() == 0 and w.free() == 3)
+	check(
+		"disable: no charge, no fish, spots freed",
+		w.money:balance(CASTER) == 100 and w.count() == 0 and w.free() == 3
+	)
 end
 
 -- Delivery failure (the hook was lost before Buy): refunded in full
@@ -289,6 +305,21 @@ do
 	check("buy refused while money isn't loaded", w.buy(offer, CASTER) == "notLoaded" and offer.status == "Open")
 	check("no fish delivered", w.count() == 0)
 	check("nothing written for the unloaded player", next(w.store.data) == nil)
+end
+
+-- Buyer identity is NOT carried by the installed v1 tank: this slice makes
+-- no ownership claim. (The sale-payout milestone ships the guarded aquarium
+-- upgrade that carries it, and refuses to install without it.)
+do
+	local w = world()
+	w.join(CASTER)
+	w.press({ 1 })
+	local offer = w.reveal(1, CASTER, "Cod", 1)
+	check("bought into the v1 tank", w.buy(offer, CASTER) == "bought")
+	local ok, _, list = w.tank:release(w.now + 100)
+	local fish = list and list[1]
+	check("v1 release returns the bought fish", ok and fish ~= nil and fish.name == "Cod")
+	check("v1 release carries no buyer metadata", fish ~= nil and fish.meta == nil)
 end
 
 -- Rapid clicking across several rods: each fish charged at most once

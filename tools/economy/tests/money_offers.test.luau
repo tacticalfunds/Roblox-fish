@@ -212,6 +212,32 @@ do
 	check("lock released for their next server", store.data[KEY].lock == nil and store.data[KEY].money == 9)
 end
 
+------------------------------------------------------------ session ids
+
+do
+	local n = 0
+	local function guid()
+		n += 1
+		return "guid" .. n
+	end
+	check("live JobId used as the lock owner", MoneyStore.sessionId("abc-123", guid) == "abc-123")
+	local a = MoneyStore.sessionId("", guid)
+	local b = MoneyStore.sessionId("", guid)
+	check("empty Studio JobId gets a GUID", a ~= "" and a:find("studio-", 1, true) == 1)
+	check("two Studio sessions get different lock owners", a ~= b)
+	check("nil JobId also gets a GUID", MoneyStore.sessionId(nil, guid) ~= "")
+	-- two Studio sessions on the same real record: the second is locked out
+	local store = fakeStore()
+	local s1 = newMoney(store, a)
+	local s2 = newMoney(store, b)
+	s1:begin(42)
+	s2:begin(42)
+	check("session A loads", s1:attemptLoad(42) == "ready")
+	check("session B is locked out (not sharing an empty owner)", (s2:attemptLoad(42)) == "locked")
+	check("A still owns the record", store.data[KEY].lock.job == a)
+	check("test users are negative ids", MoneyStore.isTestUser(-1) and not MoneyStore.isTestUser(42))
+end
+
 ------------------------------------------------------------ spending
 
 do
@@ -511,6 +537,32 @@ do
 		end
 	end
 	check("random clicks: net charge 1 exactly when delivered, never twice", ok)
+end
+
+-- Studio test clients (negative UserIds): accepted only when allowed
+do
+	local live = Offers.new(20)
+	check("live: negative caster refused", (live:open(1, -1, "Cod", 1, nil, 1, 0)) == nil)
+	check(
+		"live: zero/fraction/NaN refused",
+		(live:open(1, 0, "Cod", 1, nil, 1, 0)) == nil
+			and (live:open(1, 1.5, "Cod", 1, nil, 1, 0)) == nil
+			and (live:open(1, 0 / 0, "Cod", 1, nil, 1, 0)) == nil
+	)
+	local studio = Offers.new(20, true)
+	local o = studio:open(1, -1, "Cod", 1, nil, 1, 0)
+	check("studio: Player1 (-1) can open an offer", o ~= nil)
+	check("studio: zero still refused", (studio:open(2, 0, "Cod", 1, nil, 1, 0)) == nil)
+	local d, log = deps()
+	check("studio: -2 can't buy -1's fish", (studio:buy(o.id, -2, 1, d)) == "notYours" and log.debits == 0)
+	check("studio: -1 buys", (studio:buy(o.id, -1, 1, d)) == "bought" and log.debits == 1)
+	-- a negative test user's money works in memory
+	local m = newMoney(fakeStore(), "s")
+	m:begin(-1)
+	check(
+		"test user loads (store routing is the service's job)",
+		m:attemptLoad(-1) == "ready" and m:balance(-1) == Config.StartingGrant
+	)
 end
 
 print(string.format("%d passed, %d failed", passes, failures))

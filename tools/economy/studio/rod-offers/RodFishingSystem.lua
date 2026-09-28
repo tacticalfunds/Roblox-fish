@@ -12,14 +12,16 @@
 -- ServerStorage.AquariumCycleBackup by the installer.
 --
 -- [Economy patch v1] Changes vs. the live script are marked "Economy".
--- Rod-fish offers. While ServerScriptService.EconomyService runs and offers are
--- on (ReplicatedStorage.Economy.RodOffersEnabled ~= false), each cast needs the
--- aquarium, and the revealed fish WAITS on the line for its caster (the player
--- who pressed the button) to Buy it (price shown; charged once, then it goes to
--- the aquarium) or Pass (it slips back into the water and is gone). Timeout,
--- the caster leaving, or the aquarium closing also end the offer with no charge.
--- An unpaid rod fish NEVER goes to the aquarium or the grinder. Offers switched
--- off (or EconomyService missing) = exactly the aquarium v1 behaviour above.
+-- Rod-fish offers. While offers are configured (ReplicatedStorage.Economy exists
+-- and its RodOffersEnabled attribute is not false), each cast needs the money
+-- service AND the aquarium, and the revealed fish WAITS on the line for its
+-- caster (the player who pressed the button) to Buy it (price shown; charged
+-- once, then it goes to the aquarium) or Pass (it slips back into the water and
+-- is gone). Timeout, the caster leaving, or the aquarium closing also end the
+-- offer with no charge. An unpaid rod fish NEVER goes to the aquarium or the
+-- grinder. Configured but EconomyService not running = FAIL CLOSED (no cast,
+-- notice). Only RodOffersEnabled = false or uninstalling (no Economy folder)
+-- restores the aquarium v1 behaviour above.
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -127,8 +129,17 @@ do
 		end
 	end
 end
-local function offersOn()
-	return Economy ~= nil and Economy.rodOffersEnabled()
+-- Economy: offers are CONFIGURED while ReplicatedStorage.Economy exists and
+-- its RodOffersEnabled attribute is not false (checked at every press).
+local function offersConfigured()
+	local root = RS:FindFirstChild("Economy")
+	return root ~= nil and root:GetAttribute("RodOffersEnabled") ~= false
+end
+-- works even when EconomyService itself failed to start
+local function economyNotice(player, text)
+	local root = RS:FindFirstChild("Economy")
+	local n = root and root:FindFirstChild("Notice")
+	if n and n:IsA("RemoteEvent") and player and player.Parent then n:FireClient(player, text, "warn") end
 end
 
 ------------------------------------------------------------ button look / lock
@@ -253,8 +264,7 @@ local function runRod(rod, player)
 	-- AquariumCycle: put this fish in the spot reserved when the button was pressed
 	local toTank = false
 	if Aquarium then
-		-- Economy: the caster's id rides along as fish metadata (kept by aquarium v1.1+ when whitelisted)
-		toTank = Aquarium.hook(rod.key, finalName, if rod.offerMode and player then { OwnerId = player.UserId } else nil)
+		toTank = Aquarium.hook(rod.key, finalName)
 		if not toTank then Aquarium.abort(rod.key) end
 	end
 	local REEL = 3.4
@@ -415,10 +425,15 @@ local function press(player)
 	for _, rod in ipairs(rods) do
 		if rod.state == "idle" then table.insert(toCast, rod) end
 	end
-	-- Economy: in offer mode every cast needs the aquarium (a bought fish goes there)
-	local offerMode = offersOn()
+	-- Economy: in offer mode every cast needs the money service and the
+	-- aquarium (a bought fish goes there). Fail closed: no cast without them.
+	local offerMode = offersConfigured()
+	if offerMode and not (Economy and Economy.running()) then
+		economyNotice(player, "Fish buying is unavailable right now - rod fishing is paused")
+		return
+	end
 	if offerMode and not (Aquarium and Aquarium.active()) then
-		Economy.notify(player, "The aquarium is closed - rod fishing is paused", "warn")
+		economyNotice(player, "The aquarium is closed - rod fishing is paused")
 		return
 	end
 	-- AquariumCycle: reserve a tank spot for each rod BEFORE any rod starts;

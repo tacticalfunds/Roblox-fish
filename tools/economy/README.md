@@ -75,13 +75,38 @@ EconomyService instead. The shop stays **closed** ("Rod shop opens soon")
 until owning a rod does something and is saved (`Config.RodShopOpen`).
 Stock and restock are unchanged.
 
-### Switches
+### Switches and failure behaviour
 
-- `ReplicatedStorage.Economy.RodOffersEnabled = false` during Play cancels
-  open offers with no charge. Rods then behave exactly as before this
-  install (free rod → aquarium).
-- If EconomyService is missing or fails to start, the patched scripts also
-  behave exactly as before.
+Offers count as *configured* while `ReplicatedStorage.Economy` exists and
+its `RodOffersEnabled` attribute isn't false.
+
+- **Configured, but EconomyService is missing or failed to start:** rods
+  **fail closed**. Nothing is cast, and the presser sees "Fish buying is
+  unavailable right now". There is no silent fallback to free fish.
+- **Configured, but the aquarium is closed:** nothing is cast either.
+- **`RodOffersEnabled = false` during Play:** open offers are cancelled with
+  no charge, and rods go back to the pre-install behaviour (free rod →
+  aquarium).
+- **Uninstalled:** the pre-install behaviour, as above.
+
+### Not in this slice: buyer identity
+
+The installed aquarium is v1 (commit `2e320f9`, which Astra confirmed).
+Its `hook(rodKey, fishName)` and `land` carry no metadata. So this slice
+**does not** pass or claim the buyer's id through the tank or river. It
+doesn't need to, because nothing pays out yet. The sale-payout milestone
+will ship a guarded aquarium upgrade that carries the buyer, and it will
+refuse to install without it.
+
+### Studio sessions and test clients
+
+- `game.JobId` is empty in Studio, so each Studio server locks saves under
+  a fresh GUID instead. Two parallel Studio sessions can't both own one
+  record.
+- Studio test clients have negative UserIds (Player1 = -1, ...). In Studio
+  they can open and buy offers. Their Money lives in memory only and is
+  never written to the DataStore.
+- Live servers accept only real, positive UserIds.
 
 ## Install / rollback (Astra)
 
@@ -121,7 +146,7 @@ are needed for items 4 and 11.
 | 1 | Join as a new player | Toast "Welcome! 100 Money to start"; leaderboard Money = 100; Output `[Economy] running (DataStore store)` (or `Memory` with a warning) |
 | 2 | Press the button | Up to 3 rods cast (tank capacity 3); same reel/reveal as before |
 | 3 | Wait for a reveal | Label above the fish `Name - N Money`; your panel shows the row with Buy/Pass and a countdown; the fish stays on the line |
-| 4 | Second player looks | Sees the label, **no** panel row; cannot buy |
+| 4 | Second player looks (Studio multi-client test users are fine) | Sees the label, **no** panel row; cannot buy |
 | 5 | Click Buy | Money drops by exactly N; fish flies into the tank; tank count +1; toast "Bought!" |
 | 6 | Spam-click Buy on one fish | Charged once; one fish in the tank |
 | 7 | Click Pass on another | Fish drops into the water and disappears; no charge; tank spot freed (count unchanged, next press can cast) |
@@ -134,19 +159,22 @@ are needed for items 4 and 11.
 | 14 | Try the rod shop | "Rod shop opens soon"; Money unchanged; no rod added |
 | 15 | Stop, Play again (API access on) | Money is what you left with, no second grant |
 | 16 | Any rod fish going to the grinder in offer mode | Must never happen |
+| 17 | Rename `ServerScriptService.EconomyService` (so it can't load), Play, press | No cast; toast "Fish buying is unavailable right now"; no free fish. Rename it back afterwards |
 
 ## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau          # 222 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 22 checks
+python3 tools/economy/tests/run_tests.py path/to/luau          # 240 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 41 checks
 ```
 
 - **Core:** pricing, ledger, MoneyStore against a fake DataStore that fails
   on purpose, and Offers.
-- **Rod-offer integration:** the real aquarium SharedTank, MoneyStore and
-  Offers, wired as the patch wires them.
+- **Rod-offer integration:** the aquarium core **exactly as installed (v1,
+  read from git at `2e320f9`)**, MoneyStore and Offers, wired as the patch
+  wires them.
 - **Installer dry run:** the real installer and uninstaller against a fake
-  DataModel.
+  DataModel, including partial installs, a missing Economy root, and
+  untagged objects with our names.
 - **Build-time guards:** the offer path never fires the grinder event, and
   its only aquarium delivery is the paid `deliver` callback.

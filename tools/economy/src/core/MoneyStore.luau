@@ -64,6 +64,21 @@ local function validAmount(v: any): boolean
 	return type(v) == "number" and v == v and v > 0 and v <= Config.MaxBalance and v == math.floor(v)
 end
 
+-- Session-lock owner id. game.JobId is empty in Studio, so parallel Studio
+-- sessions would share one lock owner; use a fresh GUID instead.
+function MoneyStore.sessionId(jobId: string?, makeGuid: () -> string): string
+	if type(jobId) == "string" and jobId ~= "" then
+		return jobId
+	end
+	return "studio-" .. makeGuid()
+end
+
+-- Studio test clients have negative UserIds; their money is never written
+-- to the real DataStore (the service routes these keys to memory).
+function MoneyStore.isTestUser(userId: number): boolean
+	return userId < 0
+end
+
 function MoneyStore.key(userId: number): string
 	return Config.KeyPrefix .. tostring(userId)
 end

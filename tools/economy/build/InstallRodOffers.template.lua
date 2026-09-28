@@ -64,15 +64,19 @@ if not starterScripts then
 	return fail("StarterPlayer.StarterPlayerScripts not found")
 end
 
-for _, existing in ipairs({
-	ReplicatedStorage:FindFirstChild("Economy"),
-	ServerScriptService:FindFirstChild("EconomyService"),
-	ServerScriptService:FindFirstChild("EconomyBoot"),
-	starterScripts:FindFirstChild("EconomyClient"),
-	ServerStorage:FindFirstChild(BACKUP),
-}) do
+-- Dense { parent, name } list: every slot is checked (a table of
+-- FindFirstChild results would stop ipairs at the first missing one).
+local OWN = {
+	{ ReplicatedStorage, "Economy" },
+	{ ServerScriptService, "EconomyService" },
+	{ ServerScriptService, "EconomyBoot" },
+	{ starterScripts, "EconomyClient" },
+	{ ServerStorage, BACKUP },
+}
+for _, slot in ipairs(OWN) do
+	local existing = slot[1]:FindFirstChild(slot[2])
 	if existing then
-		return fail(existing:GetFullName() .. " already exists (run UninstallRodOffers.lua first)")
+		return fail(existing:GetFullName() .. " already exists (partial or earlier install? run UninstallRodOffers.lua, or remove it by hand if it isn't ours)")
 	end
 end
 

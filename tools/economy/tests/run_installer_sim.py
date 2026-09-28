@@ -192,6 +192,66 @@ local beforeUn = snapshot(g2)
 uninstall(g2, s2)
 check("edited target blocks uninstall, nothing changed", snapshot(g2) == beforeUn)
 
+-- Partial / earlier installs: ANY one of our objects blocks the install,
+-- including when the Economy root is missing (no nil-hole skipping).
+for _, slot in ipairs({
+	{ "ServerScriptService", "EconomyService", "ModuleScript" },
+	{ "ServerScriptService", "EconomyBoot", "Script" },
+	{ "StarterPlayerScripts", "EconomyClient", "LocalScript" },
+	{ "ServerStorage", "EconomyRodOffersBackup", "Folder" },
+}) do
+	local g, sv = scene()
+	local parent = if slot[1] == "StarterPlayerScripts" then sv.StarterPlayer.StarterPlayerScripts else sv[slot[1]]
+	local stray = new(slot[3], slot[2])
+	stray.Parent = parent
+	check("no Economy root, stray " .. slot[2] .. ": root really absent", sv.ReplicatedStorage:FindFirstChild("Economy") == nil)
+	local before = snapshot(g)
+	install(g, sv)
+	check("stray " .. slot[2] .. " blocks the install", #warnings > 0 and warnings[#warnings]:find("already exists", 1, true) ~= nil)
+	check("stray " .. slot[2] .. ": nothing overwritten or added", snapshot(g) == before and stray.Parent == parent)
+end
+
+-- Uninstall after the Economy root went missing: still restores the scripts
+-- and removes the remaining TAGGED objects only.
+do
+	local g, sv, _, rfsX, shopX = scene()
+	install(g, sv)
+	sv.ReplicatedStorage.Economy:Destroy()
+	uninstall(g, sv)
+	check("root missing: scripts restored", rfsX.Source == LIVE.RodFishingSystem and shopX.Source == LIVE.RodShopServer)
+	check("root missing: tagged objects removed", sv.ServerScriptService:FindFirstChild("EconomyService") == nil
+		and sv.ServerScriptService:FindFirstChild("EconomyBoot") == nil
+		and sv.StarterPlayer.StarterPlayerScripts:FindFirstChild("EconomyClient") == nil)
+end
+
+-- An untagged object with one of our names (someone else's) is never deleted
+do
+	local g, sv = scene()
+	install(g, sv)
+	sv.ServerScriptService.EconomyBoot:Destroy()
+	local mine = new("Script", "EconomyBoot") -- not tagged
+	mine.Source = "-- someone else's script"
+	mine.Parent = sv.ServerScriptService
+	local unrelated = new("Folder", "Unrelated")
+	unrelated.Parent = sv.ReplicatedStorage
+	uninstall(g, sv)
+	check("untagged same-name object kept", mine.Parent == sv.ServerScriptService and mine.Source == "-- someone else's script")
+	check("unrelated object kept", unrelated.Parent == sv.ReplicatedStorage)
+	check("skipped object reported", table.concat(warnings, "\n"):find("not tagged EconomyOwned", 1, true) ~= nil)
+	check("our tagged objects removed", sv.ServerScriptService:FindFirstChild("EconomyService") == nil and sv.ReplicatedStorage:FindFirstChild("Economy") == nil)
+end
+
+-- Uninstall with no backup (partial install): refuses, deletes nothing
+do
+	local g, sv = scene()
+	local tagged = new("ModuleScript", "EconomyService")
+	tagged:SetAttribute("EconomyOwned", true)
+	tagged.Parent = sv.ServerScriptService
+	local before = snapshot(g)
+	uninstall(g, sv)
+	check("no backup: uninstall refuses and deletes nothing", snapshot(g) == before and tagged.Parent ~= nil)
+end
+
 print_real(string.format("%d passed, %d failed", passes, failures))
 if failures > 0 then error("installer simulation failed") end
 """

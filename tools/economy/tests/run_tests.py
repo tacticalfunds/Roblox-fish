@@ -18,6 +18,8 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 REQUIRE = re.compile(r"require\(script\.Parent\.(\w+)\)")
+AQUARIUM_V1_COMMIT = "2e320f9"
+AQUARIUM_V1 = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
 
 
 def main() -> int:
@@ -32,11 +34,16 @@ def main() -> int:
                 print(f"{module.name}: unexpected Instance access left after rewrite", file=sys.stderr)
                 return 1
             (tmp / "src" / module.name).write_text(text)
-        # the aquarium's pure core, for the rod-offer integration tests
+        # The aquarium core AS INSTALLED IN STUDIO (v1, commit 2e320f9 - Astra
+        # confirmed the live AquariumCycleServer is that version), for the
+        # rod-offer integration tests. Read from git so it can't drift.
         (tmp / "src" / "aquarium").mkdir()
-        for module in sorted((ROOT.parent / "aquarium-cycle" / "src" / "shared").glob("*.luau")):
-            text = REQUIRE.sub(r'require("./\1")', module.read_text())
-            (tmp / "src" / "aquarium" / module.name).write_text(text)
+        for name in AQUARIUM_V1:
+            text = subprocess.run(
+                ["git", "show", f"{AQUARIUM_V1_COMMIT}:tools/aquarium-cycle/src/shared/{name}.luau"],
+                cwd=ROOT, capture_output=True, text=True, check=True,
+            ).stdout
+            (tmp / "src" / "aquarium" / f"{name}.luau").write_text(REQUIRE.sub(r'require("./\1")', text))
         tests = sorted((ROOT / "tests").glob("*.test.luau"))
         for test in tests:
             shutil.copy(test, tmp / "tests" / test.name)
