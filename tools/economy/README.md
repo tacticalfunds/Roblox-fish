@@ -528,18 +528,39 @@ stored.
 
 ### Not in this milestone (reported)
 
-- **Shop UI:** the existing `StarterGui.ScreenGui.Buttons.Frames.RodShopFrame.RodShopController`
-  (5977 chars) isn't in the repo, so it isn't changed. It gets the real
-  prices through the `Price` attributes, and `BuyRod` answers "Equipped
-  Tiger Rod" / "Bought and equipped Tiger Rod". It can't show
-  **Owned / Equipped / benefit** yet. To patch that card (`CarTemplate`:
-  Price, BuyButton, Mutation) with its exact source as the refusal check,
-  I need the controller's source.
+- **Shop UI:** a separate installer, `InstallRodShopUI.lua` (below).
+  Without it, the live controller shows prices captured once, always
+  "BUY", "BOUGHT!" on success, and "NO $ YET" for most refusals. It does
+  **not** show the server's messages.
 - **Rod visuals:** the five dock rods stay the Basic model. Swapping them
   per cast would have to keep `LineTip`, `RestPivot`, the stand position
   and the client's cached models, so it's left out. Each cast carries
   `CastRod = <rod id>` on the dock rod model as a hook for a later visual
   step.
+
+### Rod shop UI (`InstallRodShopUI.lua`)
+
+This patches the **exact live** `RodShopController` (the installer checks
+it by source and path). It needs `InstallRods`, and `RollbackRods` refuses
+while this is in.
+
+- **Each card shows:** the real price, or **OWNED**; the benefit ("Bites 15%
+  faster"); and a button that says what pressing does: **BUY / EQUIP /
+  EQUIPPED / SOON** (the paid shop isn't open) **/ SOLD OUT**. All of it
+  updates live from the server's attributes (`RodOwned_<id>`,
+  `EquippedRod`, `RodStock_<id>`, `Price`, `Benefit`,
+  `Economy.RodShopPaidOpen`).
+- **Pressing:** the button shows **"..."** while the server answers. Only
+  one request per rod at a time, and pressing the equipped rod sends
+  nothing. Then it shows the server's real result as short text
+  (**BOUGHT! / EQUIPPED / NEED $ / TOO FAR / NOT SAVED / SAVING / LOADING /
+  SOON / SOLD OUT**...), with the full message on a status line under the
+  cards.
+- **Unchanged:** the picture, restock countdown, open / close and
+  scrolling. The client decides nothing.
+- **Tests:** `shopui_sim` (28 checks) runs the real controller against the
+  real server. It also runs the live controller to show the "NO $ YET"
+  bug.
 
 ### Rods checklist (Studio, API access ON)
 
@@ -553,6 +574,10 @@ stored.
 | R6 | Press the big button | Bites come noticeably sooner than with Basic |
 | R7 | Stop, Play again (real DataStore) | Money, owned rods and equipped rod are back |
 | R8 | Two clients: A (Tiger) presses, then B equips Basic | A's cast keeps Tiger timing; B's next press uses Basic |
+| R9 | (shop UI) Open the shop, shop closed | Cards: price or OWNED, benefit line; Basic EQUIPPED; others SOON; status line "Buying opens soon..." |
+| R10 | (shop UI) Shop open: buy Tiger | "..." then BOUGHT! and "Bought and equipped Tiger Rod"; then OWNED / EQUIPPED |
+| R11 | (shop UI) Walk away, press Coral; press Magma broke | TOO FAR / NEED $ with the full message; nothing charged |
+| R12 | Check the new status line doesn't cover anything | Readable under the cards (layout is untested visually) |
 
 ## Blender Bot recovery (`InstallBotRecovery.lua`)
 

@@ -50,7 +50,8 @@ LATER_THAN_UPGRADES = ["EconomyVariantsBackup"]
 EARNINGS_RELEASE = "0829fc9"
 # economy milestones after the sales release (each its own installer)
 LATER_THAN_EARNINGS: list[str] = []
-LATER_THAN_BOT = ["EconomyMeatGlowBackup"]  # tools/fish-variants InstallMeatGlow patches BotSystem too
+LATER_THAN_BOT = ["EconomyMeatGlowBackup"]
+LATER_THAN_RODS = ["EconomyRodShopUIBackup"]  # the shop UI reads what InstallRods publishes  # tools/fish-variants InstallMeatGlow patches BotSystem too
 
 
 def git_show(commit: str, path: str) -> str:
@@ -535,14 +536,55 @@ Requires: earnings (EconomyEarningsBackup) and fish variants
 """,
         "EconomyRodsBackup",
         [["EconomyEarningsBackup"], ["EconomyVariantsBackup"]],
-        ["EconomyRodsBackup"],
-        [],
+        ["EconomyRodsBackup", *LATER_THAN_RODS],
+        LATER_THAN_RODS,
         changes,
         unchanged,
         adds,
         ROOT,
     )
     assert keys == ["EconomyService", "Config", "MoneyStore", "RodShopServer", "RodFishingSystem"], keys
+    return keys
+
+
+def rod_shop_ui() -> list[str]:
+    """The rod shop UI for rods milestone 1: the exact live
+    RodShopController -> owned / equipped / benefit / truthful results."""
+    import make_shop_ui
+
+    make_shop_ui.main()
+    keys = write_pair_v2(
+        "InstallRodShopUI.lua",
+        "RollbackRodShopUI.lua",
+        """
+Rod shop UI (StarterGui.ScreenGui.Buttons.Frames.RodShopFrame.RodShopController):
+  * each card shows the real price (or OWNED), the benefit ("Bites 15%
+    faster"), and a button that says what pressing does: BUY / EQUIP /
+    EQUIPPED / SOON (paid shop not open) / SOLD OUT - live from the
+    server's attributes, nothing captured once
+  * pressing: "..." while the server answers (one request per rod; the
+    equipped rod sends nothing), then the server's real result (BOUGHT! /
+    EQUIPPED / NEED $ / TOO FAR / NOT SAVED / ...) with the full message on
+    a status line under the cards (it used to show "NO $ YET" for most
+    refusals)
+  * the picture, restock countdown, open / close and scrolling are
+    unchanged; the client decides nothing (the server checks and charges)
+Changes one LocalScript (checked by its exact source and path).
+Requires: rods (InstallRods.lua, EconomyRodsBackup).
+""",
+        "EconomyRodShopUIBackup",
+        [["EconomyRodsBackup"]],
+        ["EconomyRodShopUIBackup"],
+        [],
+        [(
+            {"key": "RodShopController", "where": "StarterGui/ScreenGui/Buttons/Frames/RodShopFrame/RodShopController", "class": "LocalScript"},
+            [("live", make_shop_ui.BASE.read_text(), make_shop_ui.OUT.read_text())],
+        )],
+        [],
+        [],
+        ROOT,
+    )
+    assert keys == ["RodShopController"], keys
     return keys
 
 
@@ -556,6 +598,7 @@ def main() -> None:
     bot_recovery()
     money_hud()
     rods()
+    rod_shop_ui()
 
 
 if __name__ == "__main__":

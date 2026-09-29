@@ -492,6 +492,13 @@ local function astraPlace(opts)
 	swimClient.Parent = sv.StarterPlayer.StarterPlayerScripts
 	scripts.FishSwimClient = swimClient
 	scripts.MoneyHud, scripts.ButtonsMoneyHud = moneyHuds(sv)
+	-- the live rod shop UI (StarterGui.ScreenGui.Buttons.Frames.RodShopFrame)
+	local rsf = new("Frame", "RodShopFrame")
+	rsf.Parent = scripts.ButtonsMoneyHud.Parent.Parent -- Frames
+	local rsc = new("LocalScript", "RodShopController")
+	rsc.Source = SHOPUI.Live
+	rsc.Parent = rsf
+	scripts.RodShopController = rsc
 	aquariumV1(sv)
 	if opts.chain8cb then
 		oldInstall(g, sv)
@@ -1321,6 +1328,51 @@ do
 	check("rods over the legacy RodShopServer: refused", refused() and snapshot(g) == before)
 end
 
+-- rod shop UI: the exact live controller -> owned / equipped / truthful results; needs rods
+local function shopUi(g, s) warnings = {} runShopUi(g, s.Workspace) end
+local function shopUiBack(g, s) warnings = {} runShopUiBack(g, s.Workspace) end
+do
+	local g, sv, history, sc = astraNow()
+	local before = snapshot(g)
+	shopUi(g, sv)
+	check("shop UI without rods: refused", refused() and snapshot(g) == before)
+	rods(g, sv)
+	local afterRods = snapshot(g)
+	sv.RunService.running = true
+	shopUi(g, sv)
+	check("shop UI in Play: refused", refused() and snapshot(g) == afterRods)
+	sv.RunService.running = false
+	local commits = history.commits
+	shopUi(g, sv)
+	check("shop UI: installed in one undo step", not refused() and history.commits == commits + 1)
+	check("shop UI: the controller is the patched one; nothing else changed", sc.RodShopController.Source == SHOPUI.New
+		and sc.RodShopServer.Source == RODS.Shop and #sv.ServerStorage.EconomyRodShopUIBackup:GetChildren() == 1)
+	local after = snapshot(g)
+	shopUi(g, sv)
+	check("shop UI twice: refused", refused() and snapshot(g) == after)
+	rodsBack(g, sv)
+	check("rods rollback refused while the shop UI is in", refused() and snapshot(g) == after)
+	sc.RodShopController.Source ..= "\n-- hand edit"
+	local edited = snapshot(g)
+	shopUiBack(g, sv)
+	check("shop UI rollback over an edited controller: refused", refused() and snapshot(g) == edited)
+	sc.RodShopController.Source = SHOPUI.New
+	shopUiBack(g, sv)
+	check("shop UI rollback: exactly the rods state (live controller back)", not refused() and snapshot(g) == afterRods
+		and sc.RodShopController.Source == SHOPUI.Live)
+	rodsBack(g, sv)
+	check("then rods roll back too", not refused() and snapshot(g) == before)
+end
+do
+	local g, sv, _, sc = astraNow()
+	rods(g, sv)
+	sc.RodShopController.Source = SHOPUI.Live:gsub('"NO %$ YET"', '"NOPE"', 1)
+	local before = snapshot(g)
+	shopUi(g, sv)
+	check("shop UI over a different controller: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
+
 -- the old baseline (no HarpoonT in the despawn guard) is not what Studio has: refused
 do
 	local g, sv, _, sc = astraPlace()
@@ -1464,6 +1516,9 @@ def main() -> int:
         "Fishing": ROOT / "studio/rods/RodFishingSystem.lua",
     }
     tables += "local RODS = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in rods_files.items()) + "}\n"
+    tables += "local SHOPUI = {\n" + "".join(
+        f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (("Live", ROOT / "studio/live/RodShopController.lua"), ("New", ROOT / "studio/rods/RodShopController.lua"))
+    ) + "}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1554,6 +1609,8 @@ def main() -> int:
         + wrap("runJumpRateBack", (ROOT.parent / "fish-jump" / "RollbackJumpRate.lua").read_text())
         + wrap("runRods", (ROOT / "InstallRods.lua").read_text())
         + wrap("runRodsBack", (ROOT / "RollbackRods.lua").read_text())
+        + wrap("runShopUi", (ROOT / "InstallRodShopUI.lua").read_text())
+        + wrap("runShopUiBack", (ROOT / "RollbackRodShopUI.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

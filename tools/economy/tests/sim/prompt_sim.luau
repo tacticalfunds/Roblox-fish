@@ -160,7 +160,7 @@ do
 	)
 	check(
 		"panel is small (not a screen panel)",
-		panel and panel.Size.ctor == "fromOffset" and panel.Size.args[1] <= 200
+		panel and panel.Size.X.Scale == 0 and panel.Size.Y.Scale == 0 and panel.Size.X.Offset > 0 and panel.Size.X.Offset <= 200
 	)
 	-- walk away: hidden promptly
 	moveTo(A, Vector3.new(20, 0, 0))

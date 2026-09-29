@@ -52,7 +52,7 @@ local BACKUP = "EconomyRodsBackup"
 -- ServerStorage folders that must exist: each entry is a list of names, any one of which will do
 local REQUIRES = { { "EconomyEarningsBackup" }, { "EconomyVariantsBackup" } }
 -- ServerStorage folders that must NOT exist (this install and later milestones)
-local FORBIDS = { "EconomyRodsBackup" }
+local FORBIDS = { "EconomyRodsBackup", "EconomyRodShopUIBackup" }
 -- { key, where, class, tag?, tagOnParent?, old, new } scripts this changes;
 -- or { ..., variants = { { label, old, new }, ... } } when more than one
 -- version can be live (the matching one is used)

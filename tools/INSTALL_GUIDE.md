@@ -60,6 +60,7 @@ rollback.
 | 12 | [`aquarium-panel/InstallAquariumPanel.lua`](aquarium-panel/README.md) | One custom aquarium panel at the loader pad (Release Fish + one upgrade card) instead of three default prompts; upgrades shown as not available | aquarium v1.2; **the released row 3 refuses after it** | `AquariumPanelBackup` |
 | 13 | [`fish-jump/InstallJumpRate.lua`](fish-jump/README.md#jump-more-often-installjumpratelua) | Fish jump about twice as often (periods 16–28 s → 8–14 s) | 6 | `FishJumpRateBackup` |
 | 14 | [`economy/InstallRods.lua`](economy/README.md#rods-milestone-1-installrodslua) | Rods owned for good (saved with Money), equipped, faster bites; paid shop stays closed | 4 and 9 | `EconomyRodsBackup` |
+| 15 | [`economy/InstallRodShopUI.lua`](economy/README.md#rod-shop-ui-installrodshopuilua) | Shop cards show price / OWNED / benefit / EQUIPPED and the server's real answers | 14 | `EconomyRodShopUIBackup` |
 
 "After X" matters because both change the same script. The later installer
 knows X's version; the earlier one doesn't, so running them the other way
@@ -67,12 +68,13 @@ round is refused, with nothing changed.
 
 ## Rollback order
 
-Exactly the reverse: **14 → 1**, then, if you ever need to go further,
+Exactly the reverse: **15 → 1**, then, if you ever need to go further,
 `economy/RollbackAquariumV12.lua` and `economy/UninstallRodOffers.lua`.
 Row 2 (Money HUD) touches nothing else, so its rollback works at any time.
 
 | # | Rollback file |
 |---|---|
+| 15 | `economy/RollbackRodShopUI.lua` (before 14) |
 | 14 | `economy/RollbackRods.lua` (before 4 and 9) |
 | 13 | `fish-jump/RollbackJumpRate.lua` (before 6) |
 | 12 | `aquarium-panel/RollbackAquariumPanel.lua` (independent of 4–11) |
@@ -135,8 +137,9 @@ the fish is ground, and only its owner is paid, once.
     upgrades are **not production-ready**.
 - **Rod shop (row 14 coded):** rods are saved, equipped and speed up bites;
   the paid shop stays closed until it's validated in Studio with API
-  access. Still open: the shop UI patch (needs `RodShopController`'s
-  source) and swapping the dock rod visuals.
+  access, with row 15 (the shop UI) in. Still open: swapping the dock rod
+  visuals. **Don't install / enable rods until the review of rows 14-15 is
+  done.**
 - **HUD multiplier labels** (Rebirth, Robux, Friends, VIP): the Money HUD
   hides them because their inputs don't exist, and no payout applies any
   multiplier. If those systems come, their payouts need a design first.

@@ -69,6 +69,8 @@ def sources() -> dict:
     out["Blend_Dwell"] = (blend / "FishSwimClient.patched.from-dwell-jump.lua").read_text()
     out["Rods_Shop"] = (ROOT / "studio" / "rods" / "RodShopServer.lua").read_text()
     out["Rods_Fishing"] = (ROOT / "studio" / "rods" / "RodFishingSystem.lua").read_text()
+    out["Rods_ShopUI"] = (ROOT / "studio" / "rods" / "RodShopController.lua").read_text()
+    out["Live_RodShopController"] = (ROOT / "studio" / "live" / "RodShopController.lua").read_text()
     panel = ROOT.parent / "aquarium-panel"
     out["Panel_Server"] = (panel / "studio" / "AquariumCycleServer.patched.from-v12.lua").read_text()
     out["AquariumPanelClient"] = (panel / "src" / "AquariumPanelClient.client.luau").read_text()

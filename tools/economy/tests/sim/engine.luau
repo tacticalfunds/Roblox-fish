@@ -244,7 +244,32 @@ local function dummy(kind)
 		end,
 	})
 end
-local UDim2, UDim = dummy("UDim2"), dummy("UDim")
+-- UDim2 with the arithmetic GUI code uses (scale / offset per axis)
+local U2 = {}
+U2.__index = U2
+local function udim2(xs, xo, ys, yo)
+	return setmetatable({ X = { Scale = xs or 0, Offset = xo or 0 }, Y = { Scale = ys or 0, Offset = yo or 0 } }, U2)
+end
+U2.__add = function(a, b)
+	return udim2(a.X.Scale + b.X.Scale, a.X.Offset + b.X.Offset, a.Y.Scale + b.Y.Scale, a.Y.Offset + b.Y.Offset)
+end
+U2.__eq = function(a, b)
+	return a.X.Scale == b.X.Scale and a.X.Offset == b.X.Offset and a.Y.Scale == b.Y.Scale and a.Y.Offset == b.Y.Offset
+end
+local UDim2 = {
+	new = udim2,
+	fromScale = function(x, y)
+		return udim2(x, 0, y, 0)
+	end,
+	fromOffset = function(x, y)
+		return udim2(0, x, 0, y)
+	end,
+}
+local UDim = {
+	new = function(scale, offset)
+		return { Scale = scale or 0, Offset = offset or 0 }
+	end,
+}
 local C3 = {}
 C3.__index = C3
 function C3:Lerp(other, u)
@@ -425,6 +450,7 @@ local EVENTS = {
 	AncestryChanged = true,
 	Destroying = true,
 	Activated = true,
+	MouseButton1Click = true,
 	Changed = true,
 	PromptShown = true,
 	PromptHidden = true,
@@ -1065,6 +1091,8 @@ local function click(p, b)
 		b.Activated:Fire()
 	end)
 end
+services.ProximityPromptService = { PromptTriggered = Signal.new() }
+services.SoundService = new("SoundService", "SoundService")
 services.PhysicsService = {
 	RegisterCollisionGroup = function() end,
 	CollisionGroupSetCollidable = function() end,
