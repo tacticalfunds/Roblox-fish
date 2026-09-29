@@ -854,6 +854,39 @@ do
 	check("earnings on the full chain: rolls back exactly", not refused() and snapshot(g) == before)
 end
 
+-- Blender Bot recovery: on top of sales, independent of earnings
+local function botFix(g, s) warnings = {} runBotFix(g, s.Workspace) end
+local function botFixBack(g, s) warnings = {} runBotFixBack(g, s.Workspace) end
+do
+	local g, sv, history, sc = astraPlace()
+	upgradeAq(g, sv)
+	local before = snapshot(g)
+	botFix(g, sv)
+	check("bot fix before sales: refused", refused() and snapshot(g) == before)
+	installSales(g, sv)
+	local afterSales = snapshot(g)
+	local commits = history.commits
+	botFix(g, sv)
+	check("bot fix: installed in one undo step", not refused() and history.commits == commits + 1 and sc.BotSystem.Source == BOTFIX)
+	check("bot fix: only BotSystem changed", sc.TruckSystem.Source == SALES.TruckSystem and sc.GrinderProcessor.Source == SALES.GrinderProcessor
+		and #sv.ServerStorage.EconomyBotBackup:GetChildren() == 1)
+	local afterBot = snapshot(g)
+	botFix(g, sv)
+	check("bot fix twice: refused", refused() and snapshot(g) == afterBot)
+	rollbackSales(g, sv)
+	check("sales rollback while the bot fix is in: refused", refused() and snapshot(g) == afterBot)
+	earnings(g, sv)
+	check("earnings on top of the bot fix: installs", not refused())
+	earningsBack(g, sv)
+	botFixBack(g, sv)
+	check("bot fix rollback: exactly the sales state", not refused() and snapshot(g) == afterSales)
+	sc.BotSystem.Source = SALES.BotSystem .. "\n-- hand edit"
+	local edited = snapshot(g)
+	botFix(g, sv)
+	check("bot fix over an edited BotSystem: refused, names the line", refused() and snapshot(g) == edited
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
+
 print_real(string.format("%d passed, %d failed", passes, failures))
 if failures > 0 then error("installer simulation failed") end
 """
@@ -912,6 +945,7 @@ def main() -> int:
     tables += "local EARN = {\n" + "".join(
         f"\t{k} = {lua_string((ROOT / v).read_text())},\n" for k, v in (("EconomyService", "src/server/EconomyService.luau"), ("EconomyClient", "src/client/EconomyClient.client.luau"))
     ) + "}\n"
+    tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
     tables += "local RECON = {\n" + "".join(
@@ -975,6 +1009,8 @@ def main() -> int:
         + wrap("runRollbackUpg", (ROOT / "RollbackUpgrades.lua").read_text())
         + wrap("runEarnings", (ROOT / "InstallEarnings.lua").read_text())
         + wrap("runEarningsBack", (ROOT / "RollbackEarnings.lua").read_text())
+        + wrap("runBotFix", (ROOT / "InstallBotRecovery.lua").read_text())
+        + wrap("runBotFixBack", (ROOT / "RollbackBotRecovery.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

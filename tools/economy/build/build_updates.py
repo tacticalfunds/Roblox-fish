@@ -25,6 +25,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import build_rod_offers_installer as bi  # noqa: E402
+import make_bot  # noqa: E402
 import make_sales  # noqa: E402
 
 ROOT = bi.ROOT
@@ -43,6 +44,7 @@ LATER_THAN_SALES = ["EconomyUpgradesBackup"]
 LATER_THAN_UPGRADES = ["EconomyVariantsBackup"]
 # economy milestones after the sales release (each its own installer)
 LATER_THAN_EARNINGS: list[str] = []
+LATER_THAN_BOT: list[str] = []
 
 
 def git_show(commit: str, path: str) -> str:
@@ -375,6 +377,40 @@ EconomyService and refuses after this.
     return keys
 
 
+def bot_recovery() -> list[str]:
+    """Blender Bot recovery: an error mid-trip holds the piece instead of
+    losing it, and the bot carries on. On top of the sales release."""
+    base = git_show(SALES_RELEASE, "tools/economy/studio/sales/BotSystem.lua")
+    assert base == make_bot.BASE.read_text(), "studio/sales/BotSystem.lua must be the sales release"
+    make_bot.main()
+    keys = write_pair_v2(
+        "InstallBotRecovery.lua",
+        "RollbackBotRecovery.lua",
+        """
+Blender Bot recovery: each trip of the bot runs under pcall. If anything
+errors while the bot holds a piece (between the stack and the table), the
+loose clone is removed and the piece is HELD in the ledger - the grinder
+brings it back out of the pipe with the same owner and value, so it is
+never lost unpaid - and the bot carries on after a short back-off (it used
+to stop for good, stranding the piece). One warning, then one per 20
+failures while something stays broken.
+Changes one script: BotSystem (the sales-patched version).
+Requires: sale payouts (InstallSales.lua). Independent of the earnings
+popup and the visual features.
+""",
+        "EconomyBotBackup",
+        [["EconomySalesBackup"]],
+        ["EconomyBotBackup", *LATER_THAN_BOT],
+        LATER_THAN_BOT,
+        [({"key": "BotSystem", "where": "script:BotSystem", "class": "Script"}, [("sales", base, make_bot.build())])],
+        [],
+        [],
+        ROOT,
+    )
+    assert keys == ["BotSystem"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -382,6 +418,7 @@ def main() -> None:
     sales()
     upgrades()
     earnings()
+    bot_recovery()
 
 
 if __name__ == "__main__":

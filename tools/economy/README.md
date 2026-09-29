@@ -15,7 +15,8 @@ reviews and installs. Nothing here touches Studio on its own.
 | Immediate rod cast, rebased on sales (`e08e824`; installer regenerated with v2) | done | **yes**: `tools/rod-cast/InstallRodCast.lua` (after sales) |
 | Grinder dwell (`d64a180`; ~1 s on the rollers: net, harpoon, rod fallback) | done | **yes**: `tools/grinder-dwell/InstallGrinderDwell.lua` (after sales; after jumps / rod cast if used) |
 | Rare Silver / Gold variants (`a92a678`) | done | **yes**: `tools/fish-variants/InstallFishVariants.lua` |
-| **Earnings popup** (this commit): "+$N" for the owner when their meat sells | done | **yes**: `InstallEarnings.lua` (after sales; after upgrades if used) |
+| Earnings popup (`561c4d1`): "+$N" for the owner when their meat sells | done | **yes**: `InstallEarnings.lua` (after sales; after upgrades if used) |
+| **Blender Bot recovery** (this commit): an error mid-trip keeps the piece | done | **yes**: `InstallBotRecovery.lua` (any time after sales) |
 
 **The sales release is frozen at `91121de`.** `UpgradeAquariumV12`,
 `InstallSales`, `InstallUpgrades` and their rollbacks are built from that
@@ -46,8 +47,9 @@ dry run also checks that the comment-less rebuilds are still refused.
 `InstallFishVariants` → `InstallEarnings`. Fish jumps can go in
 any time. `InstallUpgrades` and `InstallRodCast` don't depend on each other.
 `InstallEarnings` only needs sales, but must come **after** `InstallUpgrades`
-(which refuses once the EconomyService has changed).
-**Roll back in reverse:** `RollbackEarnings` → `RollbackFishVariants` → `RollbackGrinderDwell` → `RollbackRodCast` / `RollbackUpgrades` →
+(which refuses once the EconomyService has changed). `InstallBotRecovery`
+can go in any time after sales.
+**Roll back in reverse:** `RollbackBotRecovery` / `RollbackEarnings` → `RollbackFishVariants` → `RollbackGrinderDwell` → `RollbackRodCast` / `RollbackUpgrades` →
 `RollbackSales` → `RollbackAquariumV12` → `UninstallRodOffers`. Each installer identifies what
 is installed by exact source, so it works on either rod-offers chain: a fresh
 `a826d73` install, or `8cb2554` + `UpdateRodPrompt`.
@@ -373,6 +375,37 @@ EconomyService differs).
 | E4 | Sell Gold meat (after variants) | The popup is gold |
 | E5 | Set `ReplicatedStorage.Economy.EarningsPopup = false` in Play | Sales still pay; no popup |
 
+## Blender Bot recovery (`InstallBotRecovery.lua`)
+
+**The bug:** the Blender Bot's loop had no error handling. If anything
+errored mid-trip (a part of the bot removed, a bad table slot attribute),
+the whole script stopped: the bot froze for the rest of the server, and the
+piece it was carrying floated as `CarriedMeat`, never sold and never paid.
+
+**The fix** (BotSystem only, on the sales version):
+
+- Each trip runs under `pcall`. The bot tracks the piece in its hands from
+  the moment it leaves the stack until it lies on the table.
+- On an error, the loose clone is removed and the piece is **held** in the
+  ledger. The grinder brings it back out of the pipe with the same owner
+  and value, the same path a full stack uses. Nothing is lost unpaid.
+- The bot tries again after a back-off of 1 s, growing to 5 s while
+  something stays broken. It warns once, then once per 20 failures.
+- An error with nothing in its hands holds nothing.
+
+**Install:** `InstallBotRecovery.lua` (v2 guarded template) needs
+`EconomySalesBackup` and the exact sales BotSystem. Backup:
+`ServerStorage.EconomyBotBackup`. **Rollback:** `RollbackBotRecovery.lua`,
+before `RollbackSales`.
+
+### Bot recovery checklist (Studio)
+
+| # | Do | Expect |
+|---|---|---|
+| B1 | Play normally | The bot carries meat to the table exactly as before |
+| B2 | In Play, while the bot carries a piece, delete one of the bot's parts from the Explorer (or rename `SaleTable` attribute `Slot1`) | One `[BotSystem] trip failed ... piece kept` warning; the carried piece disappears; within a few seconds a piece with the same `PieceId` comes back out of the grinder pipe |
+| B3 | Undo the damage (Stop and Play again) | The bot works normally |
+
 ## Install / update / rollback (Astra)
 
 **Studio has 8cb2554 installed → use the update:**
@@ -450,8 +483,8 @@ changes; the rest re-check behaviour that already worked.
 
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21, earnings 27 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 193 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21, earnings 27, bot 14 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 201 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 
