@@ -454,6 +454,23 @@ local function aquariumV1(sv)
 	c.Parent = sv.StarterPlayer.StarterPlayerScripts
 	local b = new("Folder", "AquariumCycleBackup") b:SetAttribute("AquariumCycleOwned", true) b.Parent = sv.ServerStorage
 end
+-- the two live MoneyController copies (StarterGui), as Astra sent them
+local function moneyHuds(sv)
+	local function chain(parent, path)
+		for _, step in ipairs(path) do
+			local node = parent:FindFirstChild(step[1]) or new(step[2], step[1])
+			node.Parent = parent
+			parent = node
+		end
+		local mc = new("LocalScript", "MoneyController")
+		mc.Source = MONEYHUD.Live
+		mc.Parent = parent
+		return mc
+	end
+	local a = chain(sv.StarterGui, { { "Money", "ScreenGui" }, { "MoneyFrame", "Frame" } })
+	local b = chain(sv.StarterGui, { { "ScreenGui", "ScreenGui" }, { "Buttons", "Frame" }, { "Frames", "Frame" }, { "MoneyFrame", "Frame" } })
+	return a, b
+end
 local function astraPlace(opts)
 	opts = opts or {}
 	local g, sv, history = makeGame()
@@ -472,6 +489,7 @@ local function astraPlace(opts)
 	local swimClient = new("LocalScript", "FishSwimClient") swimClient.Source = VIS.LiveFishSwimClient
 	swimClient.Parent = sv.StarterPlayer.StarterPlayerScripts
 	scripts.FishSwimClient = swimClient
+	scripts.MoneyHud, scripts.ButtonsMoneyHud = moneyHuds(sv)
 	aquariumV1(sv)
 	if opts.chain8cb then
 		oldInstall(g, sv)
@@ -564,6 +582,7 @@ do
 	local g, sv = astraPlace()
 	upgradeAq(g, sv)
 	local beforeSales = snapshot(g)
+	local studioToday, studioAgain
 	installUpg(g, sv)
 	check("upgrades before sales: refused", refused() and snapshot(g) == beforeSales)
 	installSales(g, sv)
@@ -987,14 +1006,85 @@ do
 	check("harpoon blend over an edited FishJump module: refused", refused() and snapshot(g) == before)
 end
 
+-- Money HUD: both live MoneyController copies -> leaderstats.Money; independent of the rest
+local function moneyHud(g, s) warnings = {} runMoneyHud(g, s.Workspace) end
+local function moneyHudBack(g, s) warnings = {} runMoneyHudBack(g, s.Workspace) end
+do
+	local g, sv = scene()
+	local a = moneyHuds(sv)
+	local before = snapshot(g)
+	moneyHud(g, sv)
+	check("money HUD without rod offers: refused", refused() and snapshot(g) == before and a.Source == MONEYHUD.Live)
+end
+do
+	local g, sv, history, sc = astraPlace()
+	upgradeAq(g, sv)
+	installSales(g, sv) -- where Studio is now
+	local afterSales = snapshot(g)
+	sv.RunService.running = true
+	moneyHud(g, sv)
+	check("money HUD in Play: refused", refused() and snapshot(g) == afterSales)
+	sv.RunService.running = false
+	local commits = history.commits
+	moneyHud(g, sv)
+	check("money HUD: installed in one undo step", not refused() and history.commits == commits + 1)
+	check("money HUD: both copies = the new controller", sc.MoneyHud.Source == MONEYHUD.New and sc.ButtonsMoneyHud.Source == MONEYHUD.New)
+	local hb = sv.ServerStorage:FindFirstChild("EconomyMoneyHudBackup")
+	check("money HUD: backup with 2 entries, Before = live", hb and #hb:GetChildren() == 2 and hb:GetChildren()[1].Before.Source == MONEYHUD.Live
+		and hb:GetChildren()[2].Before.Source == MONEYHUD.Live)
+	check("money HUD: nothing else changed", sv.ServerScriptService.EconomyService.Source == CUR.EconomyService and sc.TruckSystem.Source == SALES.TruckSystem)
+	local afterHud = snapshot(g)
+	moneyHud(g, sv)
+	check("money HUD twice: refused", refused() and snapshot(g) == afterHud)
+	earnings(g, sv)
+	botFix(g, sv)
+	check("other installs on top of the money HUD: fine", not refused())
+	earningsBack(g, sv)
+	botFixBack(g, sv)
+	check("and back", snapshot(g) == afterHud)
+	sc.ButtonsMoneyHud.Source ..= "\n-- hand edit"
+	local edited = snapshot(g)
+	moneyHudBack(g, sv)
+	check("money HUD rollback over an edited copy: refused", refused() and snapshot(g) == edited)
+	sc.ButtonsMoneyHud.Source = MONEYHUD.New
+	moneyHudBack(g, sv)
+	check("money HUD rollback: exactly the sales state", not refused() and snapshot(g) == afterSales)
+end
+for _, case in ipairs({
+	{ label = "one copy edited", edit = function(sc) sc.ButtonsMoneyHud.Source = MONEYHUD.Live:gsub("VIPMulti", "VipMulti", 1) end, line = true },
+	{ label = "one copy missing", edit = function(sc) sc.MoneyHud:Destroy() end },
+	{ label = "a copy that is a Script", edit = function(sc)
+		local p = sc.MoneyHud.Parent
+		sc.MoneyHud:Destroy()
+		local x = new("Script", "MoneyController") x.Source = MONEYHUD.Live x.Parent = p
+	end },
+}) do
+	local g, sv, _, sc = astraPlace()
+	case.edit(sc)
+	local before = snapshot(g)
+	moneyHud(g, sv)
+	check("money HUD, " .. case.label .. ": refused, nothing changed", refused() and snapshot(g) == before)
+	if case.line then
+		check("money HUD refusal names the first differing line", (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+	end
+end
+do
+	local g, sv, _, sc = astraPlace()
+	sc.MoneyHud.Source = MONEYHUD.Live:gsub("\n", "\r\n") .. "   \n"
+	moneyHud(g, sv)
+	check("money HUD: CRLF / trailing spaces in Studio still match", not refused() and sc.MoneyHud.Source == MONEYHUD.New)
+end
+
 ------------------------------------------------------------ the whole guide (tools/INSTALL_GUIDE.md), in order
 
 do
 	local g, sv, history = astraPlace() -- a826d73 rod offers
 	upgradeAq(g, sv) -- aquarium v1.2: what Studio has today
-	local studioToday = snapshot(g)
+	local beforeSales = snapshot(g)
+	local studioToday, studioAgain
 	local steps = {
 		{ "InstallSales", installSales, rollbackSales },
+		{ "InstallMoneyHud", moneyHud, moneyHudBack },
 		{ "InstallUpgrades", installUpg, rollbackUpg },
 		{ "InstallEarnings", earnings, earningsBack },
 		{ "InstallBotRecovery", botFix, botFixBack },
@@ -1008,6 +1098,9 @@ do
 	local states, allOk = {}, true
 	for i, step in ipairs(steps) do
 		states[i] = snapshot(g)
+		if i == 2 then
+			studioToday = states[i] -- InstallSales (91121de): installed and verified by Astra
+		end
 		local commits = history.commits
 		step[2](g, sv)
 		if refused() or history.commits ~= commits + 1 then
@@ -1015,9 +1108,12 @@ do
 			print_real("  guide order: " .. step[1] .. " refused: " .. tostring(warnings[#warnings]))
 		end
 	end
-	check("guide order: all 10 install, one undo step each", allOk)
+	check("guide order: all 11 install, one undo step each", allOk)
 	local backOk = true
 	for i = #steps, 1, -1 do
+		if i == 1 then
+			studioAgain = snapshot(g)
+		end
 		steps[i][3](g, sv)
 		if refused() or snapshot(g) ~= states[i] then
 			backOk = false
@@ -1025,7 +1121,8 @@ do
 		end
 	end
 	check("guide rollback in reverse: each step restores exactly the state before it", backOk)
-	check("guide rollback: back to exactly what Studio has today", snapshot(g) == studioToday)
+	check("guide: rolling back 11..2 leaves exactly today's Studio (sales in)", studioAgain == studioToday)
+	check("guide rollback: back to exactly rod offers + aquarium v1.2 (before sales)", snapshot(g) == beforeSales)
 end
 
 print_real(string.format("%d passed, %d failed", passes, failures))
@@ -1085,6 +1182,9 @@ def main() -> int:
     tables += f"\tAquariumTankClient = {lua_string(git_show('client/AquariumTankClient.client.luau', AQUARIUM_V1, aq))},\n}}\n"
     tables += "local EARN = {\n" + "".join(
         f"\t{k} = {lua_string((ROOT / v).read_text())},\n" for k, v in (("EconomyService", "src/server/EconomyService.luau"), ("EconomyClient", "src/client/EconomyClient.client.luau"))
+    ) + "}\n"
+    tables += "local MONEYHUD = {\n" + "".join(
+        f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (("Live", live / "MoneyController.lua"), ("New", ROOT / "src" / "client" / "MoneyController.client.luau"))
     ) + "}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
@@ -1168,6 +1268,8 @@ def main() -> int:
         + wrap("runMeatGlowBack", (ROOT.parent / "fish-variants" / "RollbackMeatGlow.lua").read_text())
         + wrap("runBlend", (ROOT.parent / "fish-jump" / "InstallHarpoonBlend.lua").read_text())
         + wrap("runBlendBack", (ROOT.parent / "fish-jump" / "RollbackHarpoonBlend.lua").read_text())
+        + wrap("runMoneyHud", (ROOT / "InstallMoneyHud.lua").read_text())
+        + wrap("runMoneyHudBack", (ROOT / "RollbackMoneyHud.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

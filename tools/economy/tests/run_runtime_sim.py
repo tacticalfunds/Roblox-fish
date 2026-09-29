@@ -6,6 +6,8 @@ EconomyClient and, for the sale routes, the REAL patched live scripts.
   prompt_sim: the rod-stand buy prompt (caster only, range, custom panel,
               buy once, cleanup on buy / timeout / pass / death / leave / off)
   sales_sim:  sale payouts through the real patched grinder and truck
+  moneyhud_sim: the new MoneyController on leaderstats.Money (and the live
+              one stuck on the missing FormatModule)
 
 Usage:  python3 tools/economy/tests/run_runtime_sim.py [path/to/luau]
 Fake-engine simulation only; not a Roblox runtime test.
@@ -34,6 +36,8 @@ def sources() -> dict:
     out = {name: (ROOT / "src" / "core" / f"{name}.luau").read_text() for name in CORE}
     out["EconomyService"] = (ROOT / "src" / "server" / "EconomyService.luau").read_text()
     out["EconomyClient"] = (ROOT / "src" / "client" / "EconomyClient.client.luau").read_text()
+    out["MoneyController"] = (ROOT / "src" / "client" / "MoneyController.client.luau").read_text()
+    out["Live_MoneyController"] = (ROOT / "studio" / "live" / "MoneyController.lua").read_text()
     for patched in sorted((ROOT / "studio" / "sales").glob("*.lua")):
         out["Sales_" + patched.stem] = patched.read_text()
     out["Bot_Recovery"] = (ROOT / "studio" / "bot" / "BotSystem.lua").read_text()

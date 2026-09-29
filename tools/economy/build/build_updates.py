@@ -13,6 +13,9 @@ build/Rollback.template.lua:
       fish carries its buyer. Needs rod offers (a826d73: fresh install, or
       8cb2554 + UpdateRodPrompt - both leave the same sources) and aquarium
       v1.2.
+  InstallEarnings.lua / RollbackEarnings.lua, InstallBotRecovery.lua /
+  RollbackBotRecovery.lua, InstallMoneyHud.lua / RollbackMoneyHud.lua
+      later economy milestones, each on top of what is installed.
 
 Every "old" source comes from git at the installed commit, so the checks
 match exactly what the earlier installers wrote.
@@ -411,6 +414,52 @@ popup and the visual features.
     return keys
 
 
+# the two HUD copies of the live MoneyController (identical sources)
+MONEY_HUDS = [
+    ("MoneyHud", "StarterGui/Money/MoneyFrame/MoneyController"),
+    ("ButtonsMoneyHud", "StarterGui/ScreenGui/Buttons/Frames/MoneyFrame/MoneyController"),
+]
+
+
+def money_hud() -> list[str]:
+    """Money HUD: both MoneyController LocalScripts show leaderstats.Money
+    (EconomyService's balance) instead of waiting forever on the missing
+    FormatModule / LocalPlayer.Money."""
+    live = (ROOT / "studio" / "live" / "MoneyController.lua").read_text()
+    new = (ROOT / "src" / "client" / "MoneyController.client.luau").read_text()
+    keys = write_pair_v2(
+        "InstallMoneyHud.lua",
+        "RollbackMoneyHud.lua",
+        """
+Money HUD: both MoneyController LocalScripts (StarterGui.Money.MoneyFrame
+and StarterGui.ScreenGui.Buttons.Frames.MoneyFrame) show leaderstats.Money,
+the balance EconomyService keeps. They used to wait forever on the missing
+ReplicatedStorage.FormatModule and LocalPlayer.Money, so the labels never
+updated.
+  * "Loading..." until the player's Money has loaded, then the balance,
+    following every change ($1.23K style, never rounded up; FormatModule is
+    used if it exists and works)
+  * the multiplier labels keep their old formulas WHEN their inputs exist
+    (Rebirths + Modules.RebirthDefinitions, Upgrades.RobuxMultiplier,
+    FriendsMultiplier, VIP); a label whose inputs are missing is hidden.
+    Display only: no payout applies any multiplier.
+Changes only those two LocalScripts. Nothing server side.
+Requires: rod offers (EconomyService makes leaderstats.Money). Independent
+of every other install here.
+""",
+        "EconomyMoneyHudBackup",
+        [["EconomyRodOffersBackup"]],
+        ["EconomyMoneyHudBackup"],
+        [],
+        [({"key": key, "where": where, "class": "LocalScript"}, [("live", live, new)]) for key, where in MONEY_HUDS],
+        [],
+        [],
+        ROOT,
+    )
+    assert keys == [k for k, _ in MONEY_HUDS], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -419,6 +468,7 @@ def main() -> None:
     upgrades()
     earnings()
     bot_recovery()
+    money_hud()
 
 
 if __name__ == "__main__":
