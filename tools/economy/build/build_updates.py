@@ -31,11 +31,18 @@ ROOT = bi.ROOT
 REPO = ROOT.parent.parent
 AQUARIUM_V1 = "2e320f9"
 ROD_OFFERS = "a826d73"
+# InstallSales / InstallUpgrades as released for Astra's install (91121de):
+# the economy sources they write are read from that commit, so later
+# economy milestones (built on top, with their own installers) don't change
+# them.
+SALES_RELEASE = "91121de"
 AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
 # (InstallSales.lua is released as of d39b00b: its lists stay as they are;
 # later installs still can't be skipped - they change scripts it checks.)
 LATER_THAN_SALES = ["EconomyUpgradesBackup"]
 LATER_THAN_UPGRADES = ["EconomyVariantsBackup"]
+# economy milestones after the sales release (each its own installer)
+LATER_THAN_EARNINGS: list[str] = []
 
 
 def git_show(commit: str, path: str) -> str:
@@ -233,18 +240,18 @@ def sales() -> list[str]:
     targets.append((
         {"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
         git_show(ROD_OFFERS, "tools/economy/src/server/EconomyService.luau"),
-        (ROOT / "src" / "server" / "EconomyService.luau").read_text(),
+        git_show(SALES_RELEASE, "tools/economy/src/server/EconomyService.luau"),
     ))
     for name in bi.CORE:
         targets.append((
             {"key": name, "where": f"ServerScriptService/EconomyService/{name}", "class": "ModuleScript", "tag": "EconomyOwned"},
             git_show(ROD_OFFERS, f"tools/economy/src/core/{name}.luau"),
-            (ROOT / "src" / "core" / f"{name}.luau").read_text(),
+            git_show(SALES_RELEASE, f"tools/economy/src/core/{name}.luau"),
         ))
     targets.append((
         {"key": "EconomyClient", "where": "StarterPlayer/StarterPlayerScripts/EconomyClient", "class": "LocalScript", "tag": "EconomyOwned"},
         git_show(ROD_OFFERS, "tools/economy/src/client/EconomyClient.client.luau"),
-        (ROOT / "src" / "client" / "EconomyClient.client.luau").read_text(),
+        git_show(SALES_RELEASE, "tools/economy/src/client/EconomyClient.client.luau"),
     ))
     # aquarium v1.2 must be in place (it carries the buyer through the tank)
     aq = REPO / "tools" / "aquarium-cycle" / "src"
@@ -283,13 +290,13 @@ def upgrades() -> list[str]:
     targets = [(
         {"key": "AquariumEconomy", "where": "ServerScriptService/AquariumEconomy", "class": "ModuleScript", "tag": "AquariumCycleOwned"},
         git_show(AQUARIUM_V1, "tools/aquarium-cycle/src/server/AquariumEconomy.luau"),
-        (ROOT / "src" / "server" / "AquariumEconomy.luau").read_text(),
+        git_show(SALES_RELEASE, "tools/economy/src/server/AquariumEconomy.luau"),
     )]
     # needs sale payouts (Money comes in) and aquarium v1.2: checked by source
     for name in ("GrinderProcessor", "TruckSystem"):
         src = (ROOT / "studio" / "sales" / f"{name}.lua").read_text()
         targets.append(({"key": name + " (sales)", "where": f"script:{name}", "class": "Script"}, src, src))
-    svc = (ROOT / "src" / "server" / "EconomyService.luau").read_text()
+    svc = git_show(SALES_RELEASE, "tools/economy/src/server/EconomyService.luau")
     targets.append(({"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"}, svc, svc))
     src = (REPO / "tools" / "aquarium-cycle" / "src" / "server" / "AquariumCycleServer.luau").read_text()
     targets.append(({"key": "aquarium AquariumCycleServer", "where": "ServerScriptService/AquariumCycleServer", "class": "ModuleScript", "tag": "AquariumCycleOwned"}, src, src))
@@ -317,12 +324,64 @@ Requires: sale payouts (InstallSales.lua) and aquarium v1.2.
     return keys
 
 
+def earnings() -> list[str]:
+    """Earnings popup: EconomyService tells a piece's owner when it sells,
+    EconomyClient shows "+$N". On top of the sales release (91121de)."""
+    changes = []
+    for key, where, path in (
+        ("EconomyService", "ServerScriptService/EconomyService", "src/server/EconomyService.luau"),
+        ("EconomyClient", "StarterPlayer/StarterPlayerScripts/EconomyClient", "src/client/EconomyClient.client.luau"),
+    ):
+        changes.append((
+            {"key": key, "where": where, "class": "LocalScript" if key == "EconomyClient" else "ModuleScript", "tag": "EconomyOwned"},
+            [("sales", git_show(SALES_RELEASE, f"tools/economy/{path}"), (ROOT / path).read_text())],
+        ))
+    # the core modules it relies on, exactly as the sales release left them
+    unchanged = [
+        (
+            {"key": name, "where": f"ServerScriptService/EconomyService/{name}", "class": "ModuleScript", "tag": "EconomyOwned"},
+            git_show(SALES_RELEASE, f"tools/economy/src/core/{name}.luau"),
+        )
+        for name in ("Sales", "Ledger", "PieceTags")
+    ]
+    for name, path in (("Sales", "Sales"), ("Ledger", "Ledger"), ("PieceTags", "PieceTags")):
+        assert (ROOT / "src" / "core" / f"{path}.luau").read_text() == git_show(SALES_RELEASE, f"tools/economy/src/core/{path}.luau"), name
+    keys = write_pair_v2(
+        "InstallEarnings.lua",
+        "RollbackEarnings.lua",
+        """
+Earnings popup: when a piece of your meat SELLS (a customer at the sale
+table, or a truck), you see "+$N" on the right of your screen, whoever
+carried it. Quick sales add up into one popup ("+$54 / 3 pieces sold");
+Gold / Silver meat tints it. Display only: the payment is the same ledger
+settlement as before (paid once, to the owner). Unowned meat shows nothing.
+Switch off with ReplicatedStorage.Economy attribute EarningsPopup = false.
+Changes EconomyService (adds the Economy.Earned remote at start) and
+EconomyClient (the popup).
+Requires: sale payouts (InstallSales.lua). If you use paid aquarium
+upgrades, install InstallUpgrades.lua FIRST: it checks the sales-release
+EconomyService and refuses after this.
+""",
+        "EconomyEarningsBackup",
+        [["EconomySalesBackup"]],
+        ["EconomyEarningsBackup", *LATER_THAN_EARNINGS],
+        LATER_THAN_EARNINGS,
+        changes,
+        unchanged,
+        [],
+        ROOT,
+    )
+    assert keys == ["EconomyService", "EconomyClient"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
     aquarium()
     sales()
     upgrades()
+    earnings()
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@
 --     their identity, CustomerSystem / TruckSystem settle them (one payment
 --     per piece, to its owner), full pipelines hold pieces as data
 --   * charging (aquarium upgrades, rod shop, rod-fish offers)
+--   * tells a piece's owner when it sells (Economy.Earned: the "+$" popup;
+--     display only - the payment itself is the ledger settlement)
 --
 -- Every patched live script loads this with FindFirstChild + pcall(require)
 -- and calls start(); if it is missing or fails, those scripts behave
@@ -44,6 +46,7 @@ local money: MoneyStore.MoneyStore
 local ledger: Ledger.Ledger
 local root: Folder -- ReplicatedStorage.Economy (installed)
 local notice: RemoteEvent
+local earned: RemoteEvent? -- ReplicatedStorage.Economy.Earned: sale popups for the owner
 local storeKind = "DataStore"
 local offers: Offers.Offers
 local offersFolder: Folder -- ReplicatedStorage.Economy.Offers (kept empty; offers live on buy stands)
@@ -298,6 +301,13 @@ function M._start(): boolean
 		n.Parent = root
 	end
 	notice = n :: RemoteEvent
+	local e = root:FindFirstChild("Earned")
+	if not (e and e:IsA("RemoteEvent")) then
+		e = Instance.new("RemoteEvent")
+		e.Name = "Earned"
+		e.Parent = root
+	end
+	earned = e :: RemoteEvent
 	local of = root:FindFirstChild("Offers")
 	if not (of and of:IsA("Folder")) then
 		of = Instance.new("Folder")
@@ -508,10 +518,29 @@ function M.settle(pieceId: any, route: string): (boolean, number)
 	if not startOk then
 		return false, 0
 	end
-	local paid, amount = Sales.settle(ledger, pieceId, function(ownerId, value)
+	local paid, amount, piece = Sales.settle(ledger, pieceId, function(ownerId, value)
 		return M.credit(ownerId, value, "sale:" .. route)
 	end)
+	if paid and piece and amount > 0 then
+		M._tellEarned(piece, amount, route)
+	end
 	return paid, amount
+end
+
+-- The owner's "+$" popup (display only; they are already paid). Off while
+-- ReplicatedStorage.Economy's EarningsPopup attribute is false. Never
+-- yields and never errors into the sale.
+function M._tellEarned(piece: Ledger.Piece, amount: number, route: string)
+	if not earned or root:GetAttribute("EarningsPopup") == false then
+		return
+	end
+	local player = piece.ownerId and Players:GetPlayerByUserId(piece.ownerId)
+	if not player then
+		return
+	end
+	pcall(function()
+		(earned :: RemoteEvent):FireClient(player, amount, route, piece.fishName, piece.variant)
+	end)
 end
 
 -- The object for a piece is gone without a sale: keep the piece as data.

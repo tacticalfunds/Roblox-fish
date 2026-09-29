@@ -14,7 +14,13 @@ reviews and installs. Nothing here touches Studio on its own.
 | Fish jumps, rebased on live (`d5fec9b`) | done | **yes**: `tools/fish-jump/InstallFishJump.lua` (independent) |
 | Immediate rod cast, rebased on sales (`e08e824`; installer regenerated with v2) | done | **yes**: `tools/rod-cast/InstallRodCast.lua` (after sales) |
 | Grinder dwell (`d64a180`; ~1 s on the rollers: net, harpoon, rod fallback) | done | **yes**: `tools/grinder-dwell/InstallGrinderDwell.lua` (after sales; after jumps / rod cast if used) |
-| **Rare Silver / Gold variants** (this commit) | done | **yes**: `tools/fish-variants/InstallFishVariants.lua` (last) |
+| Rare Silver / Gold variants (`a92a678`) | done | **yes**: `tools/fish-variants/InstallFishVariants.lua` |
+| **Earnings popup** (this commit): "+$N" for the owner when their meat sells | done | **yes**: `InstallEarnings.lua` (after sales; after upgrades if used) |
+
+**The sales release is frozen at `91121de`.** `UpgradeAquariumV12`,
+`InstallSales`, `InstallUpgrades` and their rollbacks are built from that
+commit's economy sources and pinned byte-for-byte by the installer test.
+Later economy milestones change `src/` and ship their own installers on top.
 
 **Studio now (Astra, 2026-09-28):** fresh `a826d73` rod install + aquarium
 v1.2 (`UpgradeAquariumV12` installed: `EconomyRodOffersBackup` +
@@ -37,9 +43,11 @@ dry run also checks that the comment-less rebuilds are still refused.
 
 **Install order:** `InstallRodOffers` (a826d73) → `UpgradeAquariumV12` →
 `InstallSales` → `InstallUpgrades` → `InstallRodCast` → `InstallGrinderDwell` →
-`InstallFishVariants`. Fish jumps can go in
+`InstallFishVariants` → `InstallEarnings`. Fish jumps can go in
 any time. `InstallUpgrades` and `InstallRodCast` don't depend on each other.
-**Roll back in reverse:** `RollbackFishVariants` → `RollbackGrinderDwell` → `RollbackRodCast` / `RollbackUpgrades` →
+`InstallEarnings` only needs sales, but must come **after** `InstallUpgrades`
+(which refuses once the EconomyService has changed).
+**Roll back in reverse:** `RollbackEarnings` → `RollbackFishVariants` → `RollbackGrinderDwell` → `RollbackRodCast` / `RollbackUpgrades` →
 `RollbackSales` → `RollbackAquariumV12` → `UninstallRodOffers`. Each installer identifies what
 is installed by exact source, so it works on either rod-offers chain: a fresh
 `a826d73` install, or `8cb2554` + `UpdateRodPrompt`.
@@ -325,6 +333,46 @@ installed.
 | U5 | Buy to the max level | Prompt shows "Maxed"; further triggers charge nothing |
 | U6 | Stop, Play again | Tank levels are back to the start (session-scoped); Money stays spent |
 
+## Earnings popup (`InstallEarnings.lua`)
+
+When a piece of **your** meat sells (a customer takes it at the sale table,
+or it goes in a truck), you see a popup on the right of your screen:
+
+- `+$12` in big green text, with `Salmon sold to a customer` under it
+- **Quick sales add up:** further sales within 2.5 s join the same popup,
+  e.g. `+$54` / `3 pieces sold`. It hides 2.5 s after the last one.
+- **Gold / Silver meat** tints it gold or silver; the tint stays for the rest
+  of that run.
+- **Whoever carried it:** you see it even if another player carried your
+  meat to the truck. The carrier sees nothing (they aren't paid).
+- **Unowned meat** (an unbound harpoon catch) shows nothing anywhere.
+
+It's display only. The payment is the same ledger settlement as before:
+once per piece, to its owner. The popup shows exactly the amount paid.
+
+**How:** EconomyService creates `ReplicatedStorage.Economy.Earned` (a
+RemoteEvent) when it starts, and fires it to the owner after each paid
+sale. EconomyClient shows it and ignores anything malformed. Turn it off
+with the `EarningsPopup = false` attribute on `ReplicatedStorage.Economy`.
+
+**Install:** `InstallEarnings.lua` (v2 guarded template). It needs
+`EconomySalesBackup` and the exact sales-release EconomyService,
+EconomyClient, Sales, Ledger and PieceTags. It backs up the two scripts it
+changes to `ServerStorage.EconomyEarningsBackup`, in one undo step.
+**Install `InstallUpgrades` first** if you use it. **Rollback:**
+`RollbackEarnings.lua`, before `RollbackSales` (which refuses while the
+EconomyService differs).
+
+### Earnings checklist (Studio)
+
+| # | Do | Expect |
+|---|---|---|
+| E1 | Net a fish; let a customer buy one piece | `+$N` on the right, `<Fish> sold to a customer`; Money goes up by N |
+| E2 | Carry 3+ of your pieces to a truck at once | One popup adding up, `3 pieces sold`; it hides ~2.5 s later |
+| E3 | Second test client carries your meat to a truck | Only you see the popup; the carrier sees nothing |
+| E4 | Sell Gold meat (after variants) | The popup is gold |
+| E5 | Set `ReplicatedStorage.Economy.EarningsPopup = false` in Play | Sales still pay; no popup |
+
 ## Install / update / rollback (Astra)
 
 **Studio has 8cb2554 installed → use the update:**
@@ -402,8 +450,8 @@ changes; the rest re-check behaviour that already worked.
 
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 179 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21, earnings 27 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 193 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

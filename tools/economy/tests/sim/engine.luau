@@ -269,6 +269,7 @@ local RaycastParams = {
 }
 local ColorSequence, NumberSequence, NumberRange = dummy("ColorSequence"), dummy("NumberSequence"), dummy("NumberRange")
 local NumberSequenceKeypoint, ColorSequenceKeypoint = dummy("NumberSequenceKeypoint"), dummy("ColorSequenceKeypoint")
+local TweenInfo = dummy("TweenInfo")
 local Vector2 = {
 	new = function(x, y)
 		return { X = x, Y = y }
@@ -974,6 +975,22 @@ services.UserInputService = {
 		return if key == Enum.KeyCode.ButtonX then "rbxasset://textures/ui/Controls/xboxX.png" else ""
 	end,
 }
+-- tweens jump to their goal when played (the sims check end states)
+tweensPlayed = {}
+services.TweenService = {
+	Create = function(_, inst, info, goal)
+		local tw = { Instance = inst, TweenInfo = info, Goal = goal, Completed = Signal.new() }
+		function tw:Play()
+			table.insert(tweensPlayed, self)
+			for k, v in pairs(goal) do
+				inst[k] = v
+			end
+			self.Completed:Fire(Enum.PlaybackState.Completed)
+		end
+		function tw:Cancel() end
+		return tw
+	end,
+}
 services.PhysicsService = {
 	RegisterCollisionGroup = function() end,
 	CollisionGroupSetCollidable = function() end,
@@ -1045,6 +1062,7 @@ function envFor(scriptInst)
 		NumberRange = NumberRange,
 		NumberSequenceKeypoint = NumberSequenceKeypoint,
 		ColorSequenceKeypoint = ColorSequenceKeypoint,
+		TweenInfo = TweenInfo,
 		Random = Random,
 		RaycastParams = RaycastParams,
 		Enum = Enum,

@@ -149,6 +149,8 @@ SOURCES = {
 
 
 RELEASE_COMMIT = "a826d73"  # the rod-offers release installed in Studio (fresh InstallRodOffers)
+SALES_RELEASE = "91121de"  # InstallSales / InstallUpgrades as released for Astra's install
+SALES_FROZEN = ["UpgradeAquariumV12.lua", "RollbackAquariumV12.lua", "InstallSales.lua", "RollbackSales.lua", "InstallUpgrades.lua", "RollbackUpgrades.lua"]
 AQUARIUM_V1 = "2e320f9"
 AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
 SALES_LIVE = ["GrinderProcessor", "BotSystem", "CustomerSystem", "TruckSystem", "NetLiftScript", "HarpoonSystem"]
@@ -791,6 +793,67 @@ do
 	check("sales rollback over an edited script: refused", refused() and snapshot(g) == before)
 end
 
+------------------------------------------------------------ economy milestones after the sales release
+
+-- earnings popup: on top of sales (and upgrades, if used, first)
+local function earnings(g, s) warnings = {} runEarnings(g, s.Workspace) end
+local function earningsBack(g, s) warnings = {} runEarningsBack(g, s.Workspace) end
+do
+	local g, sv, history, sc = astraPlace()
+	upgradeAq(g, sv)
+	local before = snapshot(g)
+	earnings(g, sv)
+	check("earnings before sales: refused", refused() and snapshot(g) == before)
+	installSales(g, sv)
+	local afterSales = snapshot(g)
+	sv.RunService.running = true
+	earnings(g, sv)
+	check("earnings in Play: refused", refused() and snapshot(g) == afterSales)
+	sv.RunService.running = false
+	local commits = history.commits
+	earnings(g, sv)
+	local svc = sv.ServerScriptService.EconomyService
+	local client = sv.StarterPlayer.StarterPlayerScripts.EconomyClient
+	check("earnings: installed in one undo step", not refused() and history.commits == commits + 1)
+	check("earnings: EconomyService + EconomyClient = the earnings sources", svc.Source == EARN.EconomyService and client.Source == EARN.EconomyClient)
+	check("earnings: core modules and sale scripts untouched", svc.Ledger.Source == CUR.Ledger and sc.TruckSystem.Source == SALES.TruckSystem)
+	local eb = sv.ServerStorage:FindFirstChild("EconomyEarningsBackup")
+	check("earnings: backup with 2 entries", eb and eb:GetAttribute("EconomyOwned") == true and #eb:GetChildren() == 2)
+	local afterEarn = snapshot(g)
+	earnings(g, sv)
+	check("earnings twice: refused", refused() and snapshot(g) == afterEarn)
+	rollbackSales(g, sv)
+	check("sales rollback while earnings is in: refused", refused() and snapshot(g) == afterEarn)
+	installUpg(g, sv)
+	check("upgrades after earnings: refused (install upgrades first)", refused() and snapshot(g) == afterEarn)
+	earningsBack(g, sv)
+	check("earnings rollback: exactly the sales state", not refused() and snapshot(g) == afterSales)
+	installUpg(g, sv)
+	earnings(g, sv)
+	check("upgrades, then earnings: both in", not refused() and svc.Source == EARN.EconomyService
+		and sv.ServerScriptService.AquariumEconomy.Source == UPG.AquariumEconomy)
+	svc.Source ..= "\n-- hand edit"
+	local edited = snapshot(g)
+	earningsBack(g, sv)
+	check("earnings rollback over an edited EconomyService: refused", refused() and snapshot(g) == edited)
+end
+-- with the whole visual chain in (rod cast, dwell, variants): earnings still installs
+do
+	local g, sv = astraPlace()
+	upgradeAq(g, sv)
+	installSales(g, sv)
+	installUpg(g, sv)
+	rodCast(g, sv)
+	dwell(g, sv)
+	variants(g, sv)
+	assert(not refused(), "full chain setup")
+	local before = snapshot(g)
+	earnings(g, sv)
+	check("earnings on the full chain: installed", not refused())
+	earningsBack(g, sv)
+	check("earnings on the full chain: rolls back exactly", not refused() and snapshot(g) == before)
+end
+
 print_real(string.format("%d passed, %d failed", passes, failures))
 if failures > 0 then error("installer simulation failed") end
 """
@@ -817,6 +880,12 @@ def main() -> int:
         if (ROOT / frozen).read_text() != git_show(frozen, RELEASE_COMMIT):
             print(f"FAIL: {frozen} differs from the {RELEASE_COMMIT} release installed in Studio")
             return 1
+    # the sales chain is frozen at the release Astra is installing; later
+    # economy milestones ship their own installers on top
+    for frozen in SALES_FROZEN:
+        if (ROOT / frozen).read_text() != git_show(frozen, SALES_RELEASE):
+            print(f"FAIL: {frozen} differs from the {SALES_RELEASE} sales release")
+            return 1
     uninstaller = (ROOT / "UninstallRodOffers.lua").read_text()
     # the rod-offers install Astra has in Studio: the REAL 8cb2554 scripts
     old_installer = git_show("InstallRodOffers.lua")
@@ -825,9 +894,10 @@ def main() -> int:
     new = {k: git_show(v, RELEASE_COMMIT) for k, v in SOURCES.items()}
     tables = "local OLD = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in old.items()) + "}\n"
     tables += "local NEW = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in new.items()) + "}\n"
-    cur = {k: (ROOT / v).read_text() for k, v in SOURCES.items()}
-    cur["Ledger"] = (ROOT / "src/core/Ledger.luau").read_text()
-    cur["PieceTags"] = (ROOT / "src/core/PieceTags.luau").read_text()
+    # what InstallSales writes (the 91121de release)
+    cur = {k: git_show(v, SALES_RELEASE) for k, v in SOURCES.items()}
+    cur["Ledger"] = git_show("src/core/Ledger.luau", SALES_RELEASE)
+    cur["PieceTags"] = git_show("src/core/PieceTags.luau", SALES_RELEASE)
     tables += "local CUR = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in cur.items()) + "}\n"
     live6 = {k: (live / f"{k}.lua").read_text() for k in SALES_LIVE}
     tables += "local LIVE6 = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in live6.items()) + "}\n"
@@ -839,6 +909,9 @@ def main() -> int:
     for n in ("AquariumCycleServer", "AquariumEconomy"):
         tables += f"\t{n} = {lua_string(git_show(f'server/{n}.luau', AQUARIUM_V1, aq))},\n"
     tables += f"\tAquariumTankClient = {lua_string(git_show('client/AquariumTankClient.client.luau', AQUARIUM_V1, aq))},\n}}\n"
+    tables += "local EARN = {\n" + "".join(
+        f"\t{k} = {lua_string((ROOT / v).read_text())},\n" for k, v in (("EconomyService", "src/server/EconomyService.luau"), ("EconomyClient", "src/client/EconomyClient.client.luau"))
+    ) + "}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
     tables += "local RECON = {\n" + "".join(
@@ -900,6 +973,8 @@ def main() -> int:
         + wrap("runRodCastBack", (ROOT.parent / "rod-cast" / "RollbackRodCast.lua").read_text())
         + wrap("runJumpUninstall", (ROOT.parent / "fish-jump" / "UninstallFishJump.lua").read_text())
         + wrap("runRollbackUpg", (ROOT / "RollbackUpgrades.lua").read_text())
+        + wrap("runEarnings", (ROOT / "InstallEarnings.lua").read_text())
+        + wrap("runEarningsBack", (ROOT / "RollbackEarnings.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

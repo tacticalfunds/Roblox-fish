@@ -1,5 +1,7 @@
 -- EconomyClient (LocalScript in StarterPlayerScripts).
 --   * toast for EconomyService notices (money loading, purchase results)
+--   * "+$" popup when a piece of YOUR meat sells (Economy.Earned), wherever
+--     it sold and whoever carried it; quick sales add up into one popup
 --   * the buy prompt for the local player's OWN rod catches: a ProximityPrompt
 --     (Style = Custom) on the rod stand, with a small world-anchored panel
 --     ([E] + fish name + "Buy"). Keyboard E, the gamepad button and tapping
@@ -9,6 +11,7 @@
 -- Other players' catches get no prompt (the server refuses them anyway).
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
@@ -60,6 +63,101 @@ end
 local notice = root:WaitForChild("Notice")
 if notice:IsA("RemoteEvent") then
 	notice.OnClientEvent:Connect(show)
+end
+
+------------------------------------------------------------ earnings popup
+
+local GREEN = Color3.fromRGB(90, 235, 90)
+local VARIANT_COLORS = { Gold = Color3.fromRGB(255, 205, 40), Silver = Color3.fromRGB(205, 220, 235) }
+local VARIANT_RANK = { Silver = 1, Gold = 2 }
+local ROUTES = { Customer = "to a customer", Truck = "to a truck" }
+local EARN_HOLD = 2.5 -- seconds the popup stays after the last sale
+
+local earnFrame = Instance.new("Frame")
+earnFrame.Name = "Earnings"
+earnFrame.AnchorPoint = Vector2.new(1, 0.5)
+earnFrame.Position = UDim2.new(1, -24, 0.6, 0)
+earnFrame.Size = UDim2.fromOffset(240, 78)
+earnFrame.BackgroundTransparency = 1
+earnFrame.Visible = false
+earnFrame.Parent = gui
+local earnScale = Instance.new("UIScale")
+earnScale.Parent = earnFrame
+
+local function earnText(name: string, y: number, h: number): TextLabel
+	local t = Instance.new("TextLabel")
+	t.Name = name
+	t.BackgroundTransparency = 1
+	t.Position = UDim2.fromOffset(0, y)
+	t.Size = UDim2.new(1, 0, 0, h)
+	t.Font = Enum.Font.FredokaOne
+	t.TextScaled = true
+	t.TextXAlignment = Enum.TextXAlignment.Right
+	t.TextColor3 = Color3.new(1, 1, 1)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(10, 10, 12)
+	stroke.Thickness = 2.5
+	stroke.Parent = t
+	t.Parent = earnFrame
+	return t
+end
+local earnAmount = earnText("Amount", 0, 50)
+local earnDetail = earnText("Detail", 50, 26)
+
+local earnRun = { total = 0, count = 0, rank = 0, token = 0 }
+
+local function onEarned(amount: any, route: any, fishName: any, variant: any)
+	if type(amount) ~= "number" or amount ~= amount or amount <= 0 or amount == math.huge then
+		return
+	end
+	local run = earnRun
+	if not earnFrame.Visible then
+		run.total, run.count, run.rank = 0, 0, 0
+	end
+	run.total += math.floor(amount)
+	run.count += 1
+	local v = if type(variant) == "string" and VARIANT_COLORS[variant] then variant else nil
+	local rank = if v then VARIANT_RANK[v] else 0
+	if rank >= run.rank then
+		run.rank = rank
+		earnAmount.TextColor3 = if v then VARIANT_COLORS[v] else GREEN
+	end
+	earnAmount.Text = "+$" .. tostring(run.total)
+	if run.count == 1 then
+		local fish = if type(fishName) == "string" and fishName ~= "" then fishName else "Meat"
+		local where = if type(route) == "string" and ROUTES[route] then " " .. ROUTES[route] else ""
+		earnDetail.Text = (if v then v .. " " else "") .. fish .. " sold" .. where
+	else
+		earnDetail.Text = run.count .. " pieces sold"
+	end
+	earnFrame.Visible = true
+	earnScale.Scale = 1.25
+	TweenService:Create(earnScale, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	run.token += 1
+	local mine = run.token
+	task.delay(EARN_HOLD, function()
+		if mine == run.token then
+			earnFrame.Visible = false
+		end
+	end)
+end
+
+-- Economy.Earned appears when EconomyService starts (older services have none)
+local function hookEarned(child: Instance)
+	if child.Name == "Earned" and child:IsA("RemoteEvent") then
+		child.OnClientEvent:Connect(onEarned)
+		return true
+	end
+	return false
+end
+local earnedRemote = root:FindFirstChild("Earned")
+if not (earnedRemote and hookEarned(earnedRemote)) then
+	local conn
+	conn = root.ChildAdded:Connect(function(child)
+		if hookEarned(child) then
+			conn:Disconnect()
+		end
+	end)
 end
 
 ------------------------------------------------------------ buy prompt
