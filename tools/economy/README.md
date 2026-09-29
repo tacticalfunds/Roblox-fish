@@ -8,14 +8,15 @@ reviews and installs. Nothing here touches Studio on its own.
 | Core (`6081e33`): Config, Pricing, Ledger, MoneyStore, Offers | done | review only |
 | Rod Buy/Pass (`8cb2554`): Money service + offers + RodShop compatibility | superseded | - |
 | Rod-stand buy prompt (`a826d73`) | **installed** (Astra, fresh `InstallRodOffers.lua`) | frozen release: `InstallRodOffers.lua`, or `UpdateRodPrompt.lua` on `8cb2554` |
-| Aquarium v1.2 (`d39b00b`): buyer (`OwnerId`) through tank → river | done | **yes**: `UpgradeAquariumV12.lua` |
-| Sale payouts (`d39b00b`): grinder / bot / customer / truck / net / harpoon | done | **yes**: `InstallSales.lua` (after the aquarium upgrade) |
-| Paid aquarium upgrades (`de507bf`) | done | **yes**: `InstallUpgrades.lua` (after sales) |
+| Aquarium v1.2 (`d39b00b`): buyer (`OwnerId`) through tank → river | **installed** (Astra, 2026-09-28) | `UpgradeAquariumV12.lua` |
+| Sale payouts (`91121de` release): grinder / bot / customer / truck / net / harpoon | **installed** (Astra, 2026-09-29) | `InstallSales.lua` |
+| Money HUD: both MoneyController copies show `leaderstats.Money` | done | **yes**: `InstallMoneyHud.lua` (independent) |
+| Paid aquarium upgrades (`de507bf`) | done, **not production-ready** (levels not saved, see below) | **yes**: `InstallUpgrades.lua` (after sales) |
 | Fish jumps, rebased on live (`d5fec9b`) | done | **yes**: `tools/fish-jump/InstallFishJump.lua` (independent) |
 | Immediate rod cast, rebased on sales (`e08e824`; installer regenerated with v2) | done | **yes**: `tools/rod-cast/InstallRodCast.lua` (after sales) |
 | Grinder dwell (`d64a180`; ~1 s on the rollers: net, harpoon, rod fallback) | done | **yes**: `tools/grinder-dwell/InstallGrinderDwell.lua` (after sales; after jumps / rod cast if used) |
 | Rare Silver / Gold variants (`a92a678`) | done | **yes**: `tools/fish-variants/InstallFishVariants.lua` |
-| Earnings popup (`561c4d1`): "+$N" for the owner when their meat sells | done | **yes**: `InstallEarnings.lua` (after sales; after upgrades if used) |
+| Earnings popup (`561c4d1`; pending / balance-limit amounts fixed later): "+$N" for the owner when their meat sells | done | **yes**: `InstallEarnings.lua` (after sales; after upgrades if used) |
 | Blender Bot recovery (`e933db6`): an error mid-trip keeps the piece | done | **yes**: `InstallBotRecovery.lua` (after sales; before meat glow) |
 
 **All installers in one place, in order, with rollbacks: [`tools/INSTALL_GUIDE.md`](../INSTALL_GUIDE.md).**
@@ -25,9 +26,14 @@ reviews and installs. Nothing here touches Studio on its own.
 commit's economy sources and pinned byte-for-byte by the installer test.
 Later economy milestones change `src/` and ship their own installers on top.
 
-**Studio now (Astra, 2026-09-28):** fresh `a826d73` rod install + aquarium
-v1.2 (`UpgradeAquariumV12` installed: `EconomyRodOffersBackup` +
-`EconomyAquariumBackup`). Sales and upgrades are not installed yet.
+**Studio now (Astra, 2026-09-29):** fresh `a826d73` rod install + aquarium
+v1.2 + `InstallSales` (`91121de`): `EconomyRodOffersBackup`,
+`EconomyAquariumBackup`, `EconomySalesBackup`. Astra checked that every
+exact guard matched, that the 10 changes persist after a playtest, and ran
+an installed-module test (buyer ownership, Gold tier-1 payout 20, duplicate
+settlement refused, held/re-emitted settlement) on isolated in-memory money.
+Nothing after sales is installed yet.
+
 `InstallSales` refused the first time because two live scripts carry
 existing paid-upgrade hooks that weren't in the baseline:
 
@@ -38,26 +44,16 @@ existing paid-upgrade hooks that weren't in the baseline:
   - `CarsMaxQueue` caps the line
   - `CarsGapSeconds` sets the spacing
 
-`studio/live/` now holds Astra's **exact pasted live sources** for both,
-including their comments. The first rebuild from descriptions missed one
-comment line in each, and the exact guard correctly refused it. The sales
-patch keeps the hooks, with build guards and a runtime test. The installer
-dry run also checks that the comment-less rebuilds are still refused.
+`studio/live/` holds Astra's **exact pasted live sources** (2026-09-28, and
+the two MoneyController copies on 2026-09-29). Every patch and installer
+guard is built against these copies. The sales patch keeps the Car Sales
+hooks; the installer dry run checks that the comment-less rebuilds of those
+two scripts are still refused.
 
-**Install order:** `InstallRodOffers` (a826d73) → `UpgradeAquariumV12` →
-`InstallSales` → `InstallUpgrades` → `InstallRodCast` → `InstallGrinderDwell` →
-`InstallFishVariants` → `InstallEarnings`. Fish jumps can go in
-any time. `InstallUpgrades` and `InstallRodCast` don't depend on each other.
-`InstallEarnings` only needs sales, but must come **after** `InstallUpgrades`
-(which refuses once the EconomyService has changed). `InstallBotRecovery`
-can go in any time after sales.
-**Roll back in reverse:** `RollbackBotRecovery` / `RollbackEarnings` → `RollbackFishVariants` → `RollbackGrinderDwell` → `RollbackRodCast` / `RollbackUpgrades` →
-`RollbackSales` → `RollbackAquariumV12` → `UninstallRodOffers`. Each installer identifies what
-is installed by exact source, so it works on either rod-offers chain: a fresh
-`a826d73` install, or `8cb2554` + `UpdateRodPrompt`.
-
-`studio/live/` holds the live sources Astra supplied on 2026-09-28. Every
-patch and installer guard is built against these copies.
+**Install order and rollbacks:** see [`tools/INSTALL_GUIDE.md`](../INSTALL_GUIDE.md).
+Each installer identifies what is installed by exact source, so it works on
+either rod-offers chain: a fresh `a826d73` install, or `8cb2554` +
+`UpdateRodPrompt`.
 
 ## Buying a rod fish: what it does
 
@@ -302,12 +298,18 @@ prices:
   that they're alive and within range before charging.
 - **Shared tank:** the level applies to the one shared tank **for this
   server session**. It isn't saved, and it's never per player.
-- **⚠ Known limitation:** upgrades reset whenever a server starts, but the
-  Money spent on them is saved. A player who buys Tank 6 and rejoins a new
-  server has paid 50 and sees Tank 3 again. That's acceptable only while
-  there's one long-lived server, or for testing. Before launch, decide
-  between saving tank levels (per server owner, or globally) and pricing
-  them as a per-session boost, and say so in the prompt.
+- **⚠ Not production-ready: unresolved design issue.** Upgrade levels reset
+  whenever a server starts, but the Money spent on them is saved. A player
+  who buys Tank 6 and rejoins a new server has paid 50 and sees Tank 3
+  again. Only acceptable for testing. **Nothing here picks a persistence
+  policy:** saving tank levels (per server owner? globally?) or selling them
+  as a per-session boost is a design decision still open, and whichever it
+  is, the prompt must say so.
+- **The same gap exists in the live Car Sales upgrades.** CarSalesServer
+  charges through `EconomyService.tryDebit` (the one Money, not a second
+  currency), but its truck unlock, Max Line, Car Speed and customer levels
+  live only in player attributes, so they reset on rejoin while the Money
+  stays spent. Same open decision; not changed here.
 - **One step:** the charge and the level-up happen in one step with no
   yields in between.
 - **Nothing charged:** when the player can't afford it, at max level, or
@@ -335,7 +337,7 @@ installed.
 | U3 | Try the next level (150) with 50 Money | "You can't afford that upgrade yet."; nothing changes |
 | U4 | A second player buys a level | Only they pay; both see the bigger tank |
 | U5 | Buy to the max level | Prompt shows "Maxed"; further triggers charge nothing |
-| U6 | Stop, Play again | Tank levels are back to the start (session-scoped); Money stays spent |
+| U6 | Stop, Play again | Tank levels are back to the start (session-scoped); Money stays spent. **This is the unresolved issue above**, not a pass |
 
 ## Earnings popup (`InstallEarnings.lua`)
 
@@ -352,7 +354,18 @@ or it goes in a truck), you see a popup on the right of your screen:
 - **Unowned meat** (an unbound harpoon catch) shows nothing anywhere.
 
 It's display only. The payment is the same ledger settlement as before:
-once per piece, to its owner. The popup shows exactly the amount paid.
+once per piece, to its owner. **The popup shows what really reached your
+Money**, not the piece's price:
+
+- **Money still loading** (or its load failed and is retrying): the sale is
+  queued, not spendable. The popup says `+$12 pending` in grey, with `Added
+  when your Money loads`. Pending and spendable sales never add up in the
+  same popup. The queue is added to the balance once, when it loads.
+- **At the balance limit** (`Config.MaxBalance`): the balance is clamped, so
+  the popup shows the real increase (`+$3`, or `+$0`) with `Money is at the
+  maximum`. Same for a full pending queue (`Pending limit reached`).
+- The server measures the increase around the credit itself (no yields in
+  between) and sends `(added, route, fish, variant, kind, price)`.
 
 **How:** EconomyService creates `ReplicatedStorage.Economy.Earned` (a
 RemoteEvent) when it starts, and fires it to the owner after each paid
@@ -376,6 +389,48 @@ EconomyService differs).
 | E3 | Second test client carries your meat to a truck | Only you see the popup; the carrier sees nothing |
 | E4 | Sell Gold meat (after variants) | The popup is gold |
 | E5 | Set `ReplicatedStorage.Economy.EarningsPopup = false` in Play | Sales still pay; no popup |
+| E6 | Sell a piece while your Money is still loading (hard to hit by hand: the runtime sim covers it with a locked save) | Grey `+$N pending`, `Added when your Money loads`; the balance gains N once it loads |
+
+## Money HUD (`InstallMoneyHud.lua`)
+
+**The bug (real Studio):** both HUD copies of `MoneyController`
+(`StarterGui.Money.MoneyFrame` and `StarterGui.ScreenGui.Buttons.Frames.MoneyFrame`)
+wait forever on `ReplicatedStorage.FormatModule`, which doesn't exist. They
+also read `LocalPlayer.Money` (the balance is `leaderstats.Money`) and wait
+on `Modules.RebirthDefinitions`, `Rebirths`, `FriendsMultiplier`, `VIP` and
+`Upgrades.RobuxMultiplier`, none of which exist. So the labels never update.
+
+**The fix** replaces both with one new controller
+(`src/client/MoneyController.client.luau`, written fresh):
+
+- **Money:** `leaderstats.Money`, the value EconomyService keeps. It shows
+  `Loading...` until the player's Money has loaded (and stays that way if it
+  never does), then the balance, following every change. `$1.23K` style,
+  truncated so it never rounds up. `FormatModule` is used if it exists and
+  works; otherwise it uses its own format.
+- **Multiplier labels** (`RebirthMulti`, `RobuxMulti`, `FriendsMulti`,
+  `VIPMulti`): the old formulas, **only when their inputs exist**. A label
+  whose inputs are missing (all of them today) is hidden, not filled with a
+  guess. If the inputs appear later, the label comes back. These are display
+  only: **no payout applies any multiplier**, so if those systems are ever
+  added, their payouts need their own design.
+- It never waits on anything that may not exist.
+
+**Install:** `InstallMoneyHud.lua` (v2 guarded template). It needs
+`EconomyRodOffersBackup` and both copies exactly as Astra sent them (by
+path). It backs up both to `ServerStorage.EconomyMoneyHudBackup`, in one
+undo step. Nothing server side. Independent of every other installer.
+**Rollback:** `RollbackMoneyHud.lua` (the old, stuck scripts come back).
+
+### Money HUD checklist (Studio)
+
+| # | Do | Expect |
+|---|---|---|
+| M1 | Play | Both money labels show `$100` (new player) or your saved balance within a moment, `Loading...` before that; no `FormatModule` / infinite-yield warnings |
+| M2 | Buy a rod fish; sell meat | Both labels follow the balance each time |
+| M3 | Compare with the leaderboard | Same number as `leaderstats.Money` (abbreviated from 1,000: `$1.23K`) |
+| M4 | Look at the multiplier labels | Hidden (their inputs don't exist); nothing claims a bonus |
+| M5 | Edit mode: `RollbackMoneyHud` | Both scripts are the old source again |
 
 ## Blender Bot recovery (`InstallBotRecovery.lua`)
 
@@ -485,8 +540,8 @@ changes; the rest re-check behaviour that already worked.
 
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21, earnings 27, bot 14, meat glow 21, harpoon blend 15 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 238 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21, earnings 47, money HUD 41, bot 14, meat glow 21, harpoon blend 15 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 255 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

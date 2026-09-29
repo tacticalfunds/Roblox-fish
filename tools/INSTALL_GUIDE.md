@@ -20,31 +20,39 @@ package's README (linked below).
 
 ## Where Studio is now
 
-As reported by Astra, 2026-09-28:
+As reported by Astra, 2026-09-29:
 
 - rod offers `a826d73` (`EconomyRodOffersBackup`)
 - aquarium v1.2 (`EconomyAquariumBackup`)
+- **sale payouts `91121de` (`EconomySalesBackup`)**: every exact guard
+  matched, 10 changes installed, persistence checked after a playtest
 
-Nothing below is installed yet.
+Row 1 is done. Nothing from row 2 on is installed yet.
+
+**Not production-ready as a whole:** paid upgrades (row 3) and the live Car
+Sales upgrades reset every server while the Money spent stays saved. See
+[Open decisions](#open-decisions-nothing-coded).
 
 ## Install order
 
 Install top to bottom. Skip any row you don't want: the "Needs" column says
-what each one relies on. The installer sim runs this exact sequence (all 10)
-and rolls it all back.
+what each one relies on. The installer sim runs this exact sequence (all 11,
+from before sales) and rolls it all back, checking the state after each
+rollback.
 
 | # | File | What it does | Needs | Backup folder |
 |---|---|---|---|---|
-| 1 | [`economy/InstallSales.lua`](economy/README.md#sale-payouts-installsaleslua) | Meat pays its owner once, when it sells | rod offers + aquarium v1.2 | `EconomySalesBackup` |
-| 2 | [`economy/InstallUpgrades.lua`](economy/README.md#paid-aquarium-upgrades-installupgradeslua) | Aquarium upgrades cost Money | 1 | `EconomyUpgradesBackup` |
-| 3 | [`economy/InstallEarnings.lua`](economy/README.md#earnings-popup-installearningslua) | "+$N" popup for the owner on each sale | 1; **after 2** if you use 2 | `EconomyEarningsBackup` |
-| 4 | [`economy/InstallBotRecovery.lua`](economy/README.md#blender-bot-recovery-installbotrecoverylua) | Blender Bot survives errors without losing meat | 1; **before 9** | `EconomyBotBackup` |
-| 5 | [`fish-jump/InstallFishJump.lua`](fish-jump/README.md) | Fish jump out of the water now and then | the live FishSwimClient | `FishJumpBackup` |
-| 6 | [`rod-cast/InstallRodCast.lua`](rod-cast/README.md) | Rods cast the moment the button is pressed | 1 | `RodCastBackup` |
-| 7 | [`grinder-dwell/InstallGrinderDwell.lua`](grinder-dwell/README.md) | Fish tumble ~1 s on the grinder rollers | 1; **after 5 and 6** if used | `GrinderDwellBackup` |
-| 8 | [`fish-variants/InstallFishVariants.lua`](fish-variants/README.md) | Rare Silver / Gold fish | 1; **after 2, 6, 7** if used | `EconomyVariantsBackup` |
-| 9 | [`fish-variants/InstallMeatGlow.lua`](fish-variants/README.md#glow-on-moved-meat-installmeatglowlua) | Variant meat keeps its glow when moved | 8; **after 4** if used | `EconomyMeatGlowBackup` |
-| 10 | [`fish-jump/InstallHarpoonBlend.lua`](fish-jump/README.md#harpoon-mid-jump-fix-installharpoonblendlua) | No snap when a jumping fish is harpooned | 5; **after 7** if used | `HarpoonBlendBackup` |
+| 1 | ~~[`economy/InstallSales.lua`](economy/README.md#sale-payouts-installsaleslua)~~ **installed** | Meat pays its owner once, when it sells | rod offers + aquarium v1.2 | `EconomySalesBackup` |
+| 2 | [`economy/InstallMoneyHud.lua`](economy/README.md#money-hud-installmoneyhudlua) | Both money labels show `leaderstats.Money` (they were stuck) | rod offers; independent of the rest | `EconomyMoneyHudBackup` |
+| 3 | [`economy/InstallUpgrades.lua`](economy/README.md#paid-aquarium-upgrades-installupgradeslua) | Aquarium upgrades cost Money. **Levels not saved: see open decisions** | 1 | `EconomyUpgradesBackup` |
+| 4 | [`economy/InstallEarnings.lua`](economy/README.md#earnings-popup-installearningslua) | "+$N" popup for the owner on each sale (real amount; "pending" while Money loads) | 1; **after 3** if you use 3 | `EconomyEarningsBackup` |
+| 5 | [`economy/InstallBotRecovery.lua`](economy/README.md#blender-bot-recovery-installbotrecoverylua) | Blender Bot survives errors without losing meat | 1; **before 10** | `EconomyBotBackup` |
+| 6 | [`fish-jump/InstallFishJump.lua`](fish-jump/README.md) | Fish jump out of the water now and then | the live FishSwimClient | `FishJumpBackup` |
+| 7 | [`rod-cast/InstallRodCast.lua`](rod-cast/README.md) | Rods cast the moment the button is pressed | 1 | `RodCastBackup` |
+| 8 | [`grinder-dwell/InstallGrinderDwell.lua`](grinder-dwell/README.md) | Fish tumble ~1 s on the grinder rollers | 1; **after 6 and 7** if used | `GrinderDwellBackup` |
+| 9 | [`fish-variants/InstallFishVariants.lua`](fish-variants/README.md) | Rare Silver / Gold fish | 1; **after 3, 7, 8** if used | `EconomyVariantsBackup` |
+| 10 | [`fish-variants/InstallMeatGlow.lua`](fish-variants/README.md#glow-on-moved-meat-installmeatglowlua) | Variant meat keeps its glow when moved | 9; **after 5** if used | `EconomyMeatGlowBackup` |
+| 11 | [`fish-jump/InstallHarpoonBlend.lua`](fish-jump/README.md#harpoon-mid-jump-fix-installharpoonblendlua) | No snap when a jumping fish is harpooned | 6; **after 8** if used | `HarpoonBlendBackup` |
 
 "After X" matters because both change the same script. The later installer
 knows X's version; the earlier one doesn't, so running them the other way
@@ -52,20 +60,22 @@ round is refused, with nothing changed.
 
 ## Rollback order
 
-Exactly the reverse: **10 → 1**, then, if you ever need to go further,
+Exactly the reverse: **11 → 1**, then, if you ever need to go further,
 `economy/RollbackAquariumV12.lua` and `economy/UninstallRodOffers.lua`.
+Row 2 (Money HUD) touches nothing else, so its rollback works at any time.
 
 | # | Rollback file |
 |---|---|
-| 10 | `fish-jump/RollbackHarpoonBlend.lua` |
-| 9 | `fish-variants/RollbackMeatGlow.lua` |
-| 8 | `fish-variants/RollbackFishVariants.lua` |
-| 7 | `grinder-dwell/RollbackGrinderDwell.lua` |
-| 6 | `rod-cast/RollbackRodCast.lua` |
-| 5 | `fish-jump/UninstallFishJump.lua` |
-| 4 | `economy/RollbackBotRecovery.lua` |
-| 3 | `economy/RollbackEarnings.lua` |
-| 2 | `economy/RollbackUpgrades.lua` |
+| 11 | `fish-jump/RollbackHarpoonBlend.lua` |
+| 10 | `fish-variants/RollbackMeatGlow.lua` |
+| 9 | `fish-variants/RollbackFishVariants.lua` |
+| 8 | `grinder-dwell/RollbackGrinderDwell.lua` |
+| 7 | `rod-cast/RollbackRodCast.lua` |
+| 6 | `fish-jump/UninstallFishJump.lua` |
+| 5 | `economy/RollbackBotRecovery.lua` |
+| 4 | `economy/RollbackEarnings.lua` |
+| 3 | `economy/RollbackUpgrades.lua` |
+| 2 | `economy/RollbackMoneyHud.lua` |
 | 1 | `economy/RollbackSales.lua` |
 
 A rollback run too early refuses, with nothing changed. It names the backup
@@ -74,9 +84,9 @@ carries a later install.
 
 ## Studio checklists
 
-Each README has a short table for its install: sales `S#`, upgrades `U#`,
-earnings `E#`, bot recovery `B#`, variants `V#`, meat glow `G#`, harpoon
-blend `H#`. Fish jumps, rod cast and dwell have theirs in their READMEs.
+Each README has a short table for its install: sales `S#`, Money HUD `M#`,
+upgrades `U#`, earnings `E#`, bot recovery `B#`, variants `V#`, meat glow
+`G#`, harpoon blend `H#`. Fish jumps, rod cast and dwell have theirs in their READMEs.
 
 ## Client input audit (2026-09-29)
 
@@ -91,6 +101,7 @@ Every way a client can reach the server, in the scripts in this repo:
 | Net pad (`Touched`) | one shared lift cycle (~2.6 s), weight limit, refuses while the grinder is backed up |
 | Truck carry / delivery | server-side, from the player's position; carriers are never paid, and each piece pays its owner once |
 | `Economy.Notice`, `Economy.Earned` | server → client only; the client ignores malformed values |
+| Money HUD | reads `leaderstats.Money` only; sends nothing |
 
 **Not audited, source needed:** CarSalesServer (the truck unlock, Max Line,
 Car Speed and customer upgrades), TruckClient and any UI scripts. Please
@@ -103,9 +114,19 @@ the fish is ground, and only its owner is paid, once.
 
 ## Open decisions (nothing coded)
 
-- **Aquarium upgrades reset each server while Money is saved.** Options: save
-  tank levels, or sell them as a per-session boost.
+- **Upgrade levels reset each server while Money is saved (unresolved).**
+  - Paid aquarium upgrades (row 3): Tank Capacity / Release Rate levels
+    live only in the server session.
+  - The live Car Sales upgrades already do the same: CarSalesServer charges
+    through `EconomyService.tryDebit` (the one Money), but the truck unlock,
+    Max Line, Car Speed and customer levels live only in player attributes.
+  - Options: save the levels, or sell them as a per-session boost and say so
+    in the prompt. Nothing here picks a policy; until one is chosen, these
+    upgrades are **not production-ready**.
 - **Rod shop:** what owning a rod does, and whether it's saved (it stays
   closed until then).
+- **HUD multiplier labels** (Rebirth, Robux, Friends, VIP): the Money HUD
+  hides them because their inputs don't exist, and no payout applies any
+  multiplier. If those systems come, their payouts need a design first.
 - **Robux items** (e.g. the harpoon, as HarpoonSystem's comment suggests):
   which items, and prices.
