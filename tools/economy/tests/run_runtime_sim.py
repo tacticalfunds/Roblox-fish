@@ -6,6 +6,7 @@ EconomyClient and, for the sale routes, the REAL patched live scripts.
   prompt_sim: the rod-stand buy prompt (caster only, range, custom panel,
               buy once, cleanup on buy / timeout / pass / death / leave / off)
   sales_sim:  sale payouts through the real patched grinder and truck
+  panel_sim:  the aquarium panel (patched AquariumCycleServer + AquariumPanelClient)
   moneyhud_sim: the new MoneyController on leaderstats.Money (and the live
               one stuck on the missing FormatModule)
 
@@ -66,6 +67,9 @@ def sources() -> dict:
     blend = jump / "studio" / "harpoon-blend"
     out["Blend_Jump"] = (blend / "FishSwimClient.patched.from-jump.lua").read_text()
     out["Blend_Dwell"] = (blend / "FishSwimClient.patched.from-dwell-jump.lua").read_text()
+    panel = ROOT.parent / "aquarium-panel"
+    out["Panel_Server"] = (panel / "studio" / "AquariumCycleServer.patched.from-v12.lua").read_text()
+    out["AquariumPanelClient"] = (panel / "src" / "AquariumPanelClient.client.luau").read_text()
     glow = var / "studio" / "meat-glow"
     out["MG_Bot_sales"] = (glow / "BotSystem.patched.from-sales.lua").read_text()
     out["MG_Bot_bot"] = (glow / "BotSystem.patched.from-bot.lua").read_text()

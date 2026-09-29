@@ -29,8 +29,8 @@ As reported by Astra, 2026-09-29 (user authorised the remaining installs):
   dwell, harpoon blend (each with its backup folder)
 - **deliberately not installed:** row 3, paid aquarium upgrades (levels
   aren't saved; see open decisions)
-- **next:** row 9, variants (`28a9b3f`: its FishSpawner check now matches
-  the live source, harpoon despawn guard included), then row 10, meat glow
+- **installed since:** row 9, variants (`28a9b3f`), and row 10, meat glow
+- **next:** row 12, the aquarium panel
 
 **Not production-ready as a whole:** paid upgrades (row 3) and the live Car
 Sales upgrades reset every server while the Money spent stays saved. See
@@ -56,6 +56,7 @@ rollback.
 | 9 | [`fish-variants/InstallFishVariants.lua`](fish-variants/README.md) | Rare Silver / Gold fish | 1; **after 3, 7, 8** if used | `EconomyVariantsBackup` |
 | 10 | [`fish-variants/InstallMeatGlow.lua`](fish-variants/README.md#glow-on-moved-meat-installmeatglowlua) | Variant meat keeps its glow when moved | 9; **after 5** if used | `EconomyMeatGlowBackup` |
 | 11 | [`fish-jump/InstallHarpoonBlend.lua`](fish-jump/README.md#harpoon-mid-jump-fix-installharpoonblendlua) | No snap when a jumping fish is harpooned | 6; **after 8** if used | `HarpoonBlendBackup` |
+| 12 | [`aquarium-panel/InstallAquariumPanel.lua`](aquarium-panel/README.md) | One custom aquarium panel at the loader pad (Release Fish + one upgrade card) instead of three default prompts; upgrades shown as not available | aquarium v1.2; **the released row 3 refuses after it** | `AquariumPanelBackup` |
 
 "After X" matters because both change the same script. The later installer
 knows X's version; the earlier one doesn't, so running them the other way
@@ -63,12 +64,13 @@ round is refused, with nothing changed.
 
 ## Rollback order
 
-Exactly the reverse: **11 → 1**, then, if you ever need to go further,
+Exactly the reverse: **12 → 1**, then, if you ever need to go further,
 `economy/RollbackAquariumV12.lua` and `economy/UninstallRodOffers.lua`.
 Row 2 (Money HUD) touches nothing else, so its rollback works at any time.
 
 | # | Rollback file |
 |---|---|
+| 12 | `aquarium-panel/RollbackAquariumPanel.lua` (independent of 4–11) |
 | 11 | `fish-jump/RollbackHarpoonBlend.lua` |
 | 10 | `fish-variants/RollbackMeatGlow.lua` |
 | 9 | `fish-variants/RollbackFishVariants.lua` |
@@ -87,7 +89,7 @@ carries a later install.
 
 ## Studio checklists
 
-Each README has a short table for its install: sales `S#`, Money HUD `M#`,
+Each README has a short table for its install: aquarium panel `A#`, sales `S#`, Money HUD `M#`,
 upgrades `U#`, earnings `E#`, bot recovery `B#`, variants `V#`, meat glow
 `G#`, harpoon blend `H#`. Fish jumps, rod cast and dwell have theirs in their READMEs.
 
@@ -99,7 +101,7 @@ Every way a client can reach the server, in the scripts in this repo:
 |---|---|
 | `PressFishButton` (RodFishingSystem) | 0.6 s per-player cooldown, within 80 studs, only when rods are ready, only with a free aquarium spot. Rod fish must be bought; nothing is free |
 | `Economy.OfferAction` (buy a rod fish) | rate-limited per player; the server checks the offer, the caster, the expiry, alive, within reach of the stand, and Money, all in one step with no yields between |
-| Aquarium Release / upgrade prompts | the server checks alive and in range (prompt distance + slack) before acting or charging |
+| Aquarium Release / upgrade prompts | the server checks alive and in range (prompt distance + slack) before acting or charging. With the panel (row 12) they are Custom-style prompts; upgrade prompts exist only with a currency binding |
 | `RodShopServer` buy | charged through EconomyService; shop closed until rods do something |
 | Net pad (`Touched`) | one shared lift cycle (~2.6 s), weight limit, refuses while the grinder is backed up |
 | Truck carry / delivery | server-side, from the player's position; carriers are never paid, and each piece pays its owner once |

@@ -392,6 +392,14 @@ function Signal:Wait()
 	table.insert(self.waiting, coroutine.running())
 	return coroutine.yield()
 end
+-- only the handlers connected by `owner` (a prompt shown on one client)
+function Signal:FireFor(owner, ...)
+	for _, c in ipairs(table.clone(self.conns)) do
+		if c.connected and c.owner == owner then
+			resume(newThread(c.fn, c.owner), ...)
+		end
+	end
+end
 function Signal:Fire(...)
 	for _, c in ipairs(table.clone(self.conns)) do
 		if c.connected then
@@ -416,6 +424,7 @@ local EVENTS = {
 	DescendantAdded = true,
 	AncestryChanged = true,
 	Destroying = true,
+	Activated = true,
 	Changed = true,
 	PromptShown = true,
 	PromptHidden = true,
@@ -481,6 +490,12 @@ Inst.__index = function(self, k)
 	if k == "Position" and (props.CFrame or ISA[props.ClassName] and ISA[props.ClassName].BasePart) then
 		return partCFrame(self).Position
 	end
+	if k == "Enabled" and props.ClassName == "ProximityPrompt" and isInst(current) then
+		local localEnabled = rawget(self, "_localEnabled")
+		if localEnabled and localEnabled[current] ~= nil then
+			return localEnabled[current]
+		end
+	end
 	if k == "LocalPlayer" and props.ClassName == "Players" then
 		return if isInst(current) then current else nil
 	end
@@ -541,6 +556,13 @@ Inst.__newindex = function(self, k, v)
 			fireDescendantAdded(v, self)
 		end
 		fireAncestry(self)
+		return
+	end
+	if k == "Enabled" and rawget(self, "_props").ClassName == "ProximityPrompt" and isInst(current) and rawget(self, "_owner") ~= current then
+		-- like Roblox: a client-side change to a server prompt stays on that client
+		local localEnabled = rawget(self, "_localEnabled") or {}
+		rawset(self, "_localEnabled", localEnabled)
+		localEnabled[current] = v
 		return
 	end
 	if k == "Position" then
@@ -792,10 +814,11 @@ local function shownFor(player, prompt)
 	local st = promptState[player]
 	return st ~= nil and st.shown[prompt] == true
 end
+-- Called on the client: the local player triggers (server prompts too).
 function Inst:InputHoldBegin()
-	local owner = self._owner
-	if self._props.Enabled and shownFor(owner, self) then
-		self.Triggered:Fire(owner)
+	local who = if isInst(current) then current else self._owner
+	if self.Enabled and shownFor(who, self) then
+		self.Triggered:Fire(who)
 	end
 end
 function Inst:InputHoldEnd() end
@@ -811,14 +834,20 @@ local function promptTick(player)
 	local best = {} -- key -> { prompt, dist }
 	if hrp then
 		for _, d in ipairs(workspaceInst:GetDescendants()) do
+			local localEnabled = rawget(d, "_localEnabled")
+			local enabled = d._props.Enabled
+			if localEnabled and localEnabled[player] ~= nil then
+				enabled = localEnabled[player]
+			end
 			if
 				d.ClassName == "ProximityPrompt"
-				and d._owner == player
-				and d._props.Enabled
+				and (d._owner == player or d._owner == "server")
+				and enabled
 				and d.Parent
-				and d.Parent:IsA("BasePart")
+				and (d.Parent:IsA("BasePart") or d.Parent.ClassName == "Attachment")
 			then
-				local dist = (hrp.Position - d.Parent.Position).Magnitude
+				local at = if d.Parent.ClassName == "Attachment" then d.Parent._props.WorldPosition else d.Parent.Position
+				local dist = (hrp.Position - at).Magnitude
 				if dist <= d._props.MaxActivationDistance then
 					local key = d._props.KeyboardKeyCode
 					if not best[key] or dist < best[key].dist then
@@ -834,12 +863,12 @@ local function promptTick(player)
 	end
 	for p in pairs(st.shown) do
 		if not nowShown[p] and not rawget(p, "_destroyed") then
-			p.PromptHidden:Fire()
+			p.PromptHidden:FireFor(player)
 		end
 	end
 	for p in pairs(nowShown) do
 		if not st.shown[p] then
-			p.PromptShown:Fire(st.inputType)
+			p.PromptShown:FireFor(player, st.inputType)
 		end
 	end
 	st.shown = nowShown
@@ -991,6 +1020,43 @@ services.TweenService = {
 		return tw
 	end,
 }
+local boundActions = {} -- player -> name -> { fn, keys }
+services.ContextActionService = {
+	BindAction = function(_, name, fn, _createTouchButton, ...)
+		boundActions[current] = boundActions[current] or {}
+		boundActions[current][name] = { fn = fn, keys = { ... } }
+	end,
+	UnbindAction = function(_, name)
+		if boundActions[current] then
+			boundActions[current][name] = nil
+		end
+	end,
+}
+local function pressKey(p, key)
+	for name, b in pairs(boundActions[p] or {}) do
+		if table.find(b.keys, key) then
+			runAs(p, b.fn, name, Enum.UserInputState.Begin, { KeyCode = key, UserInputType = Enum.UserInputType.Keyboard })
+		end
+	end
+end
+-- a client presses a key a shown prompt listens to (as Roblox does natively)
+local function pressPromptKey(p, key)
+	local st = promptState[p]
+	for prompt in pairs(st and st.shown or {}) do
+		if prompt._props.KeyboardKeyCode == key then
+			runAs(p, function()
+				prompt:InputHoldBegin()
+				prompt:InputHoldEnd()
+			end)
+		end
+	end
+end
+-- a client clicks / taps a GUI button
+local function click(p, b)
+	runAs(p, function()
+		b.Activated:Fire()
+	end)
+end
 services.PhysicsService = {
 	RegisterCollisionGroup = function() end,
 	CollisionGroupSetCollidable = function() end,

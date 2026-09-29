@@ -1104,6 +1104,87 @@ do
 	check("variants rollback: exactly Astra's state, live FishSpawner back", not refused() and snapshot(g) == studioNow
 		and sc.FishSpawner.Source == VIS.LiveFishSpawner)
 end
+-- aquarium panel: one custom panel instead of three default prompts, on
+-- Astra's current state (everything but paid upgrades, variants + glow in)
+local function panel(g, s) warnings = {} runPanel(g, s.Workspace) end
+local function panelBack(g, s) warnings = {} runPanelBack(g, s.Workspace) end
+local function astraNow()
+	local g, sv, history, sc = astraPlace()
+	upgradeAq(g, sv)
+	for _, step in ipairs({ installSales, moneyHud, earnings, botFix, jumpInstall, rodCast, dwell, blend, variants, meatGlow }) do
+		step(g, sv)
+		assert(not refused(), "Astra's state: " .. tostring(warnings[#warnings]))
+	end
+	return g, sv, history, sc
+end
+do
+	local g, sv, history = astraNow()
+	local acs = sv.ServerScriptService.AquariumCycleServer
+	local sps = sv.StarterPlayer.StarterPlayerScripts
+	local before = snapshot(g)
+	sv.RunService.running = true
+	panel(g, sv)
+	check("panel in Play: refused", refused() and snapshot(g) == before)
+	sv.RunService.running = false
+	local commits = history.commits
+	panel(g, sv)
+	check("panel on Astra's state: installed in one undo step", not refused() and history.commits == commits + 1)
+	check("panel: AquariumCycleServer = the panel version", acs.Source == PANEL.Server)
+	local client = sps:FindFirstChild("AquariumPanelClient")
+	check("panel: AquariumPanelClient added, tagged", client and client.ClassName == "LocalScript" and client.Source == PANEL.Client
+		and client:GetAttribute("EconomyOwned") == true)
+	local pb = sv.ServerStorage:FindFirstChild("AquariumPanelBackup")
+	check("panel: backup = 1 change + 1 add", pb and #pb:GetChildren() == 2)
+	check("panel: aquarium modules, tank client, bindings untouched", sv.ReplicatedStorage.AquariumCycle.Config.Source == AQV12.Config
+		and sps.AquariumTankClient.Source == AQV12.AquariumTankClient)
+	local after = snapshot(g)
+	panel(g, sv)
+	check("panel twice: refused", refused() and snapshot(g) == after)
+	installUpg(g, sv)
+	check("released InstallUpgrades refuses after the panel (needs a new installer anyway)", refused() and snapshot(g) == after)
+	rollbackAq(g, sv)
+	check("aquarium v1.2 rollback refused while the panel is in", refused() and snapshot(g) == after)
+	acs.Source ..= "\n-- hand edit"
+	local edited = snapshot(g)
+	panelBack(g, sv)
+	check("panel rollback over an edited server: refused", refused() and snapshot(g) == edited)
+	acs.Source = PANEL.Server
+	panelBack(g, sv)
+	check("panel rollback: exactly Astra's state (client removed)", not refused() and snapshot(g) == before
+		and sps:FindFirstChild("AquariumPanelClient") == nil)
+end
+do
+	-- aquarium v1 only (no v1.2): refused
+	local g, sv = astraPlace()
+	local before = snapshot(g)
+	panel(g, sv)
+	check("panel without aquarium v1.2: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraNow()
+	sv.ServerScriptService.AquariumCycleServer.Source ..= "\n-- tuned"
+	local before = snapshot(g)
+	panel(g, sv)
+	check("panel over an edited AquariumCycleServer: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
+do
+	local g, sv = astraNow()
+	local mine = new("LocalScript", "AquariumPanelClient")
+	mine.Source = "-- someone else's"
+	mine.Parent = sv.StarterPlayer.StarterPlayerScripts
+	local before = snapshot(g)
+	panel(g, sv)
+	check("panel when an AquariumPanelClient already exists: refused, kept", refused() and snapshot(g) == before and mine.Source == "-- someone else's")
+end
+do
+	local g, sv = astraNow()
+	sv.ReplicatedStorage.AquariumCycle.Upgrades.Source ..= "\n-- retuned"
+	local before = snapshot(g)
+	panel(g, sv)
+	check("panel over an edited Upgrades module: refused", refused() and snapshot(g) == before)
+end
+
 -- the old baseline (no HarpoonT in the despawn guard) is not what Studio has: refused
 do
 	local g, sv, _, sc = astraPlace()
@@ -1227,6 +1308,10 @@ def main() -> int:
     tables += "local MONEYHUD = {\n" + "".join(
         f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (("Live", live / "MoneyController.lua"), ("New", ROOT / "src" / "client" / "MoneyController.client.luau"))
     ) + "}\n"
+    pn = ROOT.parent / "aquarium-panel"
+    tables += "local PANEL = {\n" + "".join(
+        f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (("Server", pn / "studio" / "AquariumCycleServer.patched.from-v12.lua"), ("Client", pn / "src" / "AquariumPanelClient.client.luau"))
+    ) + "}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1311,6 +1396,8 @@ def main() -> int:
         + wrap("runBlendBack", (ROOT.parent / "fish-jump" / "RollbackHarpoonBlend.lua").read_text())
         + wrap("runMoneyHud", (ROOT / "InstallMoneyHud.lua").read_text())
         + wrap("runMoneyHudBack", (ROOT / "RollbackMoneyHud.lua").read_text())
+        + wrap("runPanel", (ROOT.parent / "aquarium-panel" / "InstallAquariumPanel.lua").read_text())
+        + wrap("runPanelBack", (ROOT.parent / "aquarium-panel" / "RollbackAquariumPanel.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:
