@@ -150,6 +150,8 @@ SOURCES = {
 
 RELEASE_COMMIT = "a826d73"  # the rod-offers release installed in Studio (fresh InstallRodOffers)
 SALES_RELEASE = "91121de"  # InstallSales / InstallUpgrades as released for Astra's install
+EARNINGS_RELEASE = "0829fc9"  # InstallEarnings as installed by Astra
+EARNINGS_FROZEN = ["InstallEarnings.lua", "RollbackEarnings.lua"]
 SALES_FROZEN = ["UpgradeAquariumV12.lua", "RollbackAquariumV12.lua", "InstallSales.lua", "RollbackSales.lua", "InstallUpgrades.lua", "RollbackUpgrades.lua"]
 AQUARIUM_V1 = "2e320f9"
 AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
@@ -1237,6 +1239,88 @@ do
 	check("then it uninstalls", not refused() and sv.ReplicatedStorage:FindFirstChild("FishJump") == nil)
 end
 
+-- rods milestone 1: saved ownership + equip + faster bites, on Astra's state
+local function rods(g, s) warnings = {} runRods(g, s.Workspace) end
+local function rodsBack(g, s) warnings = {} runRodsBack(g, s.Workspace) end
+do
+	local g, sv, history, sc = astraNow()
+	panel(g, sv) -- installed too (aquarium only)
+	local svc = sv.ServerScriptService.EconomyService
+	local backups = {}
+	for _, name in ipairs({ "EconomyRodOffersBackup", "EconomySalesBackup", "EconomyEarningsBackup", "EconomyVariantsBackup", "EconomyMeatGlowBackup" }) do
+		backups[name] = subtree(sv.ServerStorage[name])
+	end
+	local before = snapshot(g)
+	sv.RunService.running = true
+	rods(g, sv)
+	check("rods in Play: refused", refused() and snapshot(g) == before)
+	sv.RunService.running = false
+	local commits = history.commits
+	rods(g, sv)
+	check("rods on Astra's state: installed in one undo step", not refused() and history.commits == commits + 1)
+	check("rods: EconomyService / Config / MoneyStore = the rods sources", svc.Source == RODS.EconomyService
+		and svc.Config.Source == RODS.Config and svc.MoneyStore.Source == RODS.MoneyStore)
+	check("rods: RodShopServer + RodFishingSystem patched", sc.RodShopServer.Source == RODS.Shop and sc.RodFishingSystem.Source == RODS.Fishing)
+	check("rods: EconomyService.Rods added, tagged", svc:FindFirstChild("Rods") and svc.Rods.Source == RODS.Rods and svc.Rods:GetAttribute("EconomyOwned") == true)
+	check("rods: other core modules untouched", svc.Ledger.Source == CUR.Ledger and svc.Offers.Source == CUR.Offers)
+	local rb = sv.ServerStorage:FindFirstChild("EconomyRodsBackup")
+	check("rods: backup = 5 changes + 1 add", rb and #rb:GetChildren() == 6)
+	local kept = true
+	for name, tree in pairs(backups) do
+		kept = kept and subtree(sv.ServerStorage[name]) == tree
+	end
+	check("rods: every earlier backup untouched", kept)
+	local after = snapshot(g)
+	rods(g, sv)
+	check("rods twice: refused", refused() and snapshot(g) == after)
+	earningsBack(g, sv)
+	check("earnings rollback refused while rods are in", refused() and snapshot(g) == after)
+	variantsBack(g, sv)
+	check("variants rollback refused while rods are in", refused() and snapshot(g) == after)
+	sc.RodShopServer.Source ..= "\n-- hand edit"
+	local edited = snapshot(g)
+	rodsBack(g, sv)
+	check("rods rollback over an edited RodShopServer: refused", refused() and snapshot(g) == edited)
+	sc.RodShopServer.Source = RODS.Shop
+	rodsBack(g, sv)
+	check("rods rollback: exactly the state before (Rods module removed)", not refused() and snapshot(g) == before and svc:FindFirstChild("Rods") == nil)
+end
+do
+	-- without earnings (EconomyService still the sales version): refused
+	local g, sv = astraPlace()
+	upgradeAq(g, sv)
+	installSales(g, sv)
+	variants(g, sv)
+	local before = snapshot(g)
+	rods(g, sv)
+	check("rods without earnings: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraNow()
+	sv.ServerScriptService.EconomyService.MoneyStore.Source ..= "\n-- tuned"
+	local before = snapshot(g)
+	rods(g, sv)
+	check("rods over an edited MoneyStore: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
+do
+	local g, sv = astraNow()
+	local stray = new("ModuleScript", "Rods")
+	stray.Source = "return {}"
+	stray.Parent = sv.ServerScriptService.EconomyService
+	local before = snapshot(g)
+	rods(g, sv)
+	check("rods when an EconomyService.Rods already exists: refused, kept", refused() and snapshot(g) == before and stray.Source == "return {}")
+end
+do
+	-- the legacy (pre-offers) RodShopServer isn't what Studio has: refused
+	local g, sv, _, sc = astraNow()
+	sc.RodShopServer.Source = LIVE.RodShopServer
+	local before = snapshot(g)
+	rods(g, sv)
+	check("rods over the legacy RodShopServer: refused", refused() and snapshot(g) == before)
+end
+
 -- the old baseline (no HarpoonT in the despawn guard) is not what Studio has: refused
 do
 	local g, sv, _, sc = astraPlace()
@@ -1332,6 +1416,10 @@ def main() -> int:
         if (ROOT / frozen).read_text() != git_show(frozen, SALES_RELEASE):
             print(f"FAIL: {frozen} differs from the {SALES_RELEASE} sales release")
             return 1
+    for frozen in EARNINGS_FROZEN:
+        if (ROOT / frozen).read_text() != git_show(frozen, EARNINGS_RELEASE):
+            print(f"FAIL: {frozen} differs from the {EARNINGS_RELEASE} earnings release")
+            return 1
     uninstaller = (ROOT / "UninstallRodOffers.lua").read_text()
     # the rod-offers install Astra has in Studio: the REAL 8cb2554 scripts
     old_installer = git_show("InstallRodOffers.lua")
@@ -1355,8 +1443,9 @@ def main() -> int:
     for n in ("AquariumCycleServer", "AquariumEconomy"):
         tables += f"\t{n} = {lua_string(git_show(f'server/{n}.luau', AQUARIUM_V1, aq))},\n"
     tables += f"\tAquariumTankClient = {lua_string(git_show('client/AquariumTankClient.client.luau', AQUARIUM_V1, aq))},\n}}\n"
+    # what InstallEarnings writes (the 0829fc9 release, installed)
     tables += "local EARN = {\n" + "".join(
-        f"\t{k} = {lua_string((ROOT / v).read_text())},\n" for k, v in (("EconomyService", "src/server/EconomyService.luau"), ("EconomyClient", "src/client/EconomyClient.client.luau"))
+        f"\t{k} = {lua_string(git_show(v, EARNINGS_RELEASE))},\n" for k, v in (("EconomyService", "src/server/EconomyService.luau"), ("EconomyClient", "src/client/EconomyClient.client.luau"))
     ) + "}\n"
     tables += "local MONEYHUD = {\n" + "".join(
         f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (("Live", live / "MoneyController.lua"), ("New", ROOT / "src" / "client" / "MoneyController.client.luau"))
@@ -1366,6 +1455,15 @@ def main() -> int:
         f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (("Server", pn / "studio" / "AquariumCycleServer.patched.from-v12.lua"), ("Client", pn / "src" / "AquariumPanelClient.client.luau"))
     ) + "}\n"
     tables += f"local RATE = {{ Module = {lua_string((ROOT.parent / 'fish-jump' / 'studio' / 'jump-rate' / 'FishJump.luau').read_text())} }}\n"
+    rods_files = {
+        "EconomyService": ROOT / "src/server/EconomyService.luau",
+        "Config": ROOT / "src/core/Config.luau",
+        "MoneyStore": ROOT / "src/core/MoneyStore.luau",
+        "Rods": ROOT / "src/core/Rods.luau",
+        "Shop": ROOT / "studio/rods/RodShopServer.lua",
+        "Fishing": ROOT / "studio/rods/RodFishingSystem.lua",
+    }
+    tables += "local RODS = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in rods_files.items()) + "}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1454,6 +1552,8 @@ def main() -> int:
         + wrap("runPanelBack", (ROOT.parent / "aquarium-panel" / "RollbackAquariumPanel.lua").read_text())
         + wrap("runJumpRate", (ROOT.parent / "fish-jump" / "InstallJumpRate.lua").read_text())
         + wrap("runJumpRateBack", (ROOT.parent / "fish-jump" / "RollbackJumpRate.lua").read_text())
+        + wrap("runRods", (ROOT / "InstallRods.lua").read_text())
+        + wrap("runRodsBack", (ROOT / "RollbackRods.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

@@ -59,6 +59,7 @@ rollback.
 | 11 | [`fish-jump/InstallHarpoonBlend.lua`](fish-jump/README.md#harpoon-mid-jump-fix-installharpoonblendlua) | No snap when a jumping fish is harpooned | 6; **after 8** if used | `HarpoonBlendBackup` |
 | 12 | [`aquarium-panel/InstallAquariumPanel.lua`](aquarium-panel/README.md) | One custom aquarium panel at the loader pad (Release Fish + one upgrade card) instead of three default prompts; upgrades shown as not available | aquarium v1.2; **the released row 3 refuses after it** | `AquariumPanelBackup` |
 | 13 | [`fish-jump/InstallJumpRate.lua`](fish-jump/README.md#jump-more-often-installjumpratelua) | Fish jump about twice as often (periods 16–28 s → 8–14 s) | 6 | `FishJumpRateBackup` |
+| 14 | [`economy/InstallRods.lua`](economy/README.md#rods-milestone-1-installrodslua) | Rods owned for good (saved with Money), equipped, faster bites; paid shop stays closed | 4 and 9 | `EconomyRodsBackup` |
 
 "After X" matters because both change the same script. The later installer
 knows X's version; the earlier one doesn't, so running them the other way
@@ -66,12 +67,13 @@ round is refused, with nothing changed.
 
 ## Rollback order
 
-Exactly the reverse: **13 → 1**, then, if you ever need to go further,
+Exactly the reverse: **14 → 1**, then, if you ever need to go further,
 `economy/RollbackAquariumV12.lua` and `economy/UninstallRodOffers.lua`.
 Row 2 (Money HUD) touches nothing else, so its rollback works at any time.
 
 | # | Rollback file |
 |---|---|
+| 14 | `economy/RollbackRods.lua` (before 4 and 9) |
 | 13 | `fish-jump/RollbackJumpRate.lua` (before 6) |
 | 12 | `aquarium-panel/RollbackAquariumPanel.lua` (independent of 4–11) |
 | 11 | `fish-jump/RollbackHarpoonBlend.lua` |
@@ -105,7 +107,7 @@ Every way a client can reach the server, in the scripts in this repo:
 | `PressFishButton` (RodFishingSystem) | 0.6 s per-player cooldown, within 80 studs, only when rods are ready, only with a free aquarium spot. Rod fish must be bought; nothing is free |
 | `Economy.OfferAction` (buy a rod fish) | rate-limited per player; the server checks the offer, the caster, the expiry, alive, within reach of the stand, and Money, all in one step with no yields between |
 | Aquarium Release / upgrade prompts | the server checks alive and in range (prompt distance + slack) before acting or charging. With the panel (row 12) they are Custom-style prompts; upgrade prompts exist only with a currency binding |
-| `RodShopServer` buy | charged through EconomyService; shop closed until rods do something |
+| `RodShopServer` buy | charged through EconomyService only (row 14: fail closed, alive, loaded, near the shop, in stock, one at a time, saved before it counts); paid shop closed until validated |
 | Net pad (`Touched`) | one shared lift cycle (~2.6 s), weight limit, refuses while the grinder is backed up |
 | Truck carry / delivery | server-side, from the player's position; carriers are never paid, and each piece pays its owner once |
 | `Economy.Notice`, `Economy.Earned` | server → client only; the client ignores malformed values |
@@ -131,8 +133,10 @@ the fish is ground, and only its owner is paid, once.
   - Options: save the levels, or sell them as a per-session boost and say so
     in the prompt. Nothing here picks a policy; until one is chosen, these
     upgrades are **not production-ready**.
-- **Rod shop:** what owning a rod does, and whether it's saved (it stays
-  closed until then).
+- **Rod shop (row 14 coded):** rods are saved, equipped and speed up bites;
+  the paid shop stays closed until it's validated in Studio with API
+  access. Still open: the shop UI patch (needs `RodShopController`'s
+  source) and swapping the dock rod visuals.
 - **HUD multiplier labels** (Rebirth, Robux, Friends, VIP): the Money HUD
   hides them because their inputs don't exist, and no payout applies any
   multiplier. If those systems come, their payouts need a design first.

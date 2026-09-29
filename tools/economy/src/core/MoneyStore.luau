@@ -18,8 +18,13 @@
 --     AND the transform wrote this server's value.
 --   * Debits/credits are synchronous (no yields), so a check-and-debit can't
 --     interleave with another purchase.
+--   * v2: the record may carry `rods` (see Rods). Loaded with the money, saved
+--     with the money in the same write. Every other field (and a newer
+--     schema version) is kept on every save. A rod purchase debits and saves
+--     at once: if that write fails, the rod and the money are both undone.
 
 local Config = require(script.Parent.Config)
+local Rods = require(script.Parent.Rods)
 
 export type Store = {
 	update: (key: string, transform: (old: any) -> any) -> any,
@@ -36,6 +41,10 @@ type Session = {
 	dirty: boolean,
 	saving: boolean,
 	granted: boolean, -- this session created the record with the starting grant
+	rods: Rods.Profile, -- Basic only until loaded
+	rodsWritable: boolean, -- false: not loaded, or the saved field isn't valid (left untouched)
+	rodsRev: number, -- bumped on every rod change (dirty tracking across saves)
+	buying: boolean, -- a rod purchase is being saved
 }
 
 local MoneyStore = {}
@@ -103,6 +112,10 @@ function MoneyStore.begin(self: MoneyStore, userId: number)
 			dirty = false,
 			saving = false,
 			granted = false,
+			rods = Rods.fresh(),
+			rodsWritable = false,
+			rodsRev = 0,
+			buying = false,
 		}
 	end
 end
@@ -132,6 +145,7 @@ function MoneyStore.attemptLoad(self: MoneyStore, userId: number): (string, stri
 				money = Config.StartingGrant,
 				granted = true,
 				lock = { job = self.jobId, t = now },
+				rods = Rods.save(Rods.fresh(), nil),
 			}
 			return loaded
 		end
@@ -183,6 +197,7 @@ function MoneyStore.attemptLoad(self: MoneyStore, userId: number): (string, stri
 	if (decision == "new" or decision == "loaded") and loaded then
 		s.balance = loaded.money
 		s.granted = decision == "new"
+		s.rods, s.rodsWritable = Rods.load(loaded.rods)
 		s.state = "Ready"
 		if s.pending > 0 then
 			s.balance = math.min(Config.MaxBalance, s.balance + s.pending)
@@ -271,16 +286,22 @@ function MoneyStore.save(self: MoneyStore, userId: number, release: boolean): (b
 	s.saving = true
 	local decision: string? = nil
 	local written: number? = nil
+	local writtenRev: number? = nil
 	local ok, err = pcall(self.store.update, MoneyStore.key(userId), function(old: any): any
 		if type(old) ~= "table" or type(old.lock) ~= "table" or old.lock.job ~= self.jobId then
 			decision = "lost"
 			return nil
 		end
-		local out = copy(old)
-		out.v = Config.SchemaVersion
+		local out = copy(old) -- every field this build doesn't manage is kept
+		-- never lower a newer build's schema number
+		out.v = if type(old.v) == "number" and old.v > Config.SchemaVersion then old.v else Config.SchemaVersion
 		out.money = s.balance
+		if s.rodsWritable then
+			out.rods = Rods.save(s.rods, old.rods)
+		end
 		out.lock = if release then nil else { job = self.jobId, t = self.now() }
 		written = s.balance
+		writtenRev = s.rodsRev
 		decision = "saved"
 		return out
 	end)
@@ -295,11 +316,111 @@ function MoneyStore.save(self: MoneyStore, userId: number, release: boolean): (b
 	if decision ~= "saved" or written == nil then
 		return false, "notWritten"
 	end
-	s.dirty = s.balance ~= written
+	-- anything changed while the write was in flight is saved next time
+	s.dirty = s.balance ~= written or s.rodsRev ~= writtenRev
 	if release then
 		s.state = "Closed"
 	end
 	return true, nil
+end
+
+------------------------------------------------------------ rods (v2)
+
+-- The player's rods, or nil while their money isn't loaded (a copy).
+function MoneyStore.rods(self: MoneyStore, userId: number): Rods.Profile?
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return nil
+	end
+	return Rods.copy(s.rods)
+end
+
+-- The rod a cast uses right now: the equipped one, else Basic.
+function MoneyStore.rodStats(self: MoneyStore, userId: number): Rods.Rod
+	local s = self.sessions[userId]
+	return Rods.stats(if s and s.state == "Ready" then s.rods else nil)
+end
+
+local function rodsChanged(s: Session)
+	s.rodsRev += 1
+	s.dirty = true
+end
+
+-- Equips an owned rod. Synchronous; never charges. Saved with the next save.
+-- Returns (ok, reason): reason "notLoaded" | "busy" | "unknown" | "notOwned"
+-- | "equipped" (already).
+function MoneyStore.equipRod(self: MoneyStore, userId: number, id: any): (boolean, string?)
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return false, "notLoaded"
+	end
+	if s.buying then
+		return false, "busy"
+	end
+	local d = Rods.decide(s.rods, id)
+	if d == "buy" then
+		return false, "notOwned"
+	elseif d ~= "equip" then
+		return false, d
+	end
+	s.rods.equipped = id
+	s.rods.keepEquipped = nil
+	rodsChanged(s)
+	return true, nil
+end
+
+-- Buys (and equips) a rod: takes its price and WRITES the new balance and
+-- the rod together in one store update before reporting success. If that
+-- write fails, the money and the rod are both put back. YIELDS (one store
+-- call). Refuses while a save is running: the caller waits for isSaving()
+-- to clear, then calls (no yield in between). Returns (ok, reason): reason
+-- "notLoaded" | "rodsUnavailable" | "busy" | "unknown" | "owned" | "funds"
+-- | "badAmount" | "notSaved" (charged nothing).
+function MoneyStore.buyRod(self: MoneyStore, userId: number, id: any): (boolean, string?)
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return false, "notLoaded"
+	end
+	if not s.rodsWritable then
+		return false, "rodsUnavailable"
+	end
+	if s.buying or s.saving then
+		return false, "busy"
+	end
+	local d = Rods.decide(s.rods, id)
+	if d ~= "buy" then
+		return false, if d == "equip" or d == "equipped" then "owned" else d
+	end
+	local rod = Rods.get(id) :: Rods.Rod
+	if rod.Price > 0 then
+		local paid, why = self:tryDebit(userId, rod.Price)
+		if not paid then
+			return false, why
+		end
+	end
+	local before = Rods.copy(s.rods)
+	s.rods.owned[rod.Id] = true
+	s.rods.equipped = rod.Id
+	s.rods.keepEquipped = nil
+	rodsChanged(s)
+	s.buying = true
+	local saved, why = self:save(userId, false)
+	s.buying = false
+	if saved then
+		return true, nil
+	end
+	-- not written: undo both (credits that arrived meanwhile stay)
+	s.rods = before
+	rodsChanged(s)
+	if s.state == "Ready" then
+		s.balance = math.min(Config.MaxBalance, s.balance + rod.Price)
+	end
+	return false, "notSaved: " .. tostring(why)
+end
+
+function MoneyStore.isBuying(self: MoneyStore, userId: number): boolean
+	local s = self.sessions[userId]
+	return s ~= nil and s.buying
 end
 
 function MoneyStore.isSaving(self: MoneyStore, userId: number): boolean

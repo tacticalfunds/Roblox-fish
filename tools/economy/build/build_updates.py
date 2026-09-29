@@ -45,6 +45,9 @@ AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "Sh
 # later installs still can't be skipped - they change scripts it checks.)
 LATER_THAN_SALES = ["EconomyUpgradesBackup"]
 LATER_THAN_UPGRADES = ["EconomyVariantsBackup"]
+# InstallEarnings as installed by Astra (0829fc9): its sources are read from
+# that commit, so later milestones (rods, ...) don't change the release.
+EARNINGS_RELEASE = "0829fc9"
 # economy milestones after the sales release (each its own installer)
 LATER_THAN_EARNINGS: list[str] = []
 LATER_THAN_BOT = ["EconomyMeatGlowBackup"]  # tools/fish-variants InstallMeatGlow patches BotSystem too
@@ -339,7 +342,7 @@ def earnings() -> list[str]:
     ):
         changes.append((
             {"key": key, "where": where, "class": "LocalScript" if key == "EconomyClient" else "ModuleScript", "tag": "EconomyOwned"},
-            [("sales", git_show(SALES_RELEASE, f"tools/economy/{path}"), (ROOT / path).read_text())],
+            [("sales", git_show(SALES_RELEASE, f"tools/economy/{path}"), git_show(EARNINGS_RELEASE, f"tools/economy/{path}"))],
         ))
     # the core modules it relies on, exactly as the sales release left them
     unchanged = [
@@ -464,6 +467,85 @@ of every other install here.
     return keys
 
 
+def rods() -> list[str]:
+    """Rods milestone 1: saved rod ownership + equip + faster bites. On top of
+    what Astra installed: earnings (EconomyService 0829fc9), the sales-release
+    core, rod offers' RodShopServer and the variants RodFishingSystem."""
+    import make_rods
+
+    make_rods.main()
+    core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
+    changes = [
+        (
+            {"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("earnings", git_show(EARNINGS_RELEASE, "tools/economy/src/server/EconomyService.luau"), (ROOT / "src/server/EconomyService.luau").read_text())],
+        ),
+        (
+            {"key": "Config", "where": "ServerScriptService/EconomyService/Config", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("sales", git_show(SALES_RELEASE, core("Config")), (ROOT / "src/core/Config.luau").read_text())],
+        ),
+        (
+            {"key": "MoneyStore", "where": "ServerScriptService/EconomyService/MoneyStore", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("sales", git_show(SALES_RELEASE, core("MoneyStore")), (ROOT / "src/core/MoneyStore.luau").read_text())],
+        ),
+        (
+            {"key": "RodShopServer", "where": "script:RodShopServer", "class": "Script"},
+            [("rodoffers", git_show(ROD_OFFERS, "tools/economy/studio/rod-offers/RodShopServer.lua"), (ROOT / "studio/rods/RodShopServer.lua").read_text())],
+        ),
+        (
+            {"key": "RodFishingSystem", "where": "script:RodFishingSystem", "class": "Script"},
+            [("variants", make_rods.BASE.read_text(), make_rods.OUT.read_text())],
+        ),
+    ]
+    # the other core modules EconomyService requires, exactly as installed
+    unchanged = []
+    for name in ("Pricing", "Ledger", "Offers", "PieceTags", "Sales"):
+        src = git_show(SALES_RELEASE, core(name))
+        assert src == (ROOT / "src" / "core" / f"{name}.luau").read_text(), name
+        unchanged.append(({"key": name, "where": f"ServerScriptService/EconomyService/{name}", "class": "ModuleScript", "tag": "EconomyOwned"}, src))
+    adds = [{"where": "ServerScriptService/EconomyService", "name": "Rods", "class": "ModuleScript", "source": (ROOT / "src/core/Rods.luau").read_text()}]
+    keys = write_pair_v2(
+        "InstallRods.lua",
+        "RollbackRods.lua",
+        """
+Rods, milestone 1: rods are OWNED for good, EQUIPPED, and make bites faster.
+  * five rods (ReplicatedStorage.Rods): Basic FishingRod1 (free, always
+    owned), Tiger FishingRod4 150, Coral FishingRod3 600, Tide FishingRod2
+    2000, Magma FishingRod5 7500. Bite wait x1 / .85 / .75 / .65 / .55
+    (initial tuning, not measured pacing). Legacy Price/Tier/Title ignored.
+  * saved in the player's Money record (schema v2: v1 records load with
+    their money untouched; unknown fields and newer versions are kept; a
+    record that failed to load is never written). A purchase saves the new
+    balance AND the rod in ONE write before it counts; if that write fails
+    nothing is charged.
+  * RodShopServer: an owned rod is equipped (never charged again); buying
+    needs the shop open, the player alive, loaded, near the Pet Shop, the rod
+    in stock (Basic / Tiger always). FAIL CLOSED: no EconomyService, no sale;
+    the old direct money-writing fallback is gone.
+  * RodFishingSystem: each accepted press uses the PRESSER's equipped rod for
+    every rod it casts (bite wait x BiteWait, never below 2 s so the aquarium
+    timing holds). Another player's equip never changes a cast in progress.
+  * PAID SHOP STAYS CLOSED (Config.RodShopOpen = false). For a Studio
+    validation with real DataStore access, set the RodShopOpen attribute on
+    ReplicatedStorage.Economy. Equipping owned rods always works.
+Changes EconomyService, its Config and MoneyStore, RodShopServer and
+RodFishingSystem; adds EconomyService.Rods.
+Requires: earnings (EconomyEarningsBackup) and fish variants
+(EconomyVariantsBackup), each checked by exact source.
+""",
+        "EconomyRodsBackup",
+        [["EconomyEarningsBackup"], ["EconomyVariantsBackup"]],
+        ["EconomyRodsBackup"],
+        [],
+        changes,
+        unchanged,
+        adds,
+        ROOT,
+    )
+    assert keys == ["EconomyService", "Config", "MoneyStore", "RodShopServer", "RodFishingSystem"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -473,6 +555,7 @@ def main() -> None:
     earnings()
     bot_recovery()
     money_hud()
+    rods()
 
 
 if __name__ == "__main__":

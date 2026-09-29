@@ -462,6 +462,8 @@ local DEFAULTS = {
 		RequiresLineOfSight = true,
 		ObjectText = "",
 		ActionText = "",
+		KeyboardKeyCode = Enum.KeyCode.E, -- Roblox's defaults
+		GamepadKeyCode = Enum.KeyCode.ButtonX,
 	},
 	Humanoid = { Health = 100, MaxHealth = 100 },
 	Part = {
@@ -949,10 +951,16 @@ function Players:GetPlayerByUserId(id)
 	return nil
 end
 local dsData = {}
+-- dsHooks.before(key): runs at the start of every UpdateAsync (a sim can
+-- task.wait() in it for latency, or error() for a failed request)
+local dsHooks = {}
 services.DataStoreService = {
 	GetDataStore = function()
 		return {
 			UpdateAsync = function(_, key, fn)
+				if dsHooks.before then
+					dsHooks.before(key)
+				end
 				local r = fn(dsData[key])
 				if r ~= nil then
 					dsData[key] = r
@@ -1181,7 +1189,7 @@ end
 ------------------------------------------------------------ economy (as InstallRodOffers creates it)
 
 local root, Economy
-local CORE = { "Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales" }
+local CORE = { "Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales", "Rods" }
 local function installEconomy()
 	current = "server"
 	root = new("Folder", "Economy")

@@ -26,7 +26,10 @@ Config.MaxBalance = 1_000_000_000_000
 
 Config.DataStoreName = "FishEconomy_v1"
 Config.KeyPrefix = "player_"
-Config.SchemaVersion = 1
+-- 2: adds the optional `rods` field ({ owned = { [rodId] = true }, equipped
+-- = rodId }). v1 records load unchanged (Basic only); every save keeps every
+-- field it doesn't manage, and never lowers a newer version number.
+Config.SchemaVersion = 2
 Config.AutosaveSeconds = 60
 -- Session lock: a record locked by another server is not loaded until the
 -- lock is older than this (the owning server refreshes it on every save).
@@ -124,9 +127,32 @@ Config.HarpoonOwnerAttribute = "OwnerUserId"
 
 ------------------------------------------------------------ rod shop
 
--- RodShopServer charges through this service. Rod ownership is not yet
--- linked to rod stats or saved, so the shop stays closed until that exists.
+-- RodShopServer charges through this service. PAID purchases stay closed
+-- until the saved-ownership path is validated in Studio with real DataStore
+-- access: set true here, or (for a test) the RodShopOpen attribute on
+-- ReplicatedStorage.Economy. Equipping a rod you own always works.
 Config.RodShopOpen = false
+
+-- The five rods (ReplicatedStorage.Rods, by model name). Owned rods are
+-- saved in the player's Money record; one copy each, bought once. BiteWait
+-- multiplies the random wait before a bite (lower = faster). Legacy
+-- Tier/Title/Price attributes on the rod models are ignored.
+-- INITIAL easy-early-game tuning, NOT measured pacing.
+Config.Rods = {
+	{ Id = "FishingRod1", Key = "Basic", Name = "Basic Rod", Price = 0, BiteWait = 1 },
+	{ Id = "FishingRod4", Key = "Tiger", Name = "Tiger Rod", Price = 150, BiteWait = 0.85 },
+	{ Id = "FishingRod3", Key = "Coral", Name = "Coral Rod", Price = 600, BiteWait = 0.75 },
+	{ Id = "FishingRod2", Key = "Tide", Name = "Tide Rod", Price = 2000, BiteWait = 0.65 },
+	{ Id = "FishingRod5", Key = "Magma", Name = "Magma Rod", Price = 7500, BiteWait = 0.55 },
+}
+-- Every player owns this one (free, never stored as bought) and falls back
+-- to it whenever the equipped rod isn't owned or known.
+Config.BaseRod = "FishingRod1"
+-- Always in stock (early progression is never blocked by a random roll);
+-- the other rods keep RodShopServer's per-player restock.
+Config.AlwaysStockedRods = { "FishingRod1", "FishingRod4" }
+-- Seconds between rod actions (buy / equip) per player.
+Config.RodActionCooldown = 0.5
 
 ------------------------------------------------------------ checks
 
@@ -153,6 +179,23 @@ function Config.check(firstTankUpgradeCost: number?): (boolean, string?)
 	for _, band in ipairs(Config.OfferPrice.Factors) do
 		if band.Factor <= 0 or band.Factor >= 1 then
 			return false, "offer price factor must be in (0, 1)"
+		end
+	end
+	local seen, prev = {}, 1
+	for i, rod in ipairs(Config.Rods) do
+		if type(rod.Id) ~= "string" or seen[rod.Id] then
+			return false, "rod ids must be unique strings"
+		end
+		seen[rod.Id] = true
+		if type(rod.Price) ~= "number" or rod.Price < 0 or rod.Price ~= math.floor(rod.Price) then
+			return false, "rod " .. rod.Id .. ": price must be a whole number >= 0"
+		end
+		if not (type(rod.BiteWait) == "number" and rod.BiteWait > 0 and rod.BiteWait <= 1 and rod.BiteWait <= prev) then
+			return false, "rod " .. rod.Id .. ": BiteWait must be in (0, 1] and never worse than the rod before"
+		end
+		prev = rod.BiteWait
+		if (i == 1) ~= (rod.Id == Config.BaseRod) or (i == 1 and rod.Price ~= 0) then
+			return false, "the first rod must be the free BaseRod"
 		end
 	end
 	return true, nil

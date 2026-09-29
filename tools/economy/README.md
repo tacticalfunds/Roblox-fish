@@ -18,6 +18,7 @@ reviews and installs. Nothing here touches Studio on its own.
 | Rare Silver / Gold variants (`a92a678`) | done | **yes**: `tools/fish-variants/InstallFishVariants.lua` |
 | Earnings popup (`561c4d1`; pending / balance-limit amounts fixed later): "+$N" for the owner when their meat sells | done | **yes**: `InstallEarnings.lua` (after sales; after upgrades if used) |
 | Blender Bot recovery (`e933db6`): an error mid-trip keeps the piece | done | **yes**: `InstallBotRecovery.lua` (after sales; before meat glow) |
+| Rods milestone 1: saved ownership + equip + faster bites (paid shop still closed) | done, needs Studio validation | **yes**: `InstallRods.lua` (after earnings + variants) |
 
 **All installers in one place, in order, with rollbacks: [`tools/INSTALL_GUIDE.md`](../INSTALL_GUIDE.md).**
 
@@ -432,6 +433,120 @@ undo step. Nothing server side. Independent of every other installer.
 | M4 | Look at the multiplier labels | Hidden (their inputs don't exist); nothing claims a bonus |
 | M5 | Edit mode: `RollbackMoneyHud` | Both scripts are the old source again |
 
+## Rods, milestone 1 (`InstallRods.lua`)
+
+Rods are **owned for good**, **equipped**, and make **bites come faster**.
+They are saved with the player's Money.
+
+| Rod | Model | Price | Bite wait |
+|---|---|---|---|
+| Basic | `FishingRod1` | free, always owned | ×1 |
+| Tiger | `FishingRod4` | 150 | ×0.85 |
+| Coral | `FishingRod3` | 600 | ×0.75 |
+| Tide | `FishingRod2` | 2000 | ×0.65 |
+| Magma | `FishingRod5` | 7500 | ×0.55 |
+
+These numbers are **initial easy-early-game tuning, not measured pacing**
+(`Config.Rods`). The legacy `Price` / `Tier` / `Title` attributes on the rod
+models are ignored; while the server runs, each model's `Price` attribute is
+set to the table's price, and `Benefit` holds text like "Bites 45% faster".
+Fish sale and offer prices and rarity odds are unchanged.
+
+**Shop (`RodShopServer`, `BuyRod(rodName)`):**
+
+- **Owned rod:** equipped. Never charged again, and allowed from anywhere.
+- **Unowned rod:** bought and equipped. The server checks that:
+  - the paid shop is open
+  - the player is in this server, alive and their Money has loaded
+  - they are within reach of `Workspace["Pet Shop"].ShopPrompt` (the open
+    prompt's 14 studs + 16)
+  - the rod is in stock: Basic and Tiger always are; the others keep the
+    per-player restock roll, and owned rods always show
+  - one action at a time, with a 0.5 s cooldown
+- **Fail closed:** without a running EconomyService nothing is sold. The
+  old fallback that wrote `leaderstats.Money` / a `Money` attribute directly
+  is gone.
+- **Paid shop stays CLOSED** (`Config.RodShopOpen = false`) until the saved
+  path is validated. For a Studio validation **with Studio API access
+  enabled** (the in-memory fallback is not proof of persistence), set the
+  `RodShopOpen` attribute on `ReplicatedStorage.Economy` to true.
+- **Display attributes:** the server publishes `RodOwned_<id> = 1` and
+  `EquippedRod` for the UI. It never reads them back.
+
+**Casting (`RodFishingSystem`):**
+
+- Each accepted press reads the **presser's** equipped rod once and uses it
+  for every rod that press casts.
+- A later equip by anyone, including the presser, never changes a cast in
+  progress.
+- The wait before a bite is the old random 3–9 s × the rod's bite wait,
+  **never below 2 s**, because the aquarium hooks a fish no earlier than
+  2.5 s after the press. Measured in the sim, press to bite: Magma averages
+  3.8 s (2.2–5.2), Basic 6.0 s (3.3–8.7).
+- Immediate cast, aquarium reservations, offers, variants, dwell and the
+  grinder fallback are unchanged.
+
+### Saved data (schema v2) and migration risks
+
+The Money record gains an optional
+`rods = { owned = { [rodId] = true }, equipped = rodId }`; Basic is never
+stored.
+
+- **v1 records** load with their money untouched and Basic equipped.
+- **Every save keeps what it doesn't manage:** every other field, rod IDs
+  this build doesn't know (and a newer build's equipped rod), unknown
+  sub-fields of `rods`, and a newer schema number.
+- **A rods field that isn't valid data** is left untouched. The player
+  plays with Basic and can't buy rods that session.
+- **A record that failed to load is never written** (unchanged).
+- **A purchase** debits in memory, then writes the new balance **and** the
+  rod in **one** UpdateAsync before reporting success. If that write fails
+  or the session lock is lost, the money and the rod are both undone
+  ("you were not charged"). Credits that arrived meanwhile stay.
+- **Equipping** is saved with the next autosave (60 s) or on leave. A
+  server crash can lose an equip choice, never a purchase.
+- **Risks to know:**
+  1. **Ambiguous DataStore error:** if a write errors but actually
+     committed, the next save writes the undone state (money back, rod not
+     owned). If the server crashes before that save, the player keeps the
+     rod they paid for. Either way money and rod always match.
+  2. **Old servers:** a server still running the released v1 MoneyStore
+     keeps the `rods` field (it copies unknown fields) but writes `v = 1`.
+     The new code reads that fine.
+  3. **Rollback** (`RollbackRods`) puts the v1 MoneyStore back. Saved rods
+     stay in the records (v1 copies them) and come back if this is
+     reinstalled.
+  4. **Studio test clients** (negative UserIds) always use a memory store.
+     Studio's in-memory fallback is **not** persistence proof.
+
+### Not in this milestone (reported)
+
+- **Shop UI:** the existing `StarterGui.ScreenGui.Buttons.Frames.RodShopFrame.RodShopController`
+  (5977 chars) isn't in the repo, so it isn't changed. It gets the real
+  prices through the `Price` attributes, and `BuyRod` answers "Equipped
+  Tiger Rod" / "Bought and equipped Tiger Rod". It can't show
+  **Owned / Equipped / benefit** yet. To patch that card (`CarTemplate`:
+  Price, BuyButton, Mutation) with its exact source as the refusal check,
+  I need the controller's source.
+- **Rod visuals:** the five dock rods stay the Basic model. Swapping them
+  per cast would have to keep `LineTip`, `RestPivot`, the stand position
+  and the client's cached models, so it's left out. Each cast carries
+  `CastRod = <rod id>` on the dock rod model as a hook for a later visual
+  step.
+
+### Rods checklist (Studio, API access ON)
+
+| # | Do | Expect |
+|---|---|---|
+| R1 | Play | `EquippedRod = FishingRod1`, `RodOwned_FishingRod1 = 1` on your player; Money unchanged from before |
+| R2 | Shop (closed): press Buy on Tiger | "The rod shop opens soon"; nothing charged |
+| R3 | Set `ReplicatedStorage.Economy.RodShopOpen = true`; buy Tiger at the shop | −150, "Bought and equipped Tiger Rod", `EquippedRod = FishingRod4` |
+| R4 | Buy Tiger again / buy Basic | Equips it, no charge |
+| R5 | Walk far away, buy Coral | "Walk back to the rod shop to buy" |
+| R6 | Press the big button | Bites come noticeably sooner than with Basic |
+| R7 | Stop, Play again (real DataStore) | Money, owned rods and equipped rod are back |
+| R8 | Two clients: A (Tiger) presses, then B equips Basic | A's cast keeps Tiger timing; B's next press uses Basic |
+
 ## Blender Bot recovery (`InstallBotRecovery.lua`)
 
 **The bug:** the Blender Bot's loop had no error handling. If anything
@@ -539,9 +654,9 @@ changes; the rest re-check behaviour that already worked.
 ## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21, earnings 47, money HUD 41, bot 14, meat glow 21, harpoon blend 15 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 255 checks
+python3 tools/economy/tests/run_tests.py path/to/luau          # 335 checks (rods 73)
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21, earnings 47, money HUD 41, rods 58, panel 47, bot 14, meat glow 21, harpoon blend 15 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 307 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

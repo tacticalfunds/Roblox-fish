@@ -10,6 +10,9 @@
 --   * charging (aquarium upgrades, rod shop, rod-fish offers)
 --   * tells a piece's owner when it sells (Economy.Earned: the "+$" popup;
 --     display only - the payment itself is the ledger settlement)
+--   * rods (child module Rods): owned / equipped rods saved in the same
+--     record as the money; buying saves money + rod in one write before it
+--     counts; RodFishingSystem reads the presser's rod per cast (rodStats)
 --
 -- Every patched live script loads this with FindFirstChild + pcall(require)
 -- and calls start(); if it is missing or fails, those scripts behave
@@ -33,6 +36,7 @@ local MoneyStore = require(script.MoneyStore)
 local PieceTags = require(script.PieceTags)
 local Sales = require(script.Sales)
 local Offers = require(script.Offers)
+local Rods = require(script.Rods)
 
 local M = {}
 M.Config = Config
@@ -162,6 +166,7 @@ local function showMoney(player: Player)
 	end)
 	moneyValues[player] = v
 	v.Parent = stats
+	M._publishRods(player) -- rods load with the money
 end
 
 ------------------------------------------------------------ load / save
@@ -474,8 +479,138 @@ function M.refund(player: Player, amount: number, reason: string)
 	end
 end
 
+-- Paid rod purchases: Config.RodShopOpen, or (for a Studio validation) the
+-- RodShopOpen attribute on ReplicatedStorage.Economy. Equipping never needs it.
 function M.rodShopOpen(): boolean
-	return startOk and Config.RodShopOpen == true
+	return startOk and (Config.RodShopOpen == true or root:GetAttribute("RodShopOpen") == true)
+end
+
+------------------------------------------------------------ rods (saved ownership)
+
+M.Rods = Rods
+local lastRodAction: { [Player]: number } = {}
+local rodBusy: { [Player]: boolean } = {}
+M.onPlayerLeaving(function(player: Player)
+	lastRodAction[player] = nil
+	rodBusy[player] = nil
+end)
+
+-- Display only (the shop UI reads these; the server never reads them back):
+-- RodOwned_<id> = 1 for owned rods, EquippedRod = the rod casts use.
+function M._publishRods(player: Player)
+	local profile = money:rods(player.UserId)
+	if not profile or not player.Parent then
+		return
+	end
+	for _, rod in ipairs(Rods.list()) do
+		player:SetAttribute("RodOwned_" .. rod.Id, if profile.owned[rod.Id] then 1 else nil)
+	end
+	player:SetAttribute("EquippedRod", Rods.stats(profile).Id)
+end
+
+-- The rod a cast by this player uses right now (a copy): the equipped one,
+-- else Basic (also while money isn't loaded, or without the economy).
+function M.rodStats(player: Player): Rods.Rod
+	local rod = if startOk and typeof(player) == "Instance" and player:IsA("Player")
+		then money:rodStats(player.UserId)
+		else Rods.get(Config.BaseRod) :: Rods.Rod
+	return table.clone(rod)
+end
+
+local ROD_REASONS = {
+	funds = "Not enough money",
+	notLoaded = "Your money is still loading - try again in a moment",
+	rodsUnavailable = "Your saved rods couldn't be read, so buying rods is off this session",
+	busy = "One moment - still saving",
+	owned = "You already own that rod",
+	unknown = "Unknown rod",
+	notOwned = "You don't own that rod",
+}
+local function rodReason(why: string?): string
+	if type(why) == "string" and string.sub(why, 1, 8) == "notSaved" then
+		return "Couldn't save the purchase - you were not charged. Try again."
+	end
+	return ROD_REASONS[why or ""] or "Couldn't do that right now"
+end
+
+-- The shop's buy / equip for one rod. An owned rod is EQUIPPED (never
+-- charged again); an unowned one is bought (and equipped) only while the
+-- paid shop is open and `canBuy(rod)` agrees (RodShopServer: in range, in
+-- stock). The purchase is saved (money + rod, one write) before this
+-- returns true; if the save fails nothing is charged. Checks: a real player
+-- in this server, alive, money loaded, one action at a time, a short
+-- cooldown. Returns (ok, message for the player).
+function M.rodAction(player: Player, rodId: any, canBuy: ((Rods.Rod) -> (boolean, string?))?): (boolean, string)
+	if not startOk then
+		return false, "The rod shop is unavailable right now"
+	end
+	if typeof(player) ~= "Instance" or not player:IsA("Player") or player.Parent ~= Players then
+		return false, "The rod shop is unavailable right now"
+	end
+	if rodBusy[player] then
+		return false, ROD_REASONS.busy
+	end
+	local now = os.clock()
+	if lastRodAction[player] and now - lastRodAction[player] < Config.RodActionCooldown then
+		return false, "Slow down a little"
+	end
+	lastRodAction[player] = now
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not (humanoid and humanoid.Health > 0) then
+		return false, "You can't do that right now"
+	end
+	local profile = money:rods(player.UserId)
+	if not profile then
+		return false, ROD_REASONS.notLoaded
+	end
+	local rod = Rods.get(rodId)
+	if not rod then
+		return false, ROD_REASONS.unknown
+	end
+	local decision = Rods.decide(profile, rod.Id)
+	if decision == "equipped" then
+		return true, rod.Name .. " is equipped"
+	elseif decision == "equip" then
+		local ok, why = money:equipRod(player.UserId, rod.Id)
+		if not ok then
+			return false, rodReason(why)
+		end
+		M._publishRods(player)
+		return true, "Equipped " .. rod.Name
+	end
+	if not M.rodShopOpen() then
+		return false, "The rod shop opens soon"
+	end
+	if canBuy then
+		local allowed, why = canBuy(rod)
+		if not allowed then
+			return false, why or "You can't buy that here"
+		end
+	end
+	rodBusy[player] = true
+	local ran, ok, why = pcall(function()
+		local t0 = os.clock()
+		while money:isSaving(player.UserId) and os.clock() - t0 < 10 do
+			task.wait(0.05)
+		end
+		return money:buyRod(player.UserId, rod.Id) -- saves money + rod in one write
+	end)
+	rodBusy[player] = nil
+	if not ran then
+		warn("[Economy] rod purchase failed: " .. tostring(ok))
+		return false, rodReason("notSaved")
+	end
+	if not ok then
+		if why and string.sub(why, 1, 8) == "notSaved" then
+			warn(string.format("[Economy] %s's %s purchase not saved (%s); not charged", player.Name, rod.Id, why))
+		end
+		return false, rodReason(why)
+	end
+	sync(player)
+	M._publishRods(player)
+	log(string.format("%s bought %s for %d", player.Name, rod.Id, rod.Price))
+	return true, "Bought and equipped " .. rod.Name
 end
 
 ------------------------------------------------------------ meat ledger
