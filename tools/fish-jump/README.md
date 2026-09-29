@@ -90,3 +90,34 @@ in first.
   - netting a mid-air fish launches it smoothly into the grinder
   - setting `JumpEnabled = false` stops jumps immediately
   - frame rate holds with 60 fish on mobile emulation
+
+## Harpoon mid-jump fix (`InstallHarpoonBlend.lua`)
+
+**The bug:** jumps are drawn on each client, and the harpoon aims at the
+fish's swim line. A fish struck in the air snapped straight down to the water
+on the first frame of the pull.
+
+**The fix** (FishSwimClient only): the pull starts from the fish's height in
+the air at `HarpoonT`, worked out from the same jump the client drew, and
+eases down onto the rope over the 0.6 s pull. After that the harpoon path is
+unchanged: toss, grinder dwell if installed, then suck. Timing is unchanged
+too, so the server's reel/toss/suck still match. A fish that wasn't jumping
+is pulled exactly as before.
+
+- **Bases:** the fish-jump client, or grinder dwell on top of it. The
+  installer picks the matching patch by exact source.
+- **Install:** after `InstallFishJump.lua` (the `FishJump` module is checked
+  by source). If you use grinder dwell, install it **first**: it refuses once
+  this has changed the client. Backup: `ServerStorage.HarpoonBlendBackup`.
+- **Rollback:** `RollbackHarpoonBlend.lua`, before `UninstallFishJump` and
+  `RollbackGrinderDwell` (both refuse while it's in).
+- **Tested:** `tools/economy/tests/sim/harpoonblend_sim.luau` (15 checks) runs
+  the real patched client on both bases. A fish struck mid-jump starts in the
+  air, is exactly halfway down at mid-pull and on the rope end by the end,
+  then reaches the grinder. A swimming fish is unchanged. The unpatched
+  client is shown snapping.
+
+| # | Do | Expect |
+|---|---|---|
+| H1 | Set `SwimmingFish.JumpChance` high for a test; watch the harpoon hit a jumping fish | The fish is dragged down from the air onto the rope, no jump cut |
+| H2 | Harpoon hits a swimming fish | Same as before |

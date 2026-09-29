@@ -19,7 +19,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local NAME = "RollbackFishVariants"
 local BACKUP = "EconomyVariantsBackup"
-local LATER = {  }
+local LATER = { "EconomyMeatGlowBackup" }
 
 local function fail(msg)
 	warn("[" .. NAME .. "] " .. msg .. " - nothing changed.")

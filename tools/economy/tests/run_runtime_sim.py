@@ -59,6 +59,14 @@ def sources() -> dict:
     out["Var_Spawner"] = (var / "studio" / "economy" / "FishSpawner.patched.from-live.lua").read_text()
     out["Var_Rod"] = (var / "studio" / "economy" / "RodFishingSystem.patched.from-sales.lua").read_text()
     out["Var_Grinder"] = (var / "studio" / "economy" / "GrinderProcessor.patched.from-sales.lua").read_text()
+    blend = jump / "studio" / "harpoon-blend"
+    out["Blend_Jump"] = (blend / "FishSwimClient.patched.from-jump.lua").read_text()
+    out["Blend_Dwell"] = (blend / "FishSwimClient.patched.from-dwell-jump.lua").read_text()
+    glow = var / "studio" / "meat-glow"
+    out["MG_Bot_sales"] = (glow / "BotSystem.patched.from-sales.lua").read_text()
+    out["MG_Bot_bot"] = (glow / "BotSystem.patched.from-bot.lua").read_text()
+    out["MG_Customer"] = (glow / "CustomerSystem.patched.from-sales.lua").read_text()
+    out["MG_Truck"] = (glow / "TruckSystem.patched.from-sales.lua").read_text()
     return out
 
 

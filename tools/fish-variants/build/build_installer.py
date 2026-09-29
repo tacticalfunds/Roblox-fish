@@ -21,6 +21,12 @@ import build_updates as bu  # noqa: E402
 _spec = importlib.util.spec_from_file_location("variants_make_patches", ROOT / "build" / "make_patches.py")
 make_patches = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(make_patches)
+_spec = importlib.util.spec_from_file_location("variants_make_meat_glow", ROOT / "build" / "make_meat_glow.py")
+make_meat_glow = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(make_meat_glow)
+
+MEAT_GLOW_BACKUP = "EconomyMeatGlowBackup"
+assert MEAT_GLOW_BACKUP in bu.LATER_THAN_BOT, "the bot recovery rollback must wait for the meat glow rollback"
 
 
 def check_names() -> None:
@@ -66,10 +72,54 @@ Works with or without rod cast / grinder dwell (install those first).
         "EconomyVariantsBackup",
         [["EconomyRodOffersBackup"]],
         ["EconomyVariantsBackup"],
-        [],
+        [MEAT_GLOW_BACKUP],
         changes,
         [],
         adds,
+        ROOT,
+    )
+    meat_glow(adds)
+
+
+def meat_glow(variant_adds: list) -> None:
+    """InstallMeatGlow.lua: Silver / Gold meat keeps its glow when carried,
+    laid out or loaded. On top of the variants install."""
+    make_meat_glow.main()
+    where = {"BotSystem": "script:BotSystem", "CustomerSystem": "script:CustomerSystem", "TruckSystem": "script:TruckSystem"}
+    changes = [
+        ({"key": name, "where": where[name], "class": "Script"}, [(label, base, new) for label, (base, new) in versions.items()])
+        for name, versions in make_meat_glow.build().items()
+    ]
+    visuals = next(a for a in variant_adds if a["name"] == "FishVariantVisuals")
+    unchanged = [(
+        {"key": "FishVariantVisuals", "where": "ReplicatedStorage/FishVariantVisuals", "class": "ModuleScript", "tag": "EconomyOwned"},
+        visuals["source"],
+    )]
+    bu.write_pair_v2(
+        "InstallMeatGlow.lua",
+        "RollbackMeatGlow.lua",
+        """
+Variant glow on MOVED meat. Silver / Gold meat glows in the blender, on the
+belt and on the stack (InstallFishVariants); every later hop is a fresh
+MeatTemplate clone that used to lose the glow. Now it keeps it:
+  * BotSystem: the piece the Blender Bot carries, and on the sale table
+  * CustomerSystem: the piece in the customer's hand
+  * TruckSystem: the stack a player carries, the pieces flying to the
+    truck, and the meat loaded in the truck
+Display only: it reads the Variant the ledger stamped on the piece; value
+and payment are unchanged. Without ReplicatedStorage.FishVariantVisuals the
+scripts behave exactly like before.
+BotSystem may be the sales version or the Blender Bot recovery version:
+install InstallBotRecovery.lua FIRST if you want it (it refuses after this).
+Requires: InstallFishVariants.lua (the visuals module, checked by source).
+""",
+        MEAT_GLOW_BACKUP,
+        [["EconomyVariantsBackup"]],
+        [MEAT_GLOW_BACKUP],
+        [],
+        changes,
+        unchanged,
+        [],
         ROOT,
     )
 

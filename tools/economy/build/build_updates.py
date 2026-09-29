@@ -44,7 +44,7 @@ LATER_THAN_SALES = ["EconomyUpgradesBackup"]
 LATER_THAN_UPGRADES = ["EconomyVariantsBackup"]
 # economy milestones after the sales release (each its own installer)
 LATER_THAN_EARNINGS: list[str] = []
-LATER_THAN_BOT: list[str] = []
+LATER_THAN_BOT = ["EconomyMeatGlowBackup"]  # tools/fish-variants InstallMeatGlow patches BotSystem too
 
 
 def git_show(commit: str, path: str) -> str:

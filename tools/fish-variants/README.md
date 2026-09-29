@@ -53,8 +53,40 @@ Without these modules, every patched script behaves like its base. The
 aquarium v1.2 tank and river release already show the effects once the
 visuals module exists.
 
-**Not covered:** meat carried by the Blender Bot, on the sale table or in
-trucks doesn't glow. Those are fresh clones; their value is unaffected.
+**Moved meat:** the meat the Blender Bot carries, meat on the sale table, and
+meat carried to or loaded in trucks is a fresh clone that doesn't glow with
+this install alone. `InstallMeatGlow.lua` (below) fixes that. Their value is
+unaffected either way.
+
+## Glow on moved meat (`InstallMeatGlow.lua`)
+
+Silver / Gold meat now keeps its glow after it leaves the stack:
+
+| Script | Where the glow now shows |
+|---|---|
+| BotSystem (sales or Blender Bot recovery version) | the piece the bot carries, and on the sale table |
+| CustomerSystem (sales version) | the piece in the customer's hand |
+| TruckSystem (sales version) | the stack a player carries, the pieces flying to the truck, the meat loaded in the truck |
+
+It's display only: it reads the `Variant` attribute the ledger already
+stamped on each piece and calls `FishVariantVisuals.applyToPart`. The truck
+carry keeps one variant per carried piece, in step with the ledger ids, so
+the right piece glows as pieces go in and out from the top. Without
+`ReplicatedStorage.FishVariantVisuals`, every patched script behaves exactly
+like its base.
+
+- **Install:** after `InstallFishVariants.lua` (checked by the
+  `FishVariantVisuals` source). If you want the Blender Bot recovery, install
+  `tools/economy/InstallBotRecovery.lua` **first**: it refuses once this has
+  changed BotSystem. Backup: `ServerStorage.EconomyMeatGlowBackup`.
+- **Rollback:** `RollbackMeatGlow.lua`, before `RollbackFishVariants` and
+  `RollbackBotRecovery` (both refuse while it's in).
+
+| # | Do | Expect |
+|---|---|---|
+| G1 | With V1's test chance, net Gold fish; watch the bot | The carried piece and the table piece glow gold; a customer holds a glowing piece |
+| G2 | Carry a mix of Gold and plain pieces to a truck | Only the Gold pieces glow in your carried stack, in flight and in the truck |
+| G3 | Sell them | Same payment as before (×5 for Gold) |
 
 ## Install / rollback (Studio, Edit mode, Command Bar)
 

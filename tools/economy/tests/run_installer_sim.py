@@ -887,6 +887,106 @@ do
 		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
 end
 
+-- variant glow on moved meat: on top of variants; BotSystem = sales or bot-recovery version
+local function meatGlow(g, s) warnings = {} runMeatGlow(g, s.Workspace) end
+local function meatGlowBack(g, s) warnings = {} runMeatGlowBack(g, s.Workspace) end
+for _, withBotFix in ipairs({ false, true }) do
+	local label = if withBotFix then "meat glow (bot fix in)" else "meat glow"
+	local g, sv, history, sc = astraPlace()
+	upgradeAq(g, sv)
+	installSales(g, sv)
+	if withBotFix then botFix(g, sv) end
+	local before = snapshot(g)
+	meatGlow(g, sv)
+	check(label .. " before variants: refused", refused() and snapshot(g) == before)
+	variants(g, sv)
+	local afterVar = snapshot(g)
+	local commits = history.commits
+	meatGlow(g, sv)
+	check(label .. ": installed in one undo step", not refused() and history.commits == commits + 1)
+	check(label .. ": the matching BotSystem patch", sc.BotSystem.Source == (if withBotFix then GLOW.Bot_bot else GLOW.Bot_sales))
+	check(label .. ": customer + truck patched", sc.CustomerSystem.Source == GLOW.Customer and sc.TruckSystem.Source == GLOW.Truck)
+	check(label .. ": backup with 3 entries", #sv.ServerStorage.EconomyMeatGlowBackup:GetChildren() == 3)
+	local afterGlow = snapshot(g)
+	meatGlow(g, sv)
+	check(label .. " twice: refused", refused() and snapshot(g) == afterGlow)
+	variantsBack(g, sv)
+	check(label .. ": variants rollback refused while it is in", refused() and snapshot(g) == afterGlow)
+	if withBotFix then
+		botFixBack(g, sv)
+		check(label .. ": bot fix rollback refused while it is in", refused() and snapshot(g) == afterGlow)
+	else
+		botFix(g, sv)
+		check(label .. ": bot fix after meat glow: refused (install it first)", refused() and snapshot(g) == afterGlow)
+	end
+	meatGlowBack(g, sv)
+	check(label .. ": rollback restores exactly", not refused() and snapshot(g) == afterVar)
+end
+do
+	local g, sv = astraPlace()
+	upgradeAq(g, sv)
+	installSales(g, sv)
+	variants(g, sv)
+	sv.ReplicatedStorage.FishVariantVisuals.Source ..= "\n-- tuned"
+	local before = snapshot(g)
+	meatGlow(g, sv)
+	check("meat glow over an edited FishVariantVisuals: refused", refused() and snapshot(g) == before)
+end
+
+-- harpoon mid-jump fix: on the fish-jump client, or grinder dwell over it
+local function blend(g, s) warnings = {} runBlend(g, s.Workspace) end
+local function blendBack(g, s) warnings = {} runBlendBack(g, s.Workspace) end
+do
+	local g, sv, _, sc = astraPlace()
+	local before = snapshot(g)
+	blend(g, sv)
+	check("harpoon blend without fish jumps: refused", refused() and snapshot(g) == before)
+end
+for _, withDwell in ipairs({ false, true }) do
+	local label = if withDwell then "harpoon blend (dwell in)" else "harpoon blend"
+	local g, sv, history, sc = astraPlace()
+	jumpInstall(g, sv)
+	if withDwell then
+		upgradeAq(g, sv)
+		installSales(g, sv)
+		dwell(g, sv)
+	end
+	assert(not refused(), label .. ": setup")
+	local before = snapshot(g)
+	local commits = history.commits
+	blend(g, sv)
+	check(label .. ": installed in one undo step", not refused() and history.commits == commits + 1)
+	check(label .. ": the matching client patch", sc.FishSwimClient.Source == (if withDwell then BLEND.Dwell else BLEND.Jump))
+	check(label .. ": backup with 1 entry", #sv.ServerStorage.HarpoonBlendBackup:GetChildren() == 1)
+	local after = snapshot(g)
+	blend(g, sv)
+	check(label .. " twice: refused", refused() and snapshot(g) == after)
+	if withDwell then
+		dwellBack(g, sv)
+		check(label .. ": dwell rollback refused while it is in", refused() and snapshot(g) == after)
+	else
+		jumpUninstall(g, sv)
+		check(label .. ": jump uninstall refused while it is in", refused() and snapshot(g) == after)
+		upgradeAq(g, sv)
+		installSales(g, sv)
+		local mid = snapshot(g)
+		dwell(g, sv)
+		check(label .. ": dwell after it: refused (install dwell first)", refused() and snapshot(g) == mid)
+		rollbackSales(g, sv)
+		rollbackAq(g, sv)
+	end
+	blendBack(g, sv)
+	check(label .. ": rollback restores exactly", not refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraPlace()
+	jumpInstall(g, sv)
+	sv.ReplicatedStorage.FishJump.Source ..= "\n-- tuned"
+	local before = snapshot(g)
+	blend(g, sv)
+	check("harpoon blend over an edited FishJump module: refused", refused() and snapshot(g) == before)
+end
+
 print_real(string.format("%d passed, %d failed", passes, failures))
 if failures > 0 then error("installer simulation failed") end
 """
@@ -977,6 +1077,18 @@ def main() -> int:
         **{f'["Rod_{k}"]': (ve / f"RodFishingSystem.patched.from-{k}.lua").read_text() for k in ("sales", "rodcast", "dwell-sales", "dwell-rodcast")},
     }
     tables += "local VAR = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in var.items()) + "}\n"
+    mg = ROOT.parent / "fish-variants" / "studio" / "meat-glow"
+    glow = {
+        "Bot_sales": (mg / "BotSystem.patched.from-sales.lua").read_text(),
+        "Bot_bot": (mg / "BotSystem.patched.from-bot.lua").read_text(),
+        "Customer": (mg / "CustomerSystem.patched.from-sales.lua").read_text(),
+        "Truck": (mg / "TruckSystem.patched.from-sales.lua").read_text(),
+    }
+    tables += "local GLOW = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in glow.items()) + "}\n"
+    hb = ROOT.parent / "fish-jump" / "studio" / "harpoon-blend"
+    tables += "local BLEND = {\n" + "".join(
+        f"\t{k} = {lua_string((hb / f'FishSwimClient.patched.from-{v}.lua').read_text())},\n" for k, v in (("Jump", "jump"), ("Dwell", "dwell-jump"))
+    ) + "}\n"
     tables += "local VIS = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in vis.items()) + "}\n"
     aqroot = ROOT.parent / "aquarium-cycle" / "src"
     tables += "local AQV12 = {\n"
@@ -1011,6 +1123,10 @@ def main() -> int:
         + wrap("runEarningsBack", (ROOT / "RollbackEarnings.lua").read_text())
         + wrap("runBotFix", (ROOT / "InstallBotRecovery.lua").read_text())
         + wrap("runBotFixBack", (ROOT / "RollbackBotRecovery.lua").read_text())
+        + wrap("runMeatGlow", (ROOT.parent / "fish-variants" / "InstallMeatGlow.lua").read_text())
+        + wrap("runMeatGlowBack", (ROOT.parent / "fish-variants" / "RollbackMeatGlow.lua").read_text())
+        + wrap("runBlend", (ROOT.parent / "fish-jump" / "InstallHarpoonBlend.lua").read_text())
+        + wrap("runBlendBack", (ROOT.parent / "fish-jump" / "RollbackHarpoonBlend.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:
