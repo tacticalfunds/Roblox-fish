@@ -987,6 +987,47 @@ do
 	check("harpoon blend over an edited FishJump module: refused", refused() and snapshot(g) == before)
 end
 
+------------------------------------------------------------ the whole guide (tools/INSTALL_GUIDE.md), in order
+
+do
+	local g, sv, history = astraPlace() -- a826d73 rod offers
+	upgradeAq(g, sv) -- aquarium v1.2: what Studio has today
+	local studioToday = snapshot(g)
+	local steps = {
+		{ "InstallSales", installSales, rollbackSales },
+		{ "InstallUpgrades", installUpg, rollbackUpg },
+		{ "InstallEarnings", earnings, earningsBack },
+		{ "InstallBotRecovery", botFix, botFixBack },
+		{ "InstallFishJump", jumpInstall, jumpUninstall },
+		{ "InstallRodCast", rodCast, rodCastBack },
+		{ "InstallGrinderDwell", dwell, dwellBack },
+		{ "InstallFishVariants", variants, variantsBack },
+		{ "InstallMeatGlow", meatGlow, meatGlowBack },
+		{ "InstallHarpoonBlend", blend, blendBack },
+	}
+	local states, allOk = {}, true
+	for i, step in ipairs(steps) do
+		states[i] = snapshot(g)
+		local commits = history.commits
+		step[2](g, sv)
+		if refused() or history.commits ~= commits + 1 then
+			allOk = false
+			print_real("  guide order: " .. step[1] .. " refused: " .. tostring(warnings[#warnings]))
+		end
+	end
+	check("guide order: all 10 install, one undo step each", allOk)
+	local backOk = true
+	for i = #steps, 1, -1 do
+		steps[i][3](g, sv)
+		if refused() or snapshot(g) ~= states[i] then
+			backOk = false
+			print_real("  guide rollback: " .. steps[i][1] .. " rollback failed: " .. tostring(warnings[#warnings]))
+		end
+	end
+	check("guide rollback in reverse: each step restores exactly the state before it", backOk)
+	check("guide rollback: back to exactly what Studio has today", snapshot(g) == studioToday)
+end
+
 print_real(string.format("%d passed, %d failed", passes, failures))
 if failures > 0 then error("installer simulation failed") end
 """

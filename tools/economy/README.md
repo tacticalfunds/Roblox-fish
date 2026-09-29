@@ -16,7 +16,9 @@ reviews and installs. Nothing here touches Studio on its own.
 | Grinder dwell (`d64a180`; ~1 s on the rollers: net, harpoon, rod fallback) | done | **yes**: `tools/grinder-dwell/InstallGrinderDwell.lua` (after sales; after jumps / rod cast if used) |
 | Rare Silver / Gold variants (`a92a678`) | done | **yes**: `tools/fish-variants/InstallFishVariants.lua` |
 | Earnings popup (`561c4d1`): "+$N" for the owner when their meat sells | done | **yes**: `InstallEarnings.lua` (after sales; after upgrades if used) |
-| **Blender Bot recovery** (this commit): an error mid-trip keeps the piece | done | **yes**: `InstallBotRecovery.lua` (any time after sales) |
+| Blender Bot recovery (`e933db6`): an error mid-trip keeps the piece | done | **yes**: `InstallBotRecovery.lua` (after sales; before meat glow) |
+
+**All installers in one place, in order, with rollbacks: [`tools/INSTALL_GUIDE.md`](../INSTALL_GUIDE.md).**
 
 **The sales release is frozen at `91121de`.** `UpgradeAquariumV12`,
 `InstallSales`, `InstallUpgrades` and their rollbacks are built from that
@@ -483,8 +485,8 @@ changes; the rest re-check behaviour that already worked.
 
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 262 checks
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21, earnings 27, bot 14 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 201 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21, earnings 27, bot 14, meat glow 21, harpoon blend 15 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 238 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 
