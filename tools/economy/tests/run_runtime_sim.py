@@ -94,10 +94,22 @@ def run(luau: str, srcs: dict, only: str | None = None) -> int:
     return 1 if failed else 0
 
 
+# sims that load ReplicatedStorage.FishJump: also run with the JumpRate
+# version (tools/fish-jump InstallJumpRate), which only changes its periods
+JUMP_SIMS = ["jump_sim", "harpoonblend_sim", "dwell_sim"]
+
+
 def main() -> int:
     luau = sys.argv[1] if len(sys.argv) > 1 else "luau"
     only = sys.argv[2] if len(sys.argv) > 2 else None
-    return run(luau, sources(), only)
+    srcs = sources()
+    failed = run(luau, srcs, only)
+    rate = dict(srcs, Jump_Module=(ROOT.parent / "fish-jump" / "studio" / "jump-rate" / "FishJump.luau").read_text())
+    for name in JUMP_SIMS:
+        if only in (None, name):
+            print("-- with the JumpRate FishJump module:")
+            failed |= run(luau, rate, name)
+    return failed
 
 
 if __name__ == "__main__":

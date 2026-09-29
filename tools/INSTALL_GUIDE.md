@@ -30,7 +30,8 @@ As reported by Astra, 2026-09-29 (user authorised the remaining installs):
 - **deliberately not installed:** row 3, paid aquarium upgrades (levels
   aren't saved; see open decisions)
 - **installed since:** row 9, variants (`28a9b3f`), and row 10, meat glow
-- **next:** row 12, the aquarium panel
+- **installed since:** row 12, the aquarium panel (`0e64dd2`)
+- **next:** row 13, fish jump more often
 
 **Not production-ready as a whole:** paid upgrades (row 3) and the live Car
 Sales upgrades reset every server while the Money spent stays saved. See
@@ -57,6 +58,7 @@ rollback.
 | 10 | [`fish-variants/InstallMeatGlow.lua`](fish-variants/README.md#glow-on-moved-meat-installmeatglowlua) | Variant meat keeps its glow when moved | 9; **after 5** if used | `EconomyMeatGlowBackup` |
 | 11 | [`fish-jump/InstallHarpoonBlend.lua`](fish-jump/README.md#harpoon-mid-jump-fix-installharpoonblendlua) | No snap when a jumping fish is harpooned | 6; **after 8** if used | `HarpoonBlendBackup` |
 | 12 | [`aquarium-panel/InstallAquariumPanel.lua`](aquarium-panel/README.md) | One custom aquarium panel at the loader pad (Release Fish + one upgrade card) instead of three default prompts; upgrades shown as not available | aquarium v1.2; **the released row 3 refuses after it** | `AquariumPanelBackup` |
+| 13 | [`fish-jump/InstallJumpRate.lua`](fish-jump/README.md#jump-more-often-installjumpratelua) | Fish jump about twice as often (periods 16–28 s → 8–14 s) | 6 | `FishJumpRateBackup` |
 
 "After X" matters because both change the same script. The later installer
 knows X's version; the earlier one doesn't, so running them the other way
@@ -64,12 +66,13 @@ round is refused, with nothing changed.
 
 ## Rollback order
 
-Exactly the reverse: **12 → 1**, then, if you ever need to go further,
+Exactly the reverse: **13 → 1**, then, if you ever need to go further,
 `economy/RollbackAquariumV12.lua` and `economy/UninstallRodOffers.lua`.
 Row 2 (Money HUD) touches nothing else, so its rollback works at any time.
 
 | # | Rollback file |
 |---|---|
+| 13 | `fish-jump/RollbackJumpRate.lua` (before 6) |
 | 12 | `aquarium-panel/RollbackAquariumPanel.lua` (independent of 4–11) |
 | 11 | `fish-jump/RollbackHarpoonBlend.lua` |
 | 10 | `fish-variants/RollbackMeatGlow.lua` |

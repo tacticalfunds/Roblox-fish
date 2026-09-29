@@ -121,3 +121,50 @@ is pulled exactly as before.
 |---|---|---|
 | H1 | Set `SwimmingFish.JumpChance` high for a test; watch the harpoon hit a jumping fish | The fish is dragged down from the air onto the rope, no jump cut |
 | H2 | Harpoon hits a swimming fish | Same as before |
+
+## Jump more often (`InstallJumpRate.lua`)
+
+Fish jump about **twice as often**. Only two numbers change in
+`ReplicatedStorage.FishJump`:
+
+| Setting | Before | After |
+|---|---|---|
+| `PeriodMin` | 16 s | **8 s** |
+| `PeriodSpread` | 12 s | **6 s** |
+| each fish's period | 16–28 s (mean 22 s) | 8–14 s (mean 11 s) |
+| `Chance` per period | 0.35 | 0.35 (unchanged) |
+| `Duration` (airtime) | 0.9 s | 0.9 s (unchanged) |
+| heights, `EdgeMargin` 6, snakes skip, splash pool 10 | | unchanged |
+
+Measured with the real modules (60 fish, 30 min, `tests/jump_rate.test.luau`):
+
+| | Before | After |
+|---|---|---|
+| jumps | 1,765 | 3,527 (×2.0) |
+| per fish | 1 every 61 s | 1 every 31 s |
+| airborne on average | 0.88 | 1.76 |
+| most airborne at once | 6 | 9 |
+| shortest gap for one fish | 16 s | 8 s |
+
+- **Still staggered:** each fish keeps its own period and offset from its
+  Seed, so jumps stay random and spread out.
+- **Cost:** the client computes the jump math for every fish every frame
+  anyway, so a higher rate costs nothing extra. Splash rings stay capped by
+  the pool of 10 (about 2 in use on average).
+- **Protections unchanged:** `FishSwimClient` isn't touched. A netted
+  (`CaughtT`) or harpooned (`HarpoonT`) fish never jumps, the harpoon
+  mid-jump blend still applies, and the river attributes `JumpEnabled` /
+  `JumpChance` still override.
+
+**Install:** `InstallJumpRate.lua` (v2 guarded template). It needs
+`FishJumpBackup` and the exact installed `FishJump` module (tagged
+`FishJumpOwned`). Its own backup is `ServerStorage.FishJumpRateBackup`;
+`FishJumpBackup` is never touched. **Rollback:** `RollbackJumpRate.lua`
+restores the old periods. `UninstallFishJump.lua` now refuses while this is
+in; roll this back first.
+
+| # | Do | Expect |
+|---|---|---|
+| J1 | Play, watch the river for a minute | Noticeably more jumps, still one here and there, never a wave |
+| J2 | Net / harpoon a fish | Netted and harpooned fish never jump; a harpooned mid-jump fish still eases down |
+| J3 | Edit mode: `RollbackJumpRate` | The old, rarer jumps |

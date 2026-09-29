@@ -34,6 +34,10 @@ local backup = ServerStorage:FindFirstChild("FishJumpBackup")
 if not backup or backup:GetAttribute(TAG) ~= true then
 	return fail("ServerStorage.FishJumpBackup not found (not installed?)")
 end
+-- later updates to the FishJump module must be rolled back first
+if ServerStorage:FindFirstChild("FishJumpRateBackup") then
+	return fail("ServerStorage.FishJumpRateBackup exists: run RollbackJumpRate.lua first")
+end
 local targetValue = backup:FindFirstChild("Target")
 local target = targetValue and targetValue:IsA("ObjectValue") and targetValue.Value
 local original = backup:FindFirstChild("FishSwimClient_original")

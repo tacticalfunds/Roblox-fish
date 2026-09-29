@@ -1185,6 +1185,58 @@ do
 	check("panel over an edited Upgrades module: refused", refused() and snapshot(g) == before)
 end
 
+-- fish jump more often: only the FishJump module; FishJumpBackup untouched
+local function jumpRate(g, s) warnings = {} runJumpRate(g, s.Workspace) end
+local function jumpRateBack(g, s) warnings = {} runJumpRateBack(g, s.Workspace) end
+do
+	local g, sv, history, sc = astraNow()
+	local module = sv.ReplicatedStorage.FishJump
+	local client = sc.FishSwimClient.Source
+	local jumpBackup = subtree(sv.ServerStorage.FishJumpBackup)
+	local before = snapshot(g)
+	local commits = history.commits
+	jumpRate(g, sv)
+	check("jump rate on Astra's state: one undo step", not refused() and history.commits == commits + 1)
+	check("jump rate: FishJump = the more-often module", module.Source == RATE.Module)
+	check("jump rate: FishSwimClient untouched (its protections stay)", sc.FishSwimClient.Source == client)
+	check("jump rate: FishJumpBackup untouched; own backup with 1 entry", subtree(sv.ServerStorage.FishJumpBackup) == jumpBackup
+		and #sv.ServerStorage.FishJumpRateBackup:GetChildren() == 1)
+	local after = snapshot(g)
+	jumpRate(g, sv)
+	check("jump rate twice: refused", refused() and snapshot(g) == after)
+	module.Source ..= "\n-- tuned"
+	local edited = snapshot(g)
+	jumpRateBack(g, sv)
+	check("jump rate rollback over an edited module: refused", refused() and snapshot(g) == edited)
+	module.Source = RATE.Module
+	jumpRateBack(g, sv)
+	check("jump rate rollback: exactly the state before", not refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraPlace()
+	local before = snapshot(g)
+	jumpRate(g, sv)
+	check("jump rate without fish jumps: refused", refused() and snapshot(g) == before)
+	jumpInstall(g, sv)
+	sv.ReplicatedStorage.FishJump.Source ..= "\n-- tuned"
+	before = snapshot(g)
+	jumpRate(g, sv)
+	check("jump rate over an edited FishJump: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
+do
+	local g, sv = astraPlace()
+	jumpInstall(g, sv)
+	jumpRate(g, sv)
+	local mid = snapshot(g)
+	jumpUninstall(g, sv)
+	check("UninstallFishJump refuses while the jump rate is in", refused() and snapshot(g) == mid
+		and (warnings[#warnings] or ""):find("RollbackJumpRate", 1, true) ~= nil)
+	jumpRateBack(g, sv)
+	jumpUninstall(g, sv)
+	check("then it uninstalls", not refused() and sv.ReplicatedStorage:FindFirstChild("FishJump") == nil)
+end
+
 -- the old baseline (no HarpoonT in the despawn guard) is not what Studio has: refused
 do
 	local g, sv, _, sc = astraPlace()
@@ -1216,6 +1268,7 @@ do
 		{ "InstallFishVariants", variants, variantsBack },
 		{ "InstallMeatGlow", meatGlow, meatGlowBack },
 		{ "InstallHarpoonBlend", blend, blendBack },
+		{ "InstallJumpRate", jumpRate, jumpRateBack },
 	}
 	local states, allOk = {}, true
 	for i, step in ipairs(steps) do
@@ -1230,7 +1283,7 @@ do
 			print_real("  guide order: " .. step[1] .. " refused: " .. tostring(warnings[#warnings]))
 		end
 	end
-	check("guide order: all 11 install, one undo step each", allOk)
+	check("guide order: all 12 install, one undo step each", allOk)
 	local backOk = true
 	for i = #steps, 1, -1 do
 		if i == 1 then
@@ -1243,7 +1296,7 @@ do
 		end
 	end
 	check("guide rollback in reverse: each step restores exactly the state before it", backOk)
-	check("guide: rolling back 11..2 leaves exactly today's Studio (sales in)", studioAgain == studioToday)
+	check("guide: rolling back 12..2 leaves exactly today's Studio (sales in)", studioAgain == studioToday)
 	check("guide rollback: back to exactly rod offers + aquarium v1.2 (before sales)", snapshot(g) == beforeSales)
 end
 
@@ -1312,6 +1365,7 @@ def main() -> int:
     tables += "local PANEL = {\n" + "".join(
         f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (("Server", pn / "studio" / "AquariumCycleServer.patched.from-v12.lua"), ("Client", pn / "src" / "AquariumPanelClient.client.luau"))
     ) + "}\n"
+    tables += f"local RATE = {{ Module = {lua_string((ROOT.parent / 'fish-jump' / 'studio' / 'jump-rate' / 'FishJump.luau').read_text())} }}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1398,6 +1452,8 @@ def main() -> int:
         + wrap("runMoneyHudBack", (ROOT / "RollbackMoneyHud.lua").read_text())
         + wrap("runPanel", (ROOT.parent / "aquarium-panel" / "InstallAquariumPanel.lua").read_text())
         + wrap("runPanelBack", (ROOT.parent / "aquarium-panel" / "RollbackAquariumPanel.lua").read_text())
+        + wrap("runJumpRate", (ROOT.parent / "fish-jump" / "InstallJumpRate.lua").read_text())
+        + wrap("runJumpRateBack", (ROOT.parent / "fish-jump" / "RollbackJumpRate.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:
