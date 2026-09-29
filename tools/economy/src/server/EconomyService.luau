@@ -512,25 +512,45 @@ function M.carry(pieceId: any): boolean
 	return startOk and ledger:carry(pieceId)
 end
 
+-- Credits waiting for this player's Money to load (not spendable yet).
+local function queued(userId: number): number
+	local s = money.sessions[userId]
+	return if s then s.pending else 0
+end
+
 -- The one sale of a piece: pays its owner (if in the server). Returns
 -- (paid, amount). An unknown / already-settled id pays nothing.
 function M.settle(pieceId: any, route: string): (boolean, number)
 	if not startOk then
 		return false, 0
 	end
+	-- what the credit really added (no yields between the reads and the
+	-- credit): the balance can be clamped at MaxBalance, the pending queue
+	-- at MaxPendingCredit
+	local kind, added = nil, 0
 	local paid, amount, piece = Sales.settle(ledger, pieceId, function(ownerId, value)
-		return M.credit(ownerId, value, "sale:" .. route)
+		local balanceBefore, queuedBefore = money:balance(ownerId), queued(ownerId)
+		local r = M.credit(ownerId, value, "sale:" .. route)
+		if r == "paid" then
+			kind, added = "paid", (money:balance(ownerId) or 0) - (balanceBefore or 0)
+		elseif r == "pending" then
+			kind, added = "pending", queued(ownerId) - queuedBefore
+		end
+		return r
 	end)
-	if paid and piece and amount > 0 then
-		M._tellEarned(piece, amount, route)
+	if kind and piece then
+		M._tellEarned(piece, kind, added, route)
 	end
 	return paid, amount
 end
 
--- The owner's "+$" popup (display only; they are already paid). Off while
+-- The owner's popup (display only; the ledger settlement is the payment).
+-- Sends (added, route, fishName, variant, kind, value): `added` is what the
+-- credit really added, `value` the piece's price; kind "paid" = spendable
+-- now, "pending" = waits for their Money to load. Off while
 -- ReplicatedStorage.Economy's EarningsPopup attribute is false. Never
 -- yields and never errors into the sale.
-function M._tellEarned(piece: Ledger.Piece, amount: number, route: string)
+function M._tellEarned(piece: Ledger.Piece, kind: string, added: number, route: string)
 	if not earned or root:GetAttribute("EarningsPopup") == false then
 		return
 	end
@@ -539,7 +559,7 @@ function M._tellEarned(piece: Ledger.Piece, amount: number, route: string)
 		return
 	end
 	pcall(function()
-		(earned :: RemoteEvent):FireClient(player, amount, route, piece.fishName, piece.variant)
+		(earned :: RemoteEvent):FireClient(player, added, route, piece.fishName, piece.variant, kind, piece.value)
 	end)
 end
 

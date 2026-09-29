@@ -1,7 +1,9 @@
 -- EconomyClient (LocalScript in StarterPlayerScripts).
 --   * toast for EconomyService notices (money loading, purchase results)
 --   * "+$" popup when a piece of YOUR meat sells (Economy.Earned), wherever
---     it sold and whoever carried it; quick sales add up into one popup
+--     it sold and whoever carried it; quick sales add up into one popup. It
+--     shows what really reached your Money: grey "pending" while your Money
+--     is still loading, and the real amount at the balance limit
 --   * the buy prompt for the local player's OWN rod catches: a ProximityPrompt
 --     (Style = Custom) on the rod stand, with a small world-anchored panel
 --     ([E] + fish name + "Buy"). Keyboard E, the gamepad button and tapping
@@ -68,6 +70,7 @@ end
 ------------------------------------------------------------ earnings popup
 
 local GREEN = Color3.fromRGB(90, 235, 90)
+local PENDING = Color3.fromRGB(160, 175, 190) -- not spendable yet
 local VARIANT_COLORS = { Gold = Color3.fromRGB(255, 205, 40), Silver = Color3.fromRGB(205, 220, 235) }
 local VARIANT_RANK = { Silver = 1, Gold = 2 }
 local ROUTES = { Customer = "to a customer", Truck = "to a truck" }
@@ -104,26 +107,44 @@ end
 local earnAmount = earnText("Amount", 0, 50)
 local earnDetail = earnText("Detail", 50, 26)
 
-local earnRun = { total = 0, count = 0, rank = 0, token = 0 }
+local earnRun = { total = 0, count = 0, rank = 0, token = 0, pending = false, short = false }
 
-local function onEarned(amount: any, route: any, fishName: any, variant: any)
-	if type(amount) ~= "number" or amount ~= amount or amount <= 0 or amount == math.huge then
+-- (added, route, fishName, variant, kind, value) from EconomyService:
+-- `added` is what really reached your Money (kind "paid") or the queue that
+-- waits for your Money to load (kind "pending"); `value` is the piece's
+-- price, more than `added` only at the balance / pending-queue limit.
+-- Spendable and pending sales never add up in the same popup.
+local function onEarned(added: any, route: any, fishName: any, variant: any, kind: any, value: any)
+	if type(added) ~= "number" or added ~= added or added < 0 or added == math.huge then
 		return
 	end
-	local run = earnRun
-	if not earnFrame.Visible then
-		run.total, run.count, run.rank = 0, 0, 0
+	added = math.floor(added)
+	local short = type(value) == "number" and value == value and value > added
+	if added == 0 and not short then
+		return
 	end
-	run.total += math.floor(amount)
+	local pending = kind == "pending"
+	local run = earnRun
+	if not earnFrame.Visible or run.pending ~= pending then
+		run.total, run.count, run.rank, run.pending, run.short = 0, 0, 0, pending, false
+	end
+	run.total += added
 	run.count += 1
+	run.short = run.short or short
 	local v = if type(variant) == "string" and VARIANT_COLORS[variant] then variant else nil
 	local rank = if v then VARIANT_RANK[v] else 0
-	if rank >= run.rank then
+	if pending then
+		earnAmount.TextColor3 = PENDING
+	elseif rank >= run.rank then
 		run.rank = rank
 		earnAmount.TextColor3 = if v then VARIANT_COLORS[v] else GREEN
 	end
-	earnAmount.Text = "+$" .. tostring(run.total)
-	if run.count == 1 then
+	earnAmount.Text = "+$" .. tostring(run.total) .. (if pending then " pending" else "")
+	if run.short then
+		earnDetail.Text = if pending then "Pending limit reached" else "Money is at the maximum"
+	elseif pending then
+		earnDetail.Text = "Added when your Money loads"
+	elseif run.count == 1 then
 		local fish = if type(fishName) == "string" and fishName ~= "" then fishName else "Meat"
 		local where = if type(route) == "string" and ROUTES[route] then " " .. ROUTES[route] else ""
 		earnDetail.Text = (if v then v .. " " else "") .. fish .. " sold" .. where

@@ -2,6 +2,9 @@
 -- when it sells; the REAL EconomyClient shows it. Checks:
 --   * only the owner sees it (never the carrier, nobody for unowned meat)
 --   * the amount is exactly what was paid, once (a second sale shows nothing)
+--   * money still loading: the popup says "pending" (grey), never mixes with
+--     spendable sales, and the queued amount lands once when Money loads
+--   * at the balance limit: it shows what was really added, not the price
 --   * quick sales add up into one popup, then it hides and starts fresh
 --   * Gold / Silver meat tints it; the route is named
 --   * EarningsPopup = false: still paid, no popup
@@ -105,7 +108,7 @@ root:SetAttribute("EarningsPopup", nil)
 
 ------------------------------------------------------------ junk from the network is ignored
 
-for _, args in ipairs({ { "5" }, { -3 }, { 0 / 0 }, { math.huge }, { nil } }) do
+for _, args in ipairs({ { "5" }, { -3 }, { 0 / 0 }, { math.huge }, { nil }, { 0 } }) do
 	asServer(function()
 		root.Earned:FireClient(owner, table.unpack(args, 1, 1), "Truck", "Cod")
 	end)
@@ -116,6 +119,76 @@ asServer(function()
 end)
 check("junk labels fall back safely", frame.Visible and amount.Text == "+$7" and detail.Text == "Meat sold")
 check("unknown variant isn't tinted", rgb(amount.TextColor3, 90, 235, 90))
+advance(3)
+
+------------------------------------------------------------ spendable and pending never add up together
+
+local function fire(p, ...)
+	local args = table.pack(...)
+	asServer(function()
+		root.Earned:FireClient(p, table.unpack(args, 1, args.n))
+	end)
+end
+fire(owner, 5, "Truck", "Cod", nil, "paid", 5)
+fire(owner, 4, "Truck", "Cod", nil, "pending", 4)
+check("a pending sale starts its own popup", amount.Text == "+$4 pending" and detail.Text == "Added when your Money loads")
+fire(owner, 6, "Truck", "Cod", nil, "paid", 6)
+check("and a spendable one after it starts fresh too", amount.Text == "+$6" and detail.Text == "Cod sold to a truck")
+advance(3)
+fire(owner, 0, "Truck", "Cod", nil, "pending", 9)
+check("pending queue full: +$0 pending, says so", frame.Visible and amount.Text == "+$0 pending" and detail.Text == "Pending limit reached")
+advance(3)
+fire(owner, 3, "Truck", "Cod", nil, "paid", "lots")
+check("a junk price is ignored (not treated as clamped)", amount.Text == "+$3" and detail.Text == "Cod sold to a truck")
+advance(3)
+
+------------------------------------------------------------ money still loading (the save is locked by another server)
+
+local KEY = Economy.Config.KeyPrefix
+dsData[KEY .. "3"] = { v = 1, money = 500, lock = { job = "another-server", t = 1700000000 + 10 ^ 7 } }
+local waiting = join(3, "Waiting", Vector3.new(10, 5, 0))
+advance(0.5)
+check("locked save: Money not loaded", balance(waiting) == nil)
+local wFrame, wAmount, wDetail = popup(waiting)
+local wIds = issue(waiting, "Salmon", 10, { Source = "Net" })
+local wPaid, wValue = sell(wIds[1], "Customer")
+check("the sale settles, queued for the owner", wPaid == true and wValue > 0)
+check("popup: pending, not spendable", wFrame.Visible and wAmount.Text == "+$" .. wValue .. " pending" and wDetail.Text == "Added when your Money loads")
+check("pending is grey, not green", rgb(wAmount.TextColor3, 160, 175, 190))
+local _, wValue2 = sell(wIds[2], "Truck")
+check("pending sales add up", wAmount.Text == "+$" .. (wValue + wValue2) .. " pending")
+advance(8)
+check("after the load attempts fail: still not spendable", balance(waiting) == nil and wFrame.Visible == false)
+local wGold = issue(waiting, "Cod", 1, { Source = "Net", Variant = "Gold" })
+local _, wValue3 = sell(wGold[1], "Truck")
+check("Gold meat while loading: still grey pending", rgb(wAmount.TextColor3, 160, 175, 190) and wAmount.Text == "+$" .. wValue3 .. " pending")
+advance(3)
+dsData[KEY .. "3"].lock = nil
+advance(35)
+check("Money loads: the saved 500 + the queued sales, once", balance(waiting) == 500 + wValue + wValue2 + wValue3)
+local _, wValue4 = sell(issue(waiting, "Salmon", 10, { Source = "Net" })[1], "Customer")
+check("after loading: spendable popup, green", wAmount.Text == "+$" .. wValue4 and rgb(wAmount.TextColor3, 90, 235, 90) and wDetail.Text == "Salmon sold to a customer")
+check("and it really is in the balance", balance(waiting) == 500 + wValue + wValue2 + wValue3 + wValue4)
+advance(3)
+
+------------------------------------------------------------ at the balance limit: shows what was really added
+
+local MAX = Economy.Config.MaxBalance
+dsData[KEY .. "4"] = { v = 1, money = MAX - 3 }
+local rich = join(4, "Rich", Vector3.new(-10, 5, 0))
+advance(0.5)
+check("rich player loaded 3 below the limit", balance(rich) == MAX - 3)
+local rFrame, rAmount, rDetail = popup(rich)
+local rIds = issue(rich, "Salmon", 10, { Source = "Net" })
+local rPaid, rValue = sell(rIds[1], "Customer")
+check("the piece is worth more than the room left", rPaid == true and rValue > 3)
+check("balance clamped at the limit", balance(rich) == MAX)
+check("popup shows +$3, the real increase, not the price", rFrame.Visible and rAmount.Text == "+$3" and rDetail.Text == "Money is at the maximum")
+sell(rIds[2], "Truck")
+check("next sale adds nothing: total stays +$3", rAmount.Text == "+$3" and rDetail.Text == "Money is at the maximum" and balance(rich) == MAX)
+advance(3)
+sell(issue(rich, "Cod", 1, { Source = "Net" })[1], "Truck")
+check("a fresh run at the limit: +$0, says why", rFrame.Visible and rAmount.Text == "+$0" and rDetail.Text == "Money is at the maximum")
 advance(3)
 
 ------------------------------------------------------------ owner left: the sale still settles, nothing errors

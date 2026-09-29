@@ -358,8 +358,12 @@ def earnings() -> list[str]:
 Earnings popup: when a piece of your meat SELLS (a customer at the sale
 table, or a truck), you see "+$N" on the right of your screen, whoever
 carried it. Quick sales add up into one popup ("+$54 / 3 pieces sold");
-Gold / Silver meat tints it. Display only: the payment is the same ledger
-settlement as before (paid once, to the owner). Unowned meat shows nothing.
+Gold / Silver meat tints it. N is what really reached your Money: while
+your Money is still loading it says "+$N pending" (grey, not spendable
+yet), and at the balance limit it shows the real increase ("Money is at
+the maximum"), never the price. Display only: the payment is the same
+ledger settlement as before (paid once, to the owner). Unowned meat shows
+nothing.
 Switch off with ReplicatedStorage.Economy attribute EarningsPopup = false.
 Changes EconomyService (adds the Economy.Earned remote at start) and
 EconomyClient (the popup).

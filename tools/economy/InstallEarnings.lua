@@ -5,8 +5,12 @@
 	Earnings popup: when a piece of your meat SELLS (a customer at the sale
 	table, or a truck), you see "+$N" on the right of your screen, whoever
 	carried it. Quick sales add up into one popup ("+$54 / 3 pieces sold");
-	Gold / Silver meat tints it. Display only: the payment is the same ledger
-	settlement as before (paid once, to the owner). Unowned meat shows nothing.
+	Gold / Silver meat tints it. N is what really reached your Money: while
+	your Money is still loading it says "+$N pending" (grey, not spendable
+	yet), and at the balance limit it shows the real increase ("Money is at
+	the maximum"), never the price. Display only: the payment is the same
+	ledger settlement as before (paid once, to the owner). Unowned meat shows
+	nothing.
 	Switch off with ReplicatedStorage.Economy attribute EarningsPopup = false.
 	Changes EconomyService (adds the Economy.Earned remote at start) and
 	EconomyClient (the popup).
@@ -1390,25 +1394,45 @@ function M.carry(pieceId: any): boolean
 	return startOk and ledger:carry(pieceId)
 end
 
+-- Credits waiting for this player's Money to load (not spendable yet).
+local function queued(userId: number): number
+	local s = money.sessions[userId]
+	return if s then s.pending else 0
+end
+
 -- The one sale of a piece: pays its owner (if in the server). Returns
 -- (paid, amount). An unknown / already-settled id pays nothing.
 function M.settle(pieceId: any, route: string): (boolean, number)
 	if not startOk then
 		return false, 0
 	end
+	-- what the credit really added (no yields between the reads and the
+	-- credit): the balance can be clamped at MaxBalance, the pending queue
+	-- at MaxPendingCredit
+	local kind, added = nil, 0
 	local paid, amount, piece = Sales.settle(ledger, pieceId, function(ownerId, value)
-		return M.credit(ownerId, value, "sale:" .. route)
+		local balanceBefore, queuedBefore = money:balance(ownerId), queued(ownerId)
+		local r = M.credit(ownerId, value, "sale:" .. route)
+		if r == "paid" then
+			kind, added = "paid", (money:balance(ownerId) or 0) - (balanceBefore or 0)
+		elseif r == "pending" then
+			kind, added = "pending", queued(ownerId) - queuedBefore
+		end
+		return r
 	end)
-	if paid and piece and amount > 0 then
-		M._tellEarned(piece, amount, route)
+	if kind and piece then
+		M._tellEarned(piece, kind, added, route)
 	end
 	return paid, amount
 end
 
--- The owner's "+$" popup (display only; they are already paid). Off while
+-- The owner's popup (display only; the ledger settlement is the payment).
+-- Sends (added, route, fishName, variant, kind, value): `added` is what the
+-- credit really added, `value` the piece's price; kind "paid" = spendable
+-- now, "pending" = waits for their Money to load. Off while
 -- ReplicatedStorage.Economy's EarningsPopup attribute is false. Never
 -- yields and never errors into the sale.
-function M._tellEarned(piece: Ledger.Piece, amount: number, route: string)
+function M._tellEarned(piece: Ledger.Piece, kind: string, added: number, route: string)
 	if not earned or root:GetAttribute("EarningsPopup") == false then
 		return
 	end
@@ -1417,7 +1441,7 @@ function M._tellEarned(piece: Ledger.Piece, amount: number, route: string)
 		return
 	end
 	pcall(function()
-		(earned :: RemoteEvent):FireClient(player, amount, route, piece.fishName, piece.variant)
+		(earned :: RemoteEvent):FireClient(player, added, route, piece.fishName, piece.variant, kind, piece.value)
 	end)
 end
 
@@ -2060,7 +2084,9 @@ end)
 -- EconomyClient (LocalScript in StarterPlayerScripts).
 --   * toast for EconomyService notices (money loading, purchase results)
 --   * "+$" popup when a piece of YOUR meat sells (Economy.Earned), wherever
---     it sold and whoever carried it; quick sales add up into one popup
+--     it sold and whoever carried it; quick sales add up into one popup. It
+--     shows what really reached your Money: grey "pending" while your Money
+--     is still loading, and the real amount at the balance limit
 --   * the buy prompt for the local player's OWN rod catches: a ProximityPrompt
 --     (Style = Custom) on the rod stand, with a small world-anchored panel
 --     ([E] + fish name + "Buy"). Keyboard E, the gamepad button and tapping
@@ -2127,6 +2153,7 @@ end
 ------------------------------------------------------------ earnings popup
 
 local GREEN = Color3.fromRGB(90, 235, 90)
+local PENDING = Color3.fromRGB(160, 175, 190) -- not spendable yet
 local VARIANT_COLORS = { Gold = Color3.fromRGB(255, 205, 40), Silver = Color3.fromRGB(205, 220, 235) }
 local VARIANT_RANK = { Silver = 1, Gold = 2 }
 local ROUTES = { Customer = "to a customer", Truck = "to a truck" }
@@ -2163,26 +2190,44 @@ end
 local earnAmount = earnText("Amount", 0, 50)
 local earnDetail = earnText("Detail", 50, 26)
 
-local earnRun = { total = 0, count = 0, rank = 0, token = 0 }
+local earnRun = { total = 0, count = 0, rank = 0, token = 0, pending = false, short = false }
 
-local function onEarned(amount: any, route: any, fishName: any, variant: any)
-	if type(amount) ~= "number" or amount ~= amount or amount <= 0 or amount == math.huge then
+-- (added, route, fishName, variant, kind, value) from EconomyService:
+-- `added` is what really reached your Money (kind "paid") or the queue that
+-- waits for your Money to load (kind "pending"); `value` is the piece's
+-- price, more than `added` only at the balance / pending-queue limit.
+-- Spendable and pending sales never add up in the same popup.
+local function onEarned(added: any, route: any, fishName: any, variant: any, kind: any, value: any)
+	if type(added) ~= "number" or added ~= added or added < 0 or added == math.huge then
 		return
 	end
-	local run = earnRun
-	if not earnFrame.Visible then
-		run.total, run.count, run.rank = 0, 0, 0
+	added = math.floor(added)
+	local short = type(value) == "number" and value == value and value > added
+	if added == 0 and not short then
+		return
 	end
-	run.total += math.floor(amount)
+	local pending = kind == "pending"
+	local run = earnRun
+	if not earnFrame.Visible or run.pending ~= pending then
+		run.total, run.count, run.rank, run.pending, run.short = 0, 0, 0, pending, false
+	end
+	run.total += added
 	run.count += 1
+	run.short = run.short or short
 	local v = if type(variant) == "string" and VARIANT_COLORS[variant] then variant else nil
 	local rank = if v then VARIANT_RANK[v] else 0
-	if rank >= run.rank then
+	if pending then
+		earnAmount.TextColor3 = PENDING
+	elseif rank >= run.rank then
 		run.rank = rank
 		earnAmount.TextColor3 = if v then VARIANT_COLORS[v] else GREEN
 	end
-	earnAmount.Text = "+$" .. tostring(run.total)
-	if run.count == 1 then
+	earnAmount.Text = "+$" .. tostring(run.total) .. (if pending then " pending" else "")
+	if run.short then
+		earnDetail.Text = if pending then "Pending limit reached" else "Money is at the maximum"
+	elseif pending then
+		earnDetail.Text = "Added when your Money loads"
+	elseif run.count == 1 then
 		local fish = if type(fishName) == "string" and fishName ~= "" then fishName else "Meat"
 		local where = if type(route) == "string" and ROUTES[route] then " " .. ROUTES[route] else ""
 		earnDetail.Text = (if v then v .. " " else "") .. fish .. " sold" .. where
