@@ -189,6 +189,30 @@ for _, mode in ipairs({ "error", "errorAfter" }) do -- save fails: both undone
 	check("save " .. mode .. ": can buy after", m:buyRod(7, CORAL) and m:balance(7) == 400)
 end
 
+do -- review fix: the rod being bought is invisible to gameplay until its write succeeded
+	local store = fakeStore()
+	store.data[KEY] = { v = 1, money = 1250 }
+	local m = loaded(store)
+	local seen = {}
+	store.during = function()
+		seen.stats, seen.owned, seen.equipped = m:rodStats(7).Id, m:rods(7).owned[TIGER], m:rods(7).equipped
+	end
+	store.mode = "errorAfter" -- the write fails after the transform ran
+	local ok = m:buyRod(7, TIGER)
+	check("failed save: DURING the write a cast reads Basic, not the unpaid Tiger", seen.stats == "FishingRod1" and seen.owned == nil and seen.equipped == "FishingRod1")
+	check("failed save: after it still Basic, money back", not ok and m:rodStats(7).Id == "FishingRod1" and m:balance(7) == 1250)
+	check("failed save: the undone state is saved next time", m:isDirty(7))
+	store.mode = nil
+	m:save(7, false)
+	check("next save: money back and no Tiger in the record", store.data[KEY].money == 1250 and not store.data[KEY].rods.owned[TIGER])
+	store.during = function()
+		seen.stats2 = m:rodStats(7).Id
+	end
+	check("successful save: ok", m:buyRod(7, TIGER))
+	check("successful save: Basic while writing, Tiger only once written", seen.stats2 == "FishingRod1" and m:rodStats(7).Id == TIGER)
+	check("the staged Tiger was in that write", store.data[KEY].rods.owned[TIGER] == true and store.data[KEY].money == 1100)
+end
+
 do -- lock lost to another server: not bought, not charged, no further saves
 	local store = fakeStore()
 	store.data[KEY] = { v = 1, money = 1000 }

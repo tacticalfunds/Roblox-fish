@@ -344,6 +344,102 @@ check("Basic waits: within [3, 9] (+0.2 s cast)", slo >= 3.1 and shi <= 9.35)
 check("Magma bites clearly faster on average", fmean < smean * 0.75)
 check("the aquarium never saw an early hook (>= 2.5 s after the press)", aq.hooks >= 24 and aq.early == 0)
 
+------------------------------------------------------------ review fix 1: a cast during an unsaved purchase uses the committed rod
+
+asServer(function()
+	Economy.credit(Q, 500, "test")
+end)
+moveTo(Q, SHOP + Vector3.new(0, -7, 5))
+advance(0.6)
+local qKey = KEY .. "2"
+dsHooks.before = function(key)
+	if key == qKey then
+		task.wait(3) -- a slow DataStore that then fails
+		error("DataStore request failed")
+	end
+end
+local qres
+runAs(Q, function()
+	qres = table.pack(buyRemote:InvokeServer("FishingRod4"))
+end)
+advance(1) -- Q's Tiger purchase is being written
+check("during the write: Q's committed rod is still Basic", Q:GetAttribute("EquippedRod") == "FishingRod1")
+moveTo(Q, Vector3.new(-20, 5, 4))
+advance(0.1)
+press(Q)
+check("a cast pressed during the unsaved purchase uses Basic, not Tiger", dock[1]:GetAttribute("CastRod") == "FishingRod1")
+local castIdx = #bites
+advance(3)
+check("the purchase failed: refused, not charged, still Basic", qres and qres[1] == false
+	and qres[2] == "Couldn't save the purchase - you were not charged. Try again."
+	and Economy.balance(Q) == 550 and Q:GetAttribute("EquippedRod") == "FishingRod1" and Q:GetAttribute("RodOwned_FishingRod4") == nil)
+dsHooks.before = nil
+advance(8)
+local qBite = bites[castIdx + 1]
+check("that cast bit on Basic timing (>= 3 s)", qBite ~= nil and qBite >= 3.1)
+waitIdle()
+
+------------------------------------------------------------ review fix 2: re-checked after waiting for a save already running
+
+dsData[KEY .. "5"] = { v = 1, money = 5000 }
+local S = join(5, "Shopper", SHOP + Vector3.new(0, -7, 5))
+advance(0.5)
+local function duringAutosave(label, change, undo, expected)
+	local sKey = KEY .. "5"
+	local held = false
+	dsHooks.before = function(key)
+		if key == sKey and not held then
+			held = true
+			task.wait(3) -- S's autosave is slow: the purchase has to wait for it
+		end
+	end
+	local t = 0
+	while not held and t < 70 do
+		advance(0.5)
+		t += 0.5
+	end
+	local res
+	runAs(S, function()
+		res = table.pack(buyRemote:InvokeServer("FishingRod4"))
+	end)
+	advance(0.3)
+	if change then
+		change()
+	end
+	advance(4)
+	dsHooks.before = nil
+	if undo then
+		undo()
+	end
+	advance(0.6)
+	return held, res
+end
+local held, res = duringAutosave("move", function()
+	moveTo(S, SHOP + Vector3.new(80, -7, 0))
+end, function()
+	moveTo(S, SHOP + Vector3.new(0, -7, 5))
+end)
+check("walked away while waiting for a save: refused, not charged", held and res and res[1] == false
+	and res[2] == "Walk back to the rod shop to buy" and Economy.balance(S) == 5000 and S:GetAttribute("RodOwned_FishingRod4") == nil)
+held, res = duringAutosave("die", function()
+	S.Character.Humanoid.Health = 0
+end, function()
+	S.Character.Humanoid.Health = 100
+end)
+check("died while waiting for a save: refused, not charged", held and res and res[1] == false
+	and res[2] == "You can't do that right now" and Economy.balance(S) == 5000)
+held, res = duringAutosave("close", function()
+	root:SetAttribute("RodShopOpen", false)
+end, function()
+	root:SetAttribute("RodShopOpen", true)
+end)
+check("shop closed while waiting for a save: refused, not charged", held and res and res[1] == false
+	and res[2] == "The rod shop opens soon" and Economy.balance(S) == 5000)
+held, res = duringAutosave("nothing changes")
+check("nothing changed: bought once the running save finished", held and res and res[1] == true
+	and Economy.balance(S) == 4850 and rec(5).rods.owned.FishingRod4 == true)
+check("RodShopPaidOpen follows the switch (UI)", root:GetAttribute("RodShopPaidOpen") == true)
+
 ------------------------------------------------------------ no EconomyService: nothing sold, no money writes
 
 current = "server"

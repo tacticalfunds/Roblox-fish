@@ -500,7 +500,14 @@ stored.
   plays with Basic and can't buy rods that session.
 - **A record that failed to load is never written** (unchanged).
 - **A purchase** debits in memory, then writes the new balance **and** the
-  rod in **one** UpdateAsync before reporting success. If that write fails
+  rod in **one** UpdateAsync before reporting success. The new rod is
+  **staged**: casts and the shop keep reading the committed rods until that
+  write succeeded, so a cast during a slow or failing save never gets an
+  unpaid rod (review fix, `rods.test` + `rods_sim`).
+- **Re-checked after waiting:** if a save is already running, the purchase
+  waits for it. It then checks everything again, with no yield before the
+  debit: the player is still here and alive, the shop is open, they are in
+  range, the rod is in stock and not already owned. If that write fails
   or the session lock is lost, the money and the rod are both undone
   ("you were not charged"). Credits that arrived meanwhile stay.
 - **Equipping** is saved with the next autosave (60 s) or on leave. A

@@ -45,6 +45,7 @@ type Session = {
 	rodsWritable: boolean, -- false: not loaded, or the saved field isn't valid (left untouched)
 	rodsRev: number, -- bumped on every rod change (dirty tracking across saves)
 	buying: boolean, -- a rod purchase is being saved
+	pendingRods: Rods.Profile?, -- that purchase's profile: written by the save, not yet committed
 }
 
 local MoneyStore = {}
@@ -297,7 +298,8 @@ function MoneyStore.save(self: MoneyStore, userId: number, release: boolean): (b
 		out.v = if type(old.v) == "number" and old.v > Config.SchemaVersion then old.v else Config.SchemaVersion
 		out.money = s.balance
 		if s.rodsWritable then
-			out.rods = Rods.save(s.rods, old.rods)
+			-- a purchase in flight writes its staged profile (committed only on success)
+			out.rods = Rods.save(s.pendingRods or s.rods, old.rods)
 		end
 		out.lock = if release then nil else { job = self.jobId, t = self.now() }
 		written = s.balance
@@ -398,22 +400,27 @@ function MoneyStore.buyRod(self: MoneyStore, userId: number, id: any): (boolean,
 			return false, why
 		end
 	end
-	local before = Rods.copy(s.rods)
-	s.rods.owned[rod.Id] = true
-	s.rods.equipped = rod.Id
-	s.rods.keepEquipped = nil
-	rodsChanged(s)
+	-- The new rod is STAGED: only the save writes it. Everything gameplay
+	-- reads (rods(), rodStats()) stays the committed profile until the write
+	-- succeeded, so a cast during the save never gets an unpaid rod.
+	local pending = Rods.copy(s.rods)
+	pending.owned[rod.Id] = true
+	pending.equipped = rod.Id
+	pending.keepEquipped = nil
+	s.pendingRods = pending
 	s.buying = true
 	local saved, why = self:save(userId, false)
 	s.buying = false
+	s.pendingRods = nil
 	if saved then
+		s.rods = pending -- committed: exactly what was written
 		return true, nil
 	end
-	-- not written: undo both (credits that arrived meanwhile stay)
-	s.rods = before
-	rodsChanged(s)
+	-- not written: the rod was never committed; give the money back
+	-- (credits that arrived meanwhile stay) and save the undone state next time
 	if s.state == "Ready" then
 		s.balance = math.min(Config.MaxBalance, s.balance + rod.Price)
+		s.dirty = true
 	end
 	return false, "notSaved: " .. tostring(why)
 end

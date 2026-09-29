@@ -414,6 +414,11 @@ function M._start(): boolean
 	end)
 
 	startOk = true
+	-- display only: whether rods can be bought right now (the shop UI's "SOON")
+	root:SetAttribute("RodShopPaidOpen", M.rodShopOpen())
+	root:GetAttributeChangedSignal("RodShopOpen"):Connect(function()
+		root:SetAttribute("RodShopPaidOpen", M.rodShopOpen())
+	end)
 	root:SetAttribute("Running", true)
 	root:SetAttribute("Store", storeKind)
 	log("running (" .. storeKind .. " store)")
@@ -579,20 +584,48 @@ function M.rodAction(player: Player, rodId: any, canBuy: ((Rods.Rod) -> (boolean
 		M._publishRods(player)
 		return true, "Equipped " .. rod.Name
 	end
-	if not M.rodShopOpen() then
-		return false, "The rod shop opens soon"
-	end
-	if canBuy then
-		local allowed, why = canBuy(rod)
-		if not allowed then
-			return false, why or "You can't buy that here"
+	-- every purchase condition; checked now AND again right before the debit
+	-- (after any wait for a save already running), with no yield in between
+	local function buyable(): (boolean, string?)
+		if player.Parent ~= Players then
+			return false, "The rod shop is unavailable right now"
 		end
+		local ch = player.Character
+		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+		if not (hum and hum.Health > 0) then
+			return false, "You can't do that right now"
+		end
+		if not M.rodShopOpen() then
+			return false, "The rod shop opens soon"
+		end
+		local now = money:rods(player.UserId)
+		if not now then
+			return false, ROD_REASONS.notLoaded
+		end
+		if Rods.decide(now, rod.Id) ~= "buy" then
+			return false, ROD_REASONS.owned
+		end
+		if canBuy then
+			local allowed, why = canBuy(rod)
+			if not allowed then
+				return false, why or "You can't buy that here"
+			end
+		end
+		return true, nil
+	end
+	local allowed, refusal = buyable()
+	if not allowed then
+		return false, refusal :: string
 	end
 	rodBusy[player] = true
 	local ran, ok, why = pcall(function()
 		local t0 = os.clock()
 		while money:isSaving(player.UserId) and os.clock() - t0 < 10 do
 			task.wait(0.05)
+		end
+		local still, changed = buyable() -- things may have changed while waiting
+		if not still then
+			return false, "refused:" .. tostring(changed)
 		end
 		return money:buyRod(player.UserId, rod.Id) -- saves money + rod in one write
 	end)
@@ -602,6 +635,9 @@ function M.rodAction(player: Player, rodId: any, canBuy: ((Rods.Rod) -> (boolean
 		return false, rodReason("notSaved")
 	end
 	if not ok then
+		if why and string.sub(why, 1, 8) == "refused:" then
+			return false, string.sub(why, 9)
+		end
 		if why and string.sub(why, 1, 8) == "notSaved" then
 			warn(string.format("[Economy] %s's %s purchase not saved (%s); not charged", player.Name, rod.Id, why))
 		end
