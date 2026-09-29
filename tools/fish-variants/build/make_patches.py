@@ -78,7 +78,13 @@ class Patch:
         self.src = self.src.replace(old, new)
 
 
+# The live despawn timers (both: new fish and the pre-filled river) leave a
+# fish the harpoon has hit (HarpoonT) to the harpoon. The patch must keep that.
+HARPOON_GUARD = 'not m:GetAttribute("CaughtT") and not m:GetAttribute("HarpoonT") then m:Destroy() end'
+
+
 def fish_spawner(base: str) -> str:
+    assert base.count(HARPOON_GUARD) == 2, "live FishSpawner: expected the harpoon-safe despawn guard twice"
     p = Patch(base)
     p.rep(
         "--   SpawnT, StartZ, Speed, LaneX, Seed   -> z = StartZ + Speed * (serverTime - SpawnT)\n",
@@ -98,6 +104,7 @@ def fish_spawner(base: str) -> str:
         "\tend\n"
         "\tm.Parent = folder\n",
     )
+    assert p.src.count(HARPOON_GUARD) == 2, "variant FishSpawner lost the harpoon-safe despawn guard"
     return p.src
 
 

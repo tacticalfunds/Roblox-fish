@@ -234,4 +234,26 @@ check(
 	paid == 6 * fv and balance(netter) == before + 6 * fv
 )
 
+------------------------------------------------------------ 4) spawner despawn timer leaves harpooned fish alone (live guard)
+
+local harpooned, plain
+for _, m in ipairs(river:GetChildren()) do
+	local seed = m:GetAttribute("Seed")
+	if seed and seed < 1000 and not m:GetAttribute("CaughtT") and not m:GetAttribute("HarpoonT") then
+		if not harpooned then
+			harpooned = m
+		elseif not plain then
+			plain = m
+		end
+	end
+end
+check("spawner: two river fish to watch", harpooned ~= nil and plain ~= nil)
+asServer(function()
+	harpooned:SetAttribute("HarpoonT", ws:GetServerTimeNow())
+end)
+advance(90) -- longer than any fish's river travel (300 studs at >= 4 studs/s)
+check("spawner: a harpooned fish is not despawned (left to the harpoon)", harpooned.Parent == river)
+check("spawner: an ordinary fish despawns at the end of the river", plain.Parent == nil)
+check("spawner: the harpooned fish keeps its variant", harpooned:GetAttribute("Variant") == "Gold")
+
 finish("variants sim")

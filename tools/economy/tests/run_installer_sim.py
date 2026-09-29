@@ -1075,6 +1075,47 @@ do
 	check("money HUD: CRLF / trailing spaces in Studio still match", not refused() and sc.MoneyHud.Source == MONEYHUD.New)
 end
 
+-- Studio as Astra reported it (2026-09-29): everything but paid upgrades,
+-- variants and meat glow. The live FishSpawner has the harpoon-safe despawn
+-- guard; variants must install over it (and keep it), then meat glow.
+do
+	local g, sv, history, sc = astraPlace()
+	check("live FishSpawner baseline has the harpoon despawn guard twice",
+		select(2, sc.FishSpawner.Source:gsub('and not m:GetAttribute%\("HarpoonT"%\) then m:Destroy', "")) == 2)
+	upgradeAq(g, sv)
+	for _, step in ipairs({ installSales, moneyHud, earnings, botFix, jumpInstall, rodCast, dwell, blend }) do
+		step(g, sv)
+		assert(not refused(), "Astra's state: " .. tostring(warnings[#warnings]))
+	end
+	local studioNow = snapshot(g)
+	local commits = history.commits
+	variants(g, sv)
+	check("Astra's state (no upgrades): variants installs in one undo step", not refused() and history.commits == commits + 1)
+	check("variants: FishSpawner = the patch of the exact live source", sc.FishSpawner.Source == VAR.Spawner)
+	check("variants: the harpoon despawn guard is kept",
+		select(2, sc.FishSpawner.Source:gsub('and not m:GetAttribute%\("HarpoonT"%\) then m:Destroy', "")) == 2)
+	check("variants: rod = the dwell + rod-cast version", sc.RodFishingSystem.Source == VAR["Rod_dwell-rodcast"])
+	local afterVar = snapshot(g)
+	meatGlow(g, sv)
+	check("Astra's state: meat glow installs after variants (bot-recovery BotSystem)", not refused() and sc.BotSystem.Source == GLOW.Bot_bot)
+	meatGlowBack(g, sv)
+	check("meat glow rollback: exactly the variants state", not refused() and snapshot(g) == afterVar)
+	variantsBack(g, sv)
+	check("variants rollback: exactly Astra's state, live FishSpawner back", not refused() and snapshot(g) == studioNow
+		and sc.FishSpawner.Source == VIS.LiveFishSpawner)
+end
+-- the old baseline (no HarpoonT in the despawn guard) is not what Studio has: refused
+do
+	local g, sv, _, sc = astraPlace()
+	upgradeAq(g, sv)
+	installSales(g, sv)
+	sc.FishSpawner.Source = VIS.LiveFishSpawner:gsub(' and not m:GetAttribute%\("HarpoonT"%\)', "")
+	local before = snapshot(g)
+	variants(g, sv)
+	check("variants over a FishSpawner without the harpoon guard: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line 85", 1, true) ~= nil)
+end
+
 ------------------------------------------------------------ the whole guide (tools/INSTALL_GUIDE.md), in order
 
 do

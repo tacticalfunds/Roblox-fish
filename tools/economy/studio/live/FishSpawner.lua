@@ -82,7 +82,7 @@ local function spawnFish()
 	m:PivotTo(CFrame.lookAt(Vector3.new(laneX, surfaceY - 0.6, startZ), Vector3.new(laneX, surfaceY - 0.6, startZ + 1)))
 	m.Parent = folder
 	task.delay((endZ - startZ) / speed, function()
-		if m.Parent and not m:GetAttribute("CaughtT") then m:Destroy() end
+		if m.Parent and not m:GetAttribute("CaughtT") and not m:GetAttribute("HarpoonT") then m:Destroy() end
 	end)
 end
 
@@ -97,7 +97,7 @@ for _, m in ipairs(folder:GetChildren()) do
 	local travel = ((maxZ - 2) - m:GetAttribute("StartZ")) / sp
 	local age = rng:NextNumber(0, travel * 0.95)
 	m:SetAttribute("SpawnT", now - age)
-	task.delay(travel - age, function() if m.Parent and not m:GetAttribute("CaughtT") then m:Destroy() end end)
+	task.delay(travel - age, function() if m.Parent and not m:GetAttribute("CaughtT") and not m:GetAttribute("HarpoonT") then m:Destroy() end end)
 end
 
 while true do
