@@ -18,7 +18,8 @@ reviews and installs. Nothing here touches Studio on its own.
 | Rare Silver / Gold variants (`a92a678`) | done | **yes**: `tools/fish-variants/InstallFishVariants.lua` |
 | Earnings popup (`561c4d1`; pending / balance-limit amounts fixed later): "+$N" for the owner when their meat sells | done | **yes**: `InstallEarnings.lua` (after sales; after upgrades if used) |
 | Blender Bot recovery (`e933db6`): an error mid-trip keeps the piece | done | **yes**: `InstallBotRecovery.lua` (after sales; before meat glow) |
-| Rods milestone 1: saved ownership + equip + faster bites (paid shop still closed) | done, needs Studio validation | **yes**: `InstallRods.lua` (after earnings + variants) |
+| Rods milestone 1: saved ownership + equip + faster bites (paid shop still closed) | **installed** (Astra, pending validation), frozen at `61a7bd4` | `InstallRods.lua` + `InstallRodShopUI.lua` |
+| +5 KG signs: saved per-player net capacity, shared MaxWeight (paid signs closed) | done, needs Studio validation | **yes**: `InstallNetKg.lua` (after rods) |
 
 **All installers in one place, in order, with rollbacks: [`tools/INSTALL_GUIDE.md`](../INSTALL_GUIDE.md).**
 
@@ -578,6 +579,100 @@ while this is in.
 | R10 | (shop UI) Shop open: buy Tiger | "..." then BOUGHT! and "Bought and equipped Tiger Rod"; then OWNED / EQUIPPED |
 | R11 | (shop UI) Walk away, press Coral; press Magma broke | TOO FAR / NEED $ with the full message; nothing charged |
 | R12 | Check the new status line doesn't cover anything | Readable under the cards (layout is untested visually) |
+
+## +5 KG signs: net capacity (`InstallNetKg.lua`)
+
+Each player **owns** a net capacity, saved with their Money. Everyone starts
+at 15 kg.
+
+**The signs:**
+
+- The server binds **every** Workspace child named `KGsign`; the place has
+  two with the same name.
+- Clicking a sign's `Board Part` ClickDetector buys the clicker's next
+  +5 kg.
+- A panel above each sign shows **your** capacity → next and the price
+  (**SOON** while closed, **MAX** at the cap), plus the shared net's
+  current capacity. It uses the same style as the rod Buy panel.
+- The result appears as the usual toast, e.g. "Net capacity 15 → 20 kg
+  (-$25)" or "Walk up to the sign".
+
+**Pricing (`Config.NetKg`, initial tuning, not measured pacing):**
+
+| From → to (kg) | 15→20 | 20→25 | 25→30 | 30→35 | 35→40 | 40→45 | 45→50 | 50→55 | 55→60 |
+|---|---|---|---|---|---|---|---|---|---|
+| Cost | 25 | 50 | 100 | 150 | 225 | 340 | 510 | 765 | 1150 |
+
+After the listed costs (25, 50, 100), each step is the previous cost × 1.5,
+rounded to 5, up to **Max 60 kg**: 3,315 in total from 15 kg. To tune:
+
+- `Base`: the start, the place's MaxWeight
+- `Step`: kg per purchase
+- `Max`: the cap
+- `Costs`: the listed first costs
+- `Growth`: the multiplier after the list
+
+**The shared net:**
+
+- `Workspace.NetLift.MaxWeight`, which the weight gate, gauge and net
+  themes read, is the **highest capacity among players in the server whose
+  Money has loaded**. It never goes below the place's own value (15).
+- It updates on join (once loaded), on each purchase and on leave. A
+  player who leaves stops counting at once, even while their final save is
+  still running.
+- Only the attribute changes: no fish are touched, and NetLiftScript, the
+  dwell, ownership and harpoon code are unchanged.
+
+**Protections:**
+
+- The player must be alive, have their Money loaded, and be near the
+  clicked sign (the ClickDetector's 20 studs, + 8, + half the board's
+  size).
+- One purchase at a time per player (shared with rod purchases), with a
+  0.5 s cooldown.
+- Every condition is checked again right before the debit, after any wait
+  for a running save.
+- Money goes only through EconomyService; nothing writes leaderstats
+  directly.
+- **Fail closed:** without EconomyService the signs do nothing.
+
+**Saving:**
+
+- Record field `netKg` (whole kg). A purchase writes the new balance
+  **and** the new capacity in **one** write before it counts.
+- The new capacity is staged: `netKg()` keeps the committed one until the
+  write succeeded. If the write fails, nothing is charged.
+- An invalid `netKg` is never overwritten; that player gets 15 kg and
+  can't buy that session.
+- A newer build's higher value is kept as it is.
+- v1/v2 records without the field load as 15 kg with their money
+  untouched.
+- The same migration risks as rods apply (see above).
+
+**Paid signs stay CLOSED** (`Config.NetKgOpen = false`) until the saved path
+is validated. For a Studio validation **with API access**, set the
+`NetKgOpen` attribute on `ReplicatedStorage.Economy`.
+
+**Install:** `InstallNetKg.lua` (v2 guarded template). It needs
+`EconomyRodsBackup` and the rods sources exactly as installed (`61a7bd4`).
+It changes EconomyService, Config and MoneyStore, and adds
+`EconomyService.NetKg`, `ServerScriptService.NetCapacityServer` and
+`StarterPlayerScripts.KgSignClient`. Backup: `EconomyNetKgBackup`; every
+earlier backup is untouched. **Rollback:** `RollbackNetKg.lua`. Saved
+`netKg` values stay in the records; v2 code keeps unknown fields.
+
+### Net capacity checklist (Studio, API access ON)
+
+| # | Do | Expect |
+|---|---|---|
+| K1 | Play, walk to either +5 KG sign | Panel: "Your net 15 → 20 kg", "SOON", "Net now: 15 kg" (above BOTH signs) |
+| K2 | Click a sign (closed) | Toast "Net upgrades open soon"; nothing charged |
+| K3 | Set `ReplicatedStorage.Economy.NetKgOpen = true`; click | −25, toast "Net capacity 15 → 20 kg (-$25)"; `NetLift.MaxWeight` 20; panel $50 |
+| K4 | Click the OTHER sign | Same thing (+5 kg, −50) |
+| K5 | Walk away 40+ studs, click | Toast "Walk up to the sign"; nothing charged |
+| K6 | Net a heavy load | The weight gate / gauge use the new MaxWeight |
+| K7 | Second client (15 kg) joins, then the first leaves | MaxWeight follows the highest present player, then drops to 15; no fish vanish |
+| K8 | Stop, Play again (real DataStore) | Your capacity is back; MaxWeight follows it once your money loads |
 
 ## Blender Bot recovery (`InstallBotRecovery.lua`)
 

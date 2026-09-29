@@ -22,9 +22,12 @@
 --     with the money in the same write. Every other field (and a newer
 --     schema version) is kept on every save. A rod purchase debits and saves
 --     at once: if that write fails, the rod and the money are both undone.
+--   * `netKg` (the +5 KG signs) works the same way: loaded and saved with the
+--     money, bought with one staged write, invalid data never overwritten.
 
 local Config = require(script.Parent.Config)
 local Rods = require(script.Parent.Rods)
+local NetKg = require(script.Parent.NetKg)
 
 export type Store = {
 	update: (key: string, transform: (old: any) -> any) -> any,
@@ -46,6 +49,9 @@ type Session = {
 	rodsRev: number, -- bumped on every rod change (dirty tracking across saves)
 	buying: boolean, -- a rod purchase is being saved
 	pendingRods: Rods.Profile?, -- that purchase's profile: written by the save, not yet committed
+	netKg: number, -- owned net capacity (Base until loaded)
+	netWritable: boolean, -- false: not loaded, or the saved field isn't valid (left untouched)
+	pendingNetKg: number?, -- a net purchase being written, not yet committed
 }
 
 local MoneyStore = {}
@@ -117,6 +123,8 @@ function MoneyStore.begin(self: MoneyStore, userId: number)
 			rodsWritable = false,
 			rodsRev = 0,
 			buying = false,
+			netKg = NetKg.base(),
+			netWritable = false,
 		}
 	end
 end
@@ -147,6 +155,7 @@ function MoneyStore.attemptLoad(self: MoneyStore, userId: number): (string, stri
 				granted = true,
 				lock = { job = self.jobId, t = now },
 				rods = Rods.save(Rods.fresh(), nil),
+				netKg = NetKg.base(),
 			}
 			return loaded
 		end
@@ -199,6 +208,7 @@ function MoneyStore.attemptLoad(self: MoneyStore, userId: number): (string, stri
 		s.balance = loaded.money
 		s.granted = decision == "new"
 		s.rods, s.rodsWritable = Rods.load(loaded.rods)
+		s.netKg, s.netWritable = NetKg.load(loaded.netKg)
 		s.state = "Ready"
 		if s.pending > 0 then
 			s.balance = math.min(Config.MaxBalance, s.balance + s.pending)
@@ -300,6 +310,9 @@ function MoneyStore.save(self: MoneyStore, userId: number, release: boolean): (b
 		if s.rodsWritable then
 			-- a purchase in flight writes its staged profile (committed only on success)
 			out.rods = Rods.save(s.pendingRods or s.rods, old.rods)
+		end
+		if s.netWritable then
+			out.netKg = s.pendingNetKg or s.netKg -- a net purchase in flight writes its staged value
 		end
 		out.lock = if release then nil else { job = self.jobId, t = self.now() }
 		written = s.balance
@@ -423,6 +436,57 @@ function MoneyStore.buyRod(self: MoneyStore, userId: number, id: any): (boolean,
 		s.dirty = true
 	end
 	return false, "notSaved: " .. tostring(why)
+end
+
+------------------------------------------------------------ net capacity (+5 KG)
+
+-- The player's owned net capacity (committed), or nil while not loaded.
+function MoneyStore.netKg(self: MoneyStore, userId: number): number?
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return nil
+	end
+	return s.netKg
+end
+
+-- Buys the next step: takes its cost and WRITES the new balance and the new
+-- capacity together before it counts; the new capacity is staged (netKg()
+-- keeps the committed one) until that write succeeded. Same rules as
+-- buyRod. Returns (ok, reason, newKg, cost): reason "notLoaded" |
+-- "netUnavailable" | "busy" | "max" | "funds" | "notSaved: ..." .
+function MoneyStore.buyNetKg(self: MoneyStore, userId: number): (boolean, string?, number?, number?)
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return false, "notLoaded", nil, nil
+	end
+	if not s.netWritable then
+		return false, "netUnavailable", nil, nil
+	end
+	if s.buying or s.saving then
+		return false, "busy", nil, nil
+	end
+	local nextKg, cost = NetKg.nextStep(s.netKg)
+	if not nextKg or not cost then
+		return false, "max", nil, nil
+	end
+	local paid, why = self:tryDebit(userId, cost)
+	if not paid then
+		return false, why, nil, nil
+	end
+	s.pendingNetKg = nextKg
+	s.buying = true
+	local saved, reason = self:save(userId, false)
+	s.buying = false
+	s.pendingNetKg = nil
+	if saved then
+		s.netKg = nextKg -- committed: exactly what was written
+		return true, nil, nextKg, cost
+	end
+	if s.state == "Ready" then
+		s.balance = math.min(Config.MaxBalance, s.balance + cost)
+		s.dirty = true
+	end
+	return false, "notSaved: " .. tostring(reason), nil, nil
 end
 
 function MoneyStore.isBuying(self: MoneyStore, userId: number): boolean

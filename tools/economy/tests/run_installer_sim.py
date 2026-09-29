@@ -152,6 +152,8 @@ RELEASE_COMMIT = "a826d73"  # the rod-offers release installed in Studio (fresh 
 SALES_RELEASE = "91121de"  # InstallSales / InstallUpgrades as released for Astra's install
 EARNINGS_RELEASE = "0829fc9"  # InstallEarnings as installed by Astra
 EARNINGS_FROZEN = ["InstallEarnings.lua", "RollbackEarnings.lua"]
+RODS_RELEASE = "61a7bd4"  # InstallRods + InstallRodShopUI as installed by Astra
+RODS_FROZEN = ["InstallRods.lua", "RollbackRods.lua", "InstallRodShopUI.lua", "RollbackRodShopUI.lua"]
 SALES_FROZEN = ["UpgradeAquariumV12.lua", "RollbackAquariumV12.lua", "InstallSales.lua", "RollbackSales.lua", "InstallUpgrades.lua", "RollbackUpgrades.lua"]
 AQUARIUM_V1 = "2e320f9"
 AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
@@ -1373,6 +1375,85 @@ do
 		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
 end
 
+-- +5 KG signs: on Astra's current state (panel, rods, shop UI, jump rate installed)
+local function netKg(g, s) warnings = {} runNetKg(g, s.Workspace) end
+local function netKgBack(g, s) warnings = {} runNetKgBack(g, s.Workspace) end
+local function astraCurrent()
+	local g, sv, history, sc = astraNow()
+	panel(g, sv)
+	rods(g, sv)
+	shopUi(g, sv)
+	jumpRate(g, sv)
+	assert(not refused(), "Astra's current state: " .. tostring(warnings[#warnings]))
+	return g, sv, history, sc
+end
+do
+	local g, sv, history, sc = astraCurrent()
+	local svc = sv.ServerScriptService.EconomyService
+	local backups = {}
+	for _, bk in ipairs(sv.ServerStorage:GetChildren()) do
+		backups[bk.Name] = subtree(bk)
+	end
+	local before = snapshot(g)
+	sv.RunService.running = true
+	netKg(g, sv)
+	check("net kg in Play: refused", refused() and snapshot(g) == before)
+	sv.RunService.running = false
+	local commits = history.commits
+	netKg(g, sv)
+	check("net kg on Astra's current state: one undo step", not refused() and history.commits == commits + 1)
+	check("net kg: EconomyService / Config / MoneyStore updated", svc.Source == NETKG.EconomyService and svc.Config.Source == NETKG.Config
+		and svc.MoneyStore.Source == NETKG.MoneyStore)
+	check("net kg: NetKg module, NetCapacityServer, KgSignClient added, tagged",
+		svc:FindFirstChild("NetKg") and svc.NetKg.Source == NETKG.NetKg
+		and sv.ServerScriptService:FindFirstChild("NetCapacityServer") and sv.ServerScriptService.NetCapacityServer.ClassName == "Script"
+		and sv.ServerScriptService.NetCapacityServer.Source == NETKG.Server and sv.ServerScriptService.NetCapacityServer:GetAttribute("EconomyOwned") == true
+		and sv.StarterPlayer.StarterPlayerScripts:FindFirstChild("KgSignClient") and sv.StarterPlayer.StarterPlayerScripts.KgSignClient.Source == NETKG.Client)
+	check("net kg: Rods module and the rod scripts untouched", svc.Rods.Source == RODS.Rods and sc.RodShopServer.Source == RODS.Shop
+		and sc.RodFishingSystem.Source == RODS.Fishing)
+	check("net kg: backup = 3 changes + 3 adds", #sv.ServerStorage.EconomyNetKgBackup:GetChildren() == 6)
+	local kept = true
+	for name, tree in pairs(backups) do
+		kept = kept and sv.ServerStorage:FindFirstChild(name) ~= nil and subtree(sv.ServerStorage[name]) == tree
+	end
+	check("net kg: every earlier backup untouched (rods, shop UI, jump rate, panel, ...)", kept)
+	local after = snapshot(g)
+	netKg(g, sv)
+	check("net kg twice: refused", refused() and snapshot(g) == after)
+	rodsBack(g, sv)
+	check("rods rollback refused while net kg is in", refused() and snapshot(g) == after)
+	svc.MoneyStore.Source ..= "\n-- hand edit"
+	local edited = snapshot(g)
+	netKgBack(g, sv)
+	check("net kg rollback over an edited MoneyStore: refused", refused() and snapshot(g) == edited)
+	svc.MoneyStore.Source = NETKG.MoneyStore
+	netKgBack(g, sv)
+	check("net kg rollback: exactly the state before (added scripts removed)", not refused() and snapshot(g) == before
+		and sv.ServerScriptService:FindFirstChild("NetCapacityServer") == nil and svc:FindFirstChild("NetKg") == nil)
+end
+do
+	local g, sv = astraNow() -- no rods
+	local before = snapshot(g)
+	netKg(g, sv)
+	check("net kg without rods: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraCurrent()
+	local mine = new("Script", "NetCapacityServer")
+	mine.Source = "-- someone else's"
+	mine.Parent = sv.ServerScriptService
+	local before = snapshot(g)
+	netKg(g, sv)
+	check("net kg when a NetCapacityServer already exists: refused, kept", refused() and snapshot(g) == before and mine.Source == "-- someone else's")
+end
+do
+	local g, sv = astraCurrent()
+	sv.ServerScriptService.EconomyService.Rods.Source ..= "\n-- tuned"
+	local before = snapshot(g)
+	netKg(g, sv)
+	check("net kg over an edited Rods module: refused", refused() and snapshot(g) == before)
+end
+
 -- the old baseline (no HarpoonT in the despawn guard) is not what Studio has: refused
 do
 	local g, sv, _, sc = astraPlace()
@@ -1468,6 +1549,14 @@ def main() -> int:
         if (ROOT / frozen).read_text() != git_show(frozen, SALES_RELEASE):
             print(f"FAIL: {frozen} differs from the {SALES_RELEASE} sales release")
             return 1
+    for frozen in RODS_FROZEN:
+        if (ROOT / frozen).read_text() != git_show(frozen, RODS_RELEASE):
+            print(f"FAIL: {frozen} differs from the {RODS_RELEASE} rods release")
+            return 1
+    for frozen in ("InstallJumpRate.lua", "RollbackJumpRate.lua"):
+        if (ROOT.parent / "fish-jump" / frozen).read_text() != git_show(frozen, "1a19061", "tools/fish-jump/"):
+            print(f"FAIL: fish-jump/{frozen} differs from the 1a19061 release")
+            return 1
     for frozen in EARNINGS_FROZEN:
         if (ROOT / frozen).read_text() != git_show(frozen, EARNINGS_RELEASE):
             print(f"FAIL: {frozen} differs from the {EARNINGS_RELEASE} earnings release")
@@ -1507,18 +1596,28 @@ def main() -> int:
         f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (("Server", pn / "studio" / "AquariumCycleServer.patched.from-v12.lua"), ("Client", pn / "src" / "AquariumPanelClient.client.luau"))
     ) + "}\n"
     tables += f"local RATE = {{ Module = {lua_string((ROOT.parent / 'fish-jump' / 'studio' / 'jump-rate' / 'FishJump.luau').read_text())} }}\n"
+    # what InstallRods writes (the 61a7bd4 release, installed pending validation)
     rods_files = {
+        "EconomyService": "src/server/EconomyService.luau",
+        "Config": "src/core/Config.luau",
+        "MoneyStore": "src/core/MoneyStore.luau",
+        "Rods": "src/core/Rods.luau",
+        "Shop": "studio/rods/RodShopServer.lua",
+        "Fishing": "studio/rods/RodFishingSystem.lua",
+    }
+    tables += "local RODS = {\n" + "".join(f"\t{k} = {lua_string(git_show(v, RODS_RELEASE))},\n" for k, v in rods_files.items()) + "}\n"
+    tables += "local SHOPUI = {\n" + "".join(
+        f"\t{k} = {lua_string(git_show(v, RODS_RELEASE))},\n" for k, v in (("Live", "studio/live/RodShopController.lua"), ("New", "studio/rods/RodShopController.lua"))
+    ) + "}\n"
+    netkg_files = {
         "EconomyService": ROOT / "src/server/EconomyService.luau",
         "Config": ROOT / "src/core/Config.luau",
         "MoneyStore": ROOT / "src/core/MoneyStore.luau",
-        "Rods": ROOT / "src/core/Rods.luau",
-        "Shop": ROOT / "studio/rods/RodShopServer.lua",
-        "Fishing": ROOT / "studio/rods/RodFishingSystem.lua",
+        "NetKg": ROOT / "src/core/NetKg.luau",
+        "Server": ROOT / "src/server/NetCapacityServer.server.luau",
+        "Client": ROOT / "src/client/KgSignClient.client.luau",
     }
-    tables += "local RODS = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in rods_files.items()) + "}\n"
-    tables += "local SHOPUI = {\n" + "".join(
-        f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (("Live", ROOT / "studio/live/RodShopController.lua"), ("New", ROOT / "studio/rods/RodShopController.lua"))
-    ) + "}\n"
+    tables += "local NETKG = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in netkg_files.items()) + "}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1611,6 +1710,8 @@ def main() -> int:
         + wrap("runRodsBack", (ROOT / "RollbackRods.lua").read_text())
         + wrap("runShopUi", (ROOT / "InstallRodShopUI.lua").read_text())
         + wrap("runShopUiBack", (ROOT / "RollbackRodShopUI.lua").read_text())
+        + wrap("runNetKg", (ROOT / "InstallNetKg.lua").read_text())
+        + wrap("runNetKgBack", (ROOT / "RollbackNetKg.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

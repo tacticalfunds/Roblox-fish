@@ -30,8 +30,11 @@ As reported by Astra, 2026-09-29 (user authorised the remaining installs):
 - **deliberately not installed:** row 3, paid aquarium upgrades (levels
   aren't saved; see open decisions)
 - **installed since:** row 9, variants (`28a9b3f`), and row 10, meat glow
-- **installed since:** row 12, the aquarium panel (`0e64dd2`)
-- **next:** row 13, fish jump more often
+- **installed since:** row 12, the aquarium panel (`0e64dd2`); rows 13-15
+  (jump rate, rods, rod shop UI) were installed **pending validation**: Play
+  couldn't be run yet, so runtime, visuals and persistence are unverified.
+  The paid shop is still closed.
+- **next:** row 16, the +5 KG signs (paid signs closed)
 
 **Not production-ready as a whole:** paid upgrades (row 3) and the live Car
 Sales upgrades reset every server while the Money spent stays saved. See
@@ -61,6 +64,7 @@ rollback.
 | 13 | [`fish-jump/InstallJumpRate.lua`](fish-jump/README.md#jump-more-often-installjumpratelua) | Fish jump about twice as often (periods 16–28 s → 8–14 s) | 6 | `FishJumpRateBackup` |
 | 14 | [`economy/InstallRods.lua`](economy/README.md#rods-milestone-1-installrodslua) | Rods owned for good (saved with Money), equipped, faster bites; paid shop stays closed | 4 and 9 | `EconomyRodsBackup` |
 | 15 | [`economy/InstallRodShopUI.lua`](economy/README.md#rod-shop-ui-installrodshopuilua) | Shop cards show price / OWNED / benefit / EQUIPPED and the server's real answers | 14 | `EconomyRodShopUIBackup` |
+| 16 | [`economy/InstallNetKg.lua`](economy/README.md#5-kg-signs-net-capacity-installnetkglua) | +5 KG signs: saved per-player net capacity; shared NetLift.MaxWeight = highest present player; paid signs closed | 14 | `EconomyNetKgBackup` |
 
 "After X" matters because both change the same script. The later installer
 knows X's version; the earlier one doesn't, so running them the other way
@@ -68,12 +72,13 @@ round is refused, with nothing changed.
 
 ## Rollback order
 
-Exactly the reverse: **15 → 1**, then, if you ever need to go further,
+Exactly the reverse: **16 → 1**, then, if you ever need to go further,
 `economy/RollbackAquariumV12.lua` and `economy/UninstallRodOffers.lua`.
 Row 2 (Money HUD) touches nothing else, so its rollback works at any time.
 
 | # | Rollback file |
 |---|---|
+| 16 | `economy/RollbackNetKg.lua` (before 14) |
 | 15 | `economy/RollbackRodShopUI.lua` (before 14) |
 | 14 | `economy/RollbackRods.lua` (before 4 and 9) |
 | 13 | `fish-jump/RollbackJumpRate.lua` (before 6) |
@@ -111,6 +116,7 @@ Every way a client can reach the server, in the scripts in this repo:
 | Aquarium Release / upgrade prompts | the server checks alive and in range (prompt distance + slack) before acting or charging. With the panel (row 12) they are Custom-style prompts; upgrade prompts exist only with a currency binding |
 | `RodShopServer` buy | charged through EconomyService only (row 14: fail closed, alive, loaded, near the shop, in stock, one at a time, saved before it counts); paid shop closed until validated |
 | Net pad (`Touched`) | one shared lift cycle (~2.6 s), weight limit, refuses while the grinder is backed up |
+| +5 KG sign clicks (row 16) | ClickDetector on the server: alive, loaded, near that sign, one purchase at a time, cooldown, re-checked before the debit, saved before it counts; paid signs closed until validated |
 | Truck carry / delivery | server-side, from the player's position; carriers are never paid, and each piece pays its owner once |
 | `Economy.Notice`, `Economy.Earned` | server → client only; the client ignores malformed values |
 | Money HUD | reads `leaderstats.Money` only; sends nothing |

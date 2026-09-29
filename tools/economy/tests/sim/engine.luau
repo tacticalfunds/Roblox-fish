@@ -451,6 +451,7 @@ local EVENTS = {
 	Destroying = true,
 	Activated = true,
 	MouseButton1Click = true,
+	MouseClick = true,
 	Changed = true,
 	PromptShown = true,
 	PromptHidden = true,
@@ -1217,7 +1218,7 @@ end
 ------------------------------------------------------------ economy (as InstallRodOffers creates it)
 
 local root, Economy
-local CORE = { "Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales", "Rods" }
+local CORE = { "Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales", "Rods", "NetKg" }
 local function installEconomy()
 	current = "server"
 	root = new("Folder", "Economy")

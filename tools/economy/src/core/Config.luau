@@ -154,6 +154,27 @@ Config.AlwaysStockedRods = { "FishingRod1", "FishingRod4" }
 -- Seconds between rod actions (buy / equip) per player.
 Config.RodActionCooldown = 0.5
 
+------------------------------------------------------------ net capacity (+5 KG signs)
+
+-- Each player OWNS a net capacity in kg, saved with their Money. The net
+-- lift's MaxWeight is the highest capacity among the players in the server
+-- (never below the place's own MaxWeight). A +5 KG sign sells the next step.
+-- Costs: the list first, then the previous cost x Growth rounded to 5, up
+-- to Max (15 -> 60 kg: 25, 50, 100, 150, 225, 340, 510, 765, 1150 = 3315).
+-- INITIAL tuning, not measured pacing.
+Config.NetKg = {
+	Base = 15, -- everyone starts here (the place's NetLift.MaxWeight)
+	Step = 5, -- kg per purchase
+	Max = 60, -- nothing is sold past this
+	Costs = { 25, 50, 100 },
+	Growth = 1.5,
+}
+-- PAID signs stay closed until the saved path is validated in Studio with
+-- real DataStore access: set true here, or (for a test) the NetKgOpen
+-- attribute on ReplicatedStorage.Economy.
+Config.NetKgOpen = false
+Config.NetKgCooldown = 0.5 -- seconds between sign presses per player
+
 ------------------------------------------------------------ checks
 
 -- Design guard rails, asserted by the tests and by the installer.
@@ -197,6 +218,17 @@ function Config.check(firstTankUpgradeCost: number?): (boolean, string?)
 		if (i == 1) ~= (rod.Id == Config.BaseRod) or (i == 1 and rod.Price ~= 0) then
 			return false, "the first rod must be the free BaseRod"
 		end
+	end
+	local n = Config.NetKg
+	if not (n.Base > 0 and n.Step > 0 and n.Max >= n.Base and (n.Max - n.Base) % n.Step == 0 and n.Growth >= 1 and #n.Costs >= 1) then
+		return false, "NetKg: Base / Step / Max / Growth / Costs out of range"
+	end
+	local last = 0
+	for _, c in ipairs(n.Costs) do
+		if type(c) ~= "number" or c <= last or c ~= math.floor(c) then
+			return false, "NetKg: Costs must be increasing whole numbers"
+		end
+		last = c
 	end
 	return true, nil
 end

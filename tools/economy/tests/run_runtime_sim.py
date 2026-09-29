@@ -19,7 +19,7 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CORE = ["Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales", "Rods"]
+CORE = ["Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales", "Rods", "NetKg"]
 
 
 def long_string(text: str) -> str:
@@ -69,6 +69,8 @@ def sources() -> dict:
     out["Blend_Dwell"] = (blend / "FishSwimClient.patched.from-dwell-jump.lua").read_text()
     out["Rods_Shop"] = (ROOT / "studio" / "rods" / "RodShopServer.lua").read_text()
     out["Rods_Fishing"] = (ROOT / "studio" / "rods" / "RodFishingSystem.lua").read_text()
+    out["Kg_Server"] = (ROOT / "src" / "server" / "NetCapacityServer.server.luau").read_text()
+    out["Kg_Client"] = (ROOT / "src" / "client" / "KgSignClient.client.luau").read_text()
     out["Rods_ShopUI"] = (ROOT / "studio" / "rods" / "RodShopController.lua").read_text()
     out["Live_RodShopController"] = (ROOT / "studio" / "live" / "RodShopController.lua").read_text()
     panel = ROOT.parent / "aquarium-panel"

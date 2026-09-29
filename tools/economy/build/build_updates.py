@@ -51,7 +51,9 @@ EARNINGS_RELEASE = "0829fc9"
 # economy milestones after the sales release (each its own installer)
 LATER_THAN_EARNINGS: list[str] = []
 LATER_THAN_BOT = ["EconomyMeatGlowBackup"]
-LATER_THAN_RODS = ["EconomyRodShopUIBackup"]  # the shop UI reads what InstallRods publishes  # tools/fish-variants InstallMeatGlow patches BotSystem too
+LATER_THAN_RODS = ["EconomyRodShopUIBackup"]  # the shop UI reads what InstallRods publishes
+# InstallRods + InstallRodShopUI as installed by Astra (pending validation)
+RODS_RELEASE = "61a7bd4"  # tools/fish-variants InstallMeatGlow patches BotSystem too
 
 
 def git_show(commit: str, path: str) -> str:
@@ -588,6 +590,73 @@ Requires: rods (InstallRods.lua, EconomyRodsBackup).
     return keys
 
 
+def net_kg() -> list[str]:
+    """+5 KG signs: per-player net capacity saved with the Money, shared
+    NetLift.MaxWeight = the highest loaded player's. On top of the rods
+    release as installed (61a7bd4, pending validation)."""
+    core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
+    changes = [
+        (
+            {"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("rods", git_show(RODS_RELEASE, "tools/economy/src/server/EconomyService.luau"), (ROOT / "src/server/EconomyService.luau").read_text())],
+        ),
+        (
+            {"key": "Config", "where": "ServerScriptService/EconomyService/Config", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("rods", git_show(RODS_RELEASE, core("Config")), (ROOT / "src/core/Config.luau").read_text())],
+        ),
+        (
+            {"key": "MoneyStore", "where": "ServerScriptService/EconomyService/MoneyStore", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("rods", git_show(RODS_RELEASE, core("MoneyStore")), (ROOT / "src/core/MoneyStore.luau").read_text())],
+        ),
+    ]
+    unchanged = []
+    for name in ("Rods", "Pricing", "Ledger", "Offers", "PieceTags", "Sales"):
+        src = git_show(RODS_RELEASE, core(name))
+        assert src == (ROOT / "src" / "core" / f"{name}.luau").read_text(), name
+        unchanged.append(({"key": name, "where": f"ServerScriptService/EconomyService/{name}", "class": "ModuleScript", "tag": "EconomyOwned"}, src))
+    adds = [
+        {"where": "ServerScriptService/EconomyService", "name": "NetKg", "class": "ModuleScript", "source": (ROOT / "src/core/NetKg.luau").read_text()},
+        {"where": "ServerScriptService", "name": "NetCapacityServer", "class": "Script", "source": (ROOT / "src/server/NetCapacityServer.server.luau").read_text()},
+        {"where": "StarterPlayer/StarterPlayerScripts", "name": "KgSignClient", "class": "LocalScript", "source": (ROOT / "src/client/KgSignClient.client.luau").read_text()},
+    ]
+    keys = write_pair_v2(
+        "InstallNetKg.lua",
+        "RollbackNetKg.lua",
+        """
++5 KG signs: each player OWNS a net capacity (15 kg to start), saved with
+their Money. Clicking either Workspace.KGsign (both same-named signs are
+bound) buys the clicker's next +5 kg: 25, 50, 100, then x1.5 rounded to 5,
+up to 60 kg (initial tuning). The purchase saves the new balance AND the
+new capacity in ONE write before it counts; if the write fails nothing is
+charged. Checks: alive, money loaded, near the clicked sign, one purchase
+at a time, cooldown, re-checked right before the debit.
+The net lift is shared: Workspace.NetLift.MaxWeight (weight gate, gauge,
+themes) = the highest capacity among loaded players in the server, never
+below the place's own value; it follows joins, purchases and leaves. No
+fish are touched.
+A panel above each sign shows YOUR capacity -> next and the price (SOON
+while closed, MAX at the cap) and the shared net's capacity.
+PAID SIGNS STAY CLOSED (Config.NetKgOpen = false). For a Studio validation
+with real DataStore access, set the NetKgOpen attribute on
+ReplicatedStorage.Economy.
+Changes EconomyService, Config, MoneyStore (record field netKg); adds
+EconomyService.NetKg, ServerScriptService.NetCapacityServer and
+StarterPlayerScripts.KgSignClient.
+Requires: rods (EconomyRodsBackup; its sources exactly as installed).
+""",
+        "EconomyNetKgBackup",
+        [["EconomyRodsBackup"]],
+        ["EconomyNetKgBackup"],
+        [],
+        changes,
+        unchanged,
+        adds,
+        ROOT,
+    )
+    assert keys == ["EconomyService", "Config", "MoneyStore"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -597,8 +666,10 @@ def main() -> None:
     earnings()
     bot_recovery()
     money_hud()
-    rods()
-    rod_shop_ui()
+    # InstallRods / InstallRodShopUI are FROZEN at the 61a7bd4 release Astra
+    # installed (pending validation): rods() / rod_shop_ui() are not rerun;
+    # later milestones read their sources from git at RODS_RELEASE.
+    net_kg()
 
 
 if __name__ == "__main__":

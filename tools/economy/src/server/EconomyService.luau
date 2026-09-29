@@ -13,6 +13,8 @@
 --   * rods (child module Rods): owned / equipped rods saved in the same
 --     record as the money; buying saves money + rod in one write before it
 --     counts; RodFishingSystem reads the presser's rod per cast (rodStats)
+--   * net capacity (child module NetKg): the +5 KG signs, saved the same way;
+--     NetCapacityServer sets the shared NetLift.MaxWeight from netKg()
 --
 -- Every patched live script loads this with FindFirstChild + pcall(require)
 -- and calls start(); if it is missing or fails, those scripts behave
@@ -37,6 +39,7 @@ local PieceTags = require(script.PieceTags)
 local Sales = require(script.Sales)
 local Offers = require(script.Offers)
 local Rods = require(script.Rods)
+local NetKg = require(script.NetKg)
 
 local M = {}
 M.Config = Config
@@ -167,6 +170,7 @@ local function showMoney(player: Player)
 	moneyValues[player] = v
 	v.Parent = stats
 	M._publishRods(player) -- rods load with the money
+	M._publishNet(player)
 end
 
 ------------------------------------------------------------ load / save
@@ -418,6 +422,10 @@ function M._start(): boolean
 	root:SetAttribute("RodShopPaidOpen", M.rodShopOpen())
 	root:GetAttributeChangedSignal("RodShopOpen"):Connect(function()
 		root:SetAttribute("RodShopPaidOpen", M.rodShopOpen())
+	end)
+	root:SetAttribute("NetKgPaidOpen", M.netKgOpen())
+	root:GetAttributeChangedSignal("NetKgOpen"):Connect(function()
+		root:SetAttribute("NetKgPaidOpen", M.netKgOpen())
 	end)
 	root:SetAttribute("Running", true)
 	root:SetAttribute("Store", storeKind)
@@ -732,6 +740,129 @@ function M._tellEarned(piece: Ledger.Piece, kind: string, added: number, route: 
 	pcall(function()
 		(earned :: RemoteEvent):FireClient(player, added, route, piece.fishName, piece.variant, kind, piece.value)
 	end)
+end
+
+------------------------------------------------------------ net capacity (+5 KG signs)
+
+local lastNetAction: { [Player]: number } = {}
+M.onPlayerLeaving(function(player: Player)
+	lastNetAction[player] = nil
+end)
+
+-- Paid +5 KG: Config.NetKgOpen, or (for a Studio validation) the NetKgOpen
+-- attribute on ReplicatedStorage.Economy.
+function M.netKgOpen(): boolean
+	return startOk and (Config.NetKgOpen == true or root:GetAttribute("NetKgOpen") == true)
+end
+
+-- The player's owned (committed) net capacity, or nil while not loaded.
+function M.netKg(player: Player): number?
+	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return nil
+	end
+	return money:netKg(player.UserId)
+end
+
+-- Display only (the sign panel reads these): NetKg, NetKgNext, NetKgCost.
+function M._publishNet(player: Player)
+	local kg = money:netKg(player.UserId)
+	if not kg or not player.Parent then
+		return
+	end
+	local nextKg, cost = NetKg.nextStep(kg)
+	player:SetAttribute("NetKg", kg)
+	player:SetAttribute("NetKgNext", nextKg)
+	player:SetAttribute("NetKgCost", cost)
+end
+
+local NET_REASONS = {
+	funds = "Not enough money",
+	notLoaded = "Your money is still loading - try again in a moment",
+	netUnavailable = "Your saved net couldn't be read, so net upgrades are off this session",
+	busy = "One moment - still saving",
+}
+
+-- One press of a +5 KG sign: buys the next step for this player, saved
+-- (money + capacity, one write) before it counts; nothing is charged if the
+-- write fails. `canBuy()` is the sign's own check (in reach). Everything is
+-- checked before any wait for a running save AND again right before the
+-- debit, with no yield in between. Returns (ok, message, newKg?).
+function M.netKgAction(player: Player, canBuy: (() -> (boolean, string?))?): (boolean, string, number?)
+	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") or player.Parent ~= Players then
+		return false, "Net upgrades are unavailable right now", nil
+	end
+	if rodBusy[player] then -- one purchase at a time per player (rods or net)
+		return false, NET_REASONS.busy, nil
+	end
+	local now = os.clock()
+	if lastNetAction[player] and now - lastNetAction[player] < Config.NetKgCooldown then
+		return false, "Slow down a little", nil
+	end
+	lastNetAction[player] = now
+	local function buyable(): (boolean, string?)
+		if player.Parent ~= Players then
+			return false, "Net upgrades are unavailable right now"
+		end
+		local ch = player.Character
+		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+		if not (hum and hum.Health > 0) then
+			return false, "You can't do that right now"
+		end
+		if not M.netKgOpen() then
+			return false, "Net upgrades open soon"
+		end
+		local kg = money:netKg(player.UserId)
+		if not kg then
+			return false, NET_REASONS.notLoaded
+		end
+		if not NetKg.nextStep(kg) then
+			return false, string.format("Your net is at the maximum (%d kg)", kg)
+		end
+		if canBuy then
+			local allowed, why = canBuy()
+			if not allowed then
+				return false, why or "You can't buy that here"
+			end
+		end
+		return true, nil
+	end
+	local allowed, refusal = buyable()
+	if not allowed then
+		return false, refusal :: string, nil
+	end
+	local before = money:netKg(player.UserId) :: number
+	rodBusy[player] = true
+	local ran, ok, why, newKg, cost = pcall(function()
+		local t0 = os.clock()
+		while money:isSaving(player.UserId) and os.clock() - t0 < 10 do
+			task.wait(0.05)
+		end
+		local still, changed = buyable()
+		if not still then
+			return false, "refused:" .. tostring(changed), nil, nil
+		end
+		before = money:netKg(player.UserId) :: number
+		return money:buyNetKg(player.UserId) -- saves money + capacity in one write
+	end)
+	rodBusy[player] = nil
+	if not ran then
+		warn("[Economy] net upgrade failed: " .. tostring(ok))
+		return false, "Couldn't save the upgrade - you were not charged. Try again.", nil
+	end
+	if not ok then
+		if type(why) == "string" and string.sub(why, 1, 8) == "refused:" then
+			return false, string.sub(why, 9), nil
+		end
+		if type(why) == "string" and string.sub(why, 1, 8) == "notSaved" then
+			warn(string.format("[Economy] %s's net upgrade not saved (%s); not charged", player.Name, why))
+			return false, "Couldn't save the upgrade - you were not charged. Try again.", nil
+		end
+		return false, NET_REASONS[why or ""] or "Couldn't do that right now", nil
+	end
+	sync(player)
+	M._publishNet(player)
+	log(string.format("%s net %d -> %d kg for %d", player.Name, before, newKg, cost))
+	return true, string.format("Net capacity %d → %d kg (-$%d)", before, newKg, cost), newKg
 end
 
 -- The object for a piece is gone without a sale: keep the piece as data.
