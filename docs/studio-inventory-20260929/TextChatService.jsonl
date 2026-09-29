@@ -1,0 +1,10 @@
+{"service":"TextChatService","mode":"Edit","placeId":134592289044923,"rowCount":9}
+{"properties":[],"name":"TextChatService","tags":[],"id":1,"class":"TextChatService","attributes":[],"parent":0}
+{"properties":{"Enabled":true},"name":"ChatWindowConfiguration","tags":[],"id":2,"class":"ChatWindowConfiguration","attributes":[],"parent":1}
+{"properties":{"Enabled":true,"KeyboardKeyCode":"Enum.KeyCode.Slash"},"name":"ChatInputBarConfiguration","tags":[],"id":3,"class":"ChatInputBarConfiguration","attributes":[],"parent":1}
+{"properties":{"Enabled":true},"name":"BubbleChatConfiguration","tags":[],"id":4,"class":"BubbleChatConfiguration","attributes":[],"parent":1}
+{"properties":{"Color":"0 1 1 1 0 1 1 1 1 0 ","Transparency":"0 0 0 1 0 0 ","Enabled":false},"name":"UIGradient","tags":[],"id":5,"class":"UIGradient","attributes":[],"parent":4}
+{"properties":{"Image":"","Transparency":0,"Size":"{0, 100}, {0, 100}","Position":"{0, 0}, {0, 0}"},"name":"ImageLabel","tags":[],"id":6,"class":"ImageLabel","attributes":[],"parent":4}
+{"properties":[],"name":"UICorner","tags":[],"id":7,"class":"UICorner","attributes":[],"parent":4}
+{"properties":[],"name":"UIPadding","tags":[],"id":8,"class":"UIPadding","attributes":[],"parent":4}
+{"properties":{"Enabled":false},"name":"ChannelTabsConfiguration","tags":[],"id":9,"class":"ChannelTabsConfiguration","attributes":[],"parent":1}

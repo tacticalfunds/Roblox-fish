@@ -1,0 +1,38 @@
+{"service":"Lighting","mode":"Edit","placeId":134592289044923,"rowCount":37}
+{"properties":[],"name":"Lighting","tags":[],"id":1,"class":"Lighting","attributes":{"RBX_OriginalTechnologyOnFileLoad":3,"RBX_LightingTechnologyUnifiedMigration":true},"parent":0}
+{"properties":{"Enabled":false,"Size":0},"name":"UIBlur","tags":[],"id":2,"class":"BlurEffect","attributes":[],"parent":1}
+{"properties":{"Enabled":true},"name":"ColorCorrection","tags":[],"id":3,"class":"ColorCorrectionEffect","attributes":[],"parent":1}
+{"properties":[],"name":"WeatherEvents","tags":[],"id":4,"class":"Folder","attributes":[],"parent":1}
+{"properties":[],"name":"Volcano","tags":[],"id":5,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://122609737860352","SkyboxRt":"rbxassetid://130162906362666","SkyboxLf":"rbxassetid://127251257979196","SkyboxFt":"rbxassetid://91335659902084","SkyboxBk":"rbxassetid://95429228463886","SkyboxDn":"rbxassetid://131503227407777"},"name":"Inferno Sunset","tags":[],"id":6,"class":"Sky","attributes":[],"parent":5}
+{"properties":[],"name":"Blackhole","tags":[],"id":7,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://6412503613","SkyboxRt":"rbxassetid://6444884337","SkyboxLf":"rbxassetid://6444884337","SkyboxFt":"rbxassetid://6444884337","SkyboxBk":"rbxassetid://6444884337","SkyboxDn":"rbxassetid://6444884785"},"name":"Sky","tags":[],"id":8,"class":"Sky","attributes":[],"parent":7}
+{"properties":[],"name":"SunGod","tags":[],"id":9,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://122609737860352","SkyboxRt":"rbxassetid://130162906362666","SkyboxLf":"rbxassetid://127251257979196","SkyboxFt":"rbxassetid://91335659902084","SkyboxBk":"rbxassetid://95429228463886","SkyboxDn":"rbxassetid://131503227407777"},"name":"Inferno Sunset","tags":[],"id":10,"class":"Sky","attributes":[],"parent":9}
+{"properties":[],"name":"DJ","tags":[],"id":11,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://6412503613","SkyboxRt":"rbxassetid://6444884337","SkyboxLf":"rbxassetid://6444884337","SkyboxFt":"rbxassetid://6444884337","SkyboxBk":"rbxassetid://6444884337","SkyboxDn":"rbxassetid://6444884785"},"name":"Sky","tags":[],"id":12,"class":"Sky","attributes":[],"parent":11}
+{"properties":[],"name":"Default","tags":[],"id":13,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://6412503613","SkyboxRt":"rbxassetid://6444884337","SkyboxLf":"rbxassetid://6444884337","SkyboxFt":"rbxassetid://6444884337","SkyboxBk":"rbxassetid://6444884337","SkyboxDn":"rbxassetid://6444884785"},"name":"Sky","tags":[],"id":14,"class":"Sky","attributes":[],"parent":13}
+{"properties":{"Enabled":true,"Size":24},"name":"Bloom","tags":[],"id":15,"class":"BloomEffect","attributes":[],"parent":13}
+{"properties":{"Enabled":true},"name":"ColorCorrection","tags":[],"id":16,"class":"ColorCorrectionEffect","attributes":[],"parent":13}
+{"properties":{"Enabled":false},"name":"DepthOfField","tags":[],"id":17,"class":"DepthOfFieldEffect","attributes":[],"parent":13}
+{"properties":{"Enabled":true},"name":"SunRays","tags":[],"id":18,"class":"SunRaysEffect","attributes":[],"parent":13}
+{"properties":{"Color":"0.780392, 0.780392, 0.780392"},"name":"Atmosphere","tags":[],"id":19,"class":"Atmosphere","attributes":[],"parent":13}
+{"properties":[],"name":"Aura","tags":[],"id":20,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://82233494358076","SkyboxRt":"rbxassetid://73507088074350","SkyboxLf":"rbxassetid://123113334415775","SkyboxFt":"rbxassetid://88408425137498","SkyboxBk":"rbxassetid://81135332033010","SkyboxDn":"rbxassetid://122162052771879"},"name":"Seeing Stars","tags":[],"id":21,"class":"Sky","attributes":[],"parent":20}
+{"properties":[],"name":"Weights","tags":[],"id":22,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://6412503613","SkyboxRt":"rbxassetid://6444884337","SkyboxLf":"rbxassetid://6444884337","SkyboxFt":"rbxassetid://6444884337","SkyboxBk":"rbxassetid://6444884337","SkyboxDn":"rbxassetid://6444884785"},"name":"Sky","tags":[],"id":23,"class":"Sky","attributes":[],"parent":22}
+{"properties":[],"name":"Meteor","tags":[],"id":24,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://122609737860352","SkyboxRt":"rbxassetid://130162906362666","SkyboxLf":"rbxassetid://127251257979196","SkyboxFt":"rbxassetid://91335659902084","SkyboxBk":"rbxassetid://95429228463886","SkyboxDn":"rbxassetid://131503227407777"},"name":"Inferno Sunset","tags":[],"id":25,"class":"Sky","attributes":[],"parent":24}
+{"properties":[],"name":"Alien","tags":[],"id":26,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://6412503613","SkyboxRt":"rbxassetid://6444884337","SkyboxLf":"rbxassetid://6444884337","SkyboxFt":"rbxassetid://6444884337","SkyboxBk":"rbxassetid://6444884337","SkyboxDn":"rbxassetid://6444884785"},"name":"Sky","tags":[],"id":27,"class":"Sky","attributes":[],"parent":26}
+{"properties":[],"name":"Hacker","tags":[],"id":28,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://6412503613","SkyboxRt":"rbxassetid://6444884337","SkyboxLf":"rbxassetid://6444884337","SkyboxFt":"rbxassetid://6444884337","SkyboxBk":"rbxassetid://6444884337","SkyboxDn":"rbxassetid://6444884785"},"name":"Sky","tags":[],"id":29,"class":"Sky","attributes":[],"parent":28}
+{"properties":[],"name":"Tsunami","tags":[],"id":30,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://6412503613","SkyboxRt":"rbxassetid://6444884337","SkyboxLf":"rbxassetid://6444884337","SkyboxFt":"rbxassetid://6444884337","SkyboxBk":"rbxassetid://6444884337","SkyboxDn":"rbxassetid://6444884785"},"name":"Sky","tags":[],"id":31,"class":"Sky","attributes":[],"parent":30}
+{"properties":[],"name":"Rain","tags":[],"id":32,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://95143298872119","SkyboxRt":"rbxassetid://128044171873411","SkyboxLf":"rbxassetid://131092647577353","SkyboxFt":"rbxassetid://91645681309833","SkyboxBk":"rbxassetid://129588181646675","SkyboxDn":"rbxassetid://117389325697191"},"name":"Anemometer","tags":[],"id":33,"class":"Sky","attributes":[],"parent":32}
+{"properties":[],"name":"Rainbow","tags":[],"id":34,"class":"Folder","attributes":[],"parent":4}
+{"properties":{"SkyboxUp":"rbxassetid://6412503613","SkyboxRt":"rbxassetid://6444884337","SkyboxLf":"rbxassetid://6444884337","SkyboxFt":"rbxassetid://6444884337","SkyboxBk":"rbxassetid://6444884337","SkyboxDn":"rbxassetid://6444884785"},"name":"Sky","tags":[],"id":35,"class":"Sky","attributes":[],"parent":34}
+{"properties":{"SkyboxUp":"rbxassetid://4678251938","SkyboxRt":"rbxassetid://4678248050","SkyboxLf":"rbxassetid://4678247666","SkyboxFt":"rbxassetid://4678247510","SkyboxBk":"rbxassetid://4678247336","SkyboxDn":"rbxassetid://4678247430"},"name":"Sky","tags":[],"id":36,"class":"Sky","attributes":[],"parent":1}
+{"properties":{"Color":"0.635294, 1, 1"},"name":"Atmosphere","tags":[],"id":37,"class":"Atmosphere","attributes":[],"parent":1}

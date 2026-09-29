@@ -1,0 +1,12 @@
+{"service":"StarterPlayer","mode":"Edit","placeId":134592289044923,"rowCount":11}
+{"properties":[],"name":"StarterPlayer","tags":[],"id":1,"class":"StarterPlayer","attributes":[],"parent":0}
+{"properties":[],"name":"StarterPlayerScripts","tags":[],"id":2,"class":"StarterPlayerScripts","attributes":[],"parent":1}
+{"properties":{"Enabled":true,"Disabled":false,"SourceLength":10023},"name":"ClearBlueRiverRipples","tags":[],"id":3,"class":"LocalScript","attributes":{"BeamAxisCorrection":true,"ClaudeCommit":"14b15b8"},"parent":2}
+{"properties":{"Enabled":true,"Disabled":false,"SourceLength":9258},"name":"NetLiftClient","tags":[],"id":4,"class":"LocalScript","attributes":[],"parent":2}
+{"properties":{"Enabled":true,"Disabled":false,"SourceLength":14519},"name":"FishSwimClient","tags":[],"id":5,"class":"LocalScript","attributes":[],"parent":2}
+{"properties":{"Enabled":true,"Disabled":false,"SourceLength":1963},"name":"TruckClient","tags":[],"id":6,"class":"LocalScript","attributes":[],"parent":2}
+{"properties":{"Enabled":true,"Disabled":false,"SourceLength":6224},"name":"RodFishingClient","tags":[],"id":7,"class":"LocalScript","attributes":[],"parent":2}
+{"properties":{"Enabled":true,"Disabled":false,"SourceLength":7835},"name":"AquariumTankClient","tags":[],"id":8,"class":"LocalScript","attributes":{"AquariumCycleOwned":true},"parent":2}
+{"properties":{"Enabled":true,"Disabled":false,"SourceLength":14853},"name":"EconomyClient","tags":[],"id":9,"class":"LocalScript","attributes":{"EconomyOwned":true},"parent":2}
+{"properties":{"Enabled":true,"Disabled":false,"SourceLength":12704},"name":"AquariumPanelClient","tags":[],"id":10,"class":"LocalScript","attributes":{"EconomyOwned":true},"parent":2}
+{"properties":[],"name":"StarterCharacterScripts","tags":[],"id":11,"class":"StarterCharacterScripts","attributes":[],"parent":1}

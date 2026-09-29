@@ -1,0 +1,4 @@
+{"service":"MaterialService","mode":"Edit","placeId":134592289044923,"rowCount":3}
+{"properties":[],"name":"MaterialService","tags":[],"id":1,"class":"MaterialService","attributes":[],"parent":0}
+{"properties":[],"name":"Universal","tags":[],"id":2,"class":"MaterialVariant","attributes":[],"parent":1}
+{"properties":[],"name":"Inlet","tags":[],"id":3,"class":"MaterialVariant","attributes":[],"parent":1}
