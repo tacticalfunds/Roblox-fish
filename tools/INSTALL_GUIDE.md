@@ -20,14 +20,17 @@ package's README (linked below).
 
 ## Where Studio is now
 
-As reported by Astra, 2026-09-29:
+As reported by Astra, 2026-09-29 (user authorised the remaining installs):
 
-- rod offers `a826d73` (`EconomyRodOffersBackup`)
-- aquarium v1.2 (`EconomyAquariumBackup`)
-- **sale payouts `91121de` (`EconomySalesBackup`)**: every exact guard
-  matched, 10 changes installed, persistence checked after a playtest
-
-Row 1 is done. Nothing from row 2 on is installed yet.
+- rod offers `a826d73` (`EconomyRodOffersBackup`), aquarium v1.2
+  (`EconomyAquariumBackup`)
+- **installed:** rows 1, 2, 4, 5, 6, 7, 8, 11: sales `91121de`, Money HUD
+  `b1c0f59`, earnings `0829fc9`, bot recovery, fish jumps, rod cast, grinder
+  dwell, harpoon blend (each with its backup folder)
+- **deliberately not installed:** row 3, paid aquarium upgrades (levels
+  aren't saved; see open decisions)
+- **next:** row 9, variants (`28a9b3f`: its FishSpawner check now matches
+  the live source, harpoon despawn guard included), then row 10, meat glow
 
 **Not production-ready as a whole:** paid upgrades (row 3) and the live Car
 Sales upgrades reset every server while the Money spent stays saved. See
