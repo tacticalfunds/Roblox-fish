@@ -17,7 +17,8 @@
 --     NetCapacityServer sets the shared NetLift.MaxWeight from netKg()
 --   * board upgrades (child module BoardUpgrades): levels saved the same way,
 --     bought at the upgrade board (UpgradeBoardServer -> upgradeAction);
---     gameplay reads the committed value (upgradeValue)
+--     gameplay reads the committed value (upgradeValue; Meat Price in
+--     issueFish: the owner's multiplier on the whole fish, once)
 --
 -- Every patched live script loads this with FindFirstChild + pcall(require)
 -- and calls start(); if it is missing or fails, those scripts behave
@@ -669,15 +670,24 @@ end
 
 ------------------------------------------------------------ meat ledger
 
+-- The owner's Meat Price right now (1 if they aren't in this server or
+-- their money hasn't loaded): the committed level only.
+local function meatMultiplier(ownerId: number): number
+	local level = money:upgradeLevel(ownerId, "MeatPrice")
+	return if level then BoardUpgrades.value("MeatPrice", level) else 1
+end
+
 -- GrinderProcessor: cut one fish into ledger pieces. Returns their ids
 -- (count = meat yield for the tier). `player` is the net-pad player (nil
 -- for the harpoon); `meta` is the catch payload ({ OwnerId, Variant, Source }).
+-- The owner's Meat Price multiplies the whole fish's value once, here; the
+-- pieces' values are fixed from now on (each still pays once).
 function M.issueFish(player: Player?, fishName: any, tier: any, meta: any): { string }
 	if not startOk then
 		return {}
 	end
 	local playerId = if player then player.UserId else nil
-	return Sales.issue(ledger, playerId, fishName, tier, meta)
+	return Sales.issue(ledger, playerId, fishName, tier, meta, meatMultiplier)
 end
 
 -- Stamps a piece's identity on the object that stands for it.

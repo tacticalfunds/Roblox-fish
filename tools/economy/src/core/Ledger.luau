@@ -35,6 +35,7 @@ export type FishInfo = {
 	variant: any,
 	fishName: any,
 	source: any,
+	multiplier: any, -- the owner's Meat Price (whole-fish value x this, once); only for an owned fish
 }
 
 local Ledger = {}
@@ -80,14 +81,16 @@ Ledger.validOwner = validOwner
 function Ledger.issueFish(self: Ledger, info: FishInfo): { string }
 	local variant = Pricing.variant(info.variant)
 	local tier = if type(info.tier) == "number" and info.tier == info.tier then info.tier else 1
-	local values = Pricing.pieceValues(tier, variant)
+	local ownerId = validOwner(info.ownerId, self.allowTestIds)
+	-- an unowned fish pays nobody: no owner, no multiplier
+	local values = Pricing.pieceValues(tier, variant, if ownerId then info.multiplier else nil)
 	local ids = {}
 	for _, value in ipairs(values) do
 		self.nextId += 1
 		local id = self.prefix .. tostring(self.nextId)
 		self.pieces[id] = {
 			id = id,
-			ownerId = validOwner(info.ownerId, self.allowTestIds),
+			ownerId = ownerId,
 			value = value,
 			variant = variant,
 			tier = tier,

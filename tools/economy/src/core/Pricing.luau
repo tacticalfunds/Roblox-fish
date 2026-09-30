@@ -50,8 +50,13 @@ end
 
 -- The fish's sale value split across its meat pieces: floor share each, the
 -- remainder on the last piece, so the pieces sum to exactly the fish value.
-function Pricing.pieceValues(tier: any, variant: any): { number }
+-- `multiplier` (the owner's Meat Price, >= 1; anything else is 1) scales the
+-- WHOLE fish's value once, rounded, before the split.
+function Pricing.pieceValues(tier: any, variant: any, multiplier: any): { number }
 	local total = Pricing.fishSaleValue(tier, variant)
+	if type(multiplier) == "number" and multiplier == multiplier and multiplier > 1 and multiplier <= 100 then
+		total = math.floor(total * multiplier + 0.5)
+	end
 	local n = Pricing.meatYield(tier)
 	local share = total // n
 	local out = table.create(n, share)

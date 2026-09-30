@@ -60,6 +60,8 @@ NETKG_RELEASE = "187fe39"
 # InstallUpgradeBoard (board milestone 1, Net Strength) as released (af6a79a):
 # frozen; later board milestones read its sources from that commit.
 BOARD_RELEASE = "af6a79a"
+# InstallRodLuck (board milestone 2) as released (7584f1e): frozen.
+LUCK_RELEASE = "7584f1e"
 
 
 def git_show(commit: str, path: str) -> str:
@@ -361,8 +363,9 @@ def earnings() -> list[str]:
         )
         for name in ("Sales", "Ledger", "PieceTags")
     ]
-    for name, path in (("Sales", "Sales"), ("Ledger", "Ledger"), ("PieceTags", "PieceTags")):
-        assert (ROOT / "src" / "core" / f"{path}.luau").read_text() == git_show(SALES_RELEASE, f"tools/economy/src/core/{path}.luau"), name
+    # (built only from git: InstallEarnings is frozen at 0829fc9 and the
+    # installer sim checks it byte for byte; the working tree's Sales / Ledger
+    # have since moved on with Meat Price, which has its own installer)
     keys = write_pair_v2(
         "InstallEarnings.lua",
         "RollbackEarnings.lua",
@@ -826,6 +829,84 @@ exactly as installed).
     return keys
 
 
+def meat_price() -> list[str]:
+    """Upgrade board milestone 3 (Meat Price): the owner's saved value
+    multiplier on the whole fish, once, when the grinder cuts it. On top of
+    the Rod Luck release (7584f1e)."""
+    core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
+    at = lambda commit, path: git_show(commit, f"tools/economy/{path}")  # noqa: E731
+    cur = lambda path: (ROOT / path).read_text()  # noqa: E731
+    mod = lambda key: {"key": key, "where": f"ServerScriptService/EconomyService/{key}", "class": "ModuleScript", "tag": "EconomyOwned"}  # noqa: E731
+    changes = [
+        (
+            {"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("rodluck", at(LUCK_RELEASE, "src/server/EconomyService.luau"), cur("src/server/EconomyService.luau"))],
+        ),
+        (mod("Config"), [("rodluck", at(LUCK_RELEASE, "src/core/Config.luau"), cur("src/core/Config.luau"))]),
+    ]
+    for name in ("Pricing", "Ledger", "Sales"):
+        old = at(LUCK_RELEASE, f"src/core/{name}.luau")
+        assert old == git_show(SALES_RELEASE, core(name)), name  # as installed by sales (91121de)
+        changes.append((mod(name), [("sales", old, cur(f"src/core/{name}.luau"))]))
+    changes += [
+        (
+            {"key": "UpgradeBoardServer", "where": "ServerScriptService/UpgradeBoardServer", "class": "Script", "tag": "EconomyOwned"},
+            [("rodluck", at(LUCK_RELEASE, "src/server/UpgradeBoardServer.server.luau"), cur("src/server/UpgradeBoardServer.server.luau"))],
+        ),
+        (
+            {"key": "UpgradeBoardClient", "where": "StarterPlayer/StarterPlayerScripts/UpgradeBoardClient", "class": "LocalScript", "tag": "EconomyOwned"},
+            [("rodluck", at(LUCK_RELEASE, "src/client/UpgradeBoardClient.client.luau"), cur("src/client/UpgradeBoardClient.client.luau"))],
+        ),
+    ]
+    unchanged = []
+    for name in ("MoneyStore", "BoardUpgrades", "NetKg", "Rods", "Offers", "PieceTags"):
+        src = at(LUCK_RELEASE, f"src/core/{name}.luau")
+        assert src == cur(f"src/core/{name}.luau"), name
+        unchanged.append((mod(name), src))
+    for key, where, cls, path in (
+        ("NetCapacityServer", "ServerScriptService/NetCapacityServer", "Script", "src/server/NetCapacityServer.server.luau"),
+        ("KgSignClient", "StarterPlayer/StarterPlayerScripts/KgSignClient", "LocalScript", "src/client/KgSignClient.client.luau"),
+    ):
+        src = at(LUCK_RELEASE, path)
+        assert src == cur(path), key
+        unchanged.append(({"key": key, "where": where, "class": cls, "tag": "EconomyOwned"}, src))
+    fishing = at(LUCK_RELEASE, "studio/board/RodFishingSystem.lua")
+    unchanged.append(({"key": "RodFishingSystem", "where": "script:RodFishingSystem", "class": "Script"}, fishing))
+    keys = write_pair_v2(
+        "InstallMeatPrice.lua",
+        "RollbackMeatPrice.lua",
+        """
+Upgrade board, milestone 3 (Meat Price): the Meat Price card sells a saved
+VALUE multiplier on the player's own fish. 1x -> 2x for $10 (the card),
+then 2.5x ($150), 3x ($600); initial tuning in Config.BoardUpgrades.
+  * when the grinder cuts a fish, its whole sale value (tier value x Silver
+    / Gold, unchanged) is multiplied ONCE by its OWNER's committed Meat
+    Price, rounded, then split into its usual meat pieces. The pieces'
+    values are fixed from then on; each piece still pays once.
+  * only the owner's multiplier counts: a fish netted for someone else pays
+    them at theirs; an unowned fish pays nobody; carriers are never paid.
+    An owner who isn't in the server (or whose money hasn't loaded) gets 1x.
+  * the card shows 1x > 2x (fish values differ, so not $); saved like Rod
+    Luck (`upgrades.MeatPrice`, money + level in one write).
+  * PAID BOARD UPGRADES STAY CLOSED (UpgradesOpen, as for Rod Luck).
+Changes EconomyService, Config, Pricing, Ledger, Sales, UpgradeBoardServer
+and UpgradeBoardClient.
+Requires: Rod Luck (EconomyRodLuckBackup; every source exactly as
+installed).
+""",
+        "EconomyMeatPriceBackup",
+        [["EconomyRodLuckBackup"]],
+        ["EconomyMeatPriceBackup"],
+        [],
+        changes,
+        unchanged,
+        [],
+        ROOT,
+    )
+    assert keys == ["EconomyService", "Config", "Pricing", "Ledger", "Sales", "UpgradeBoardServer", "UpgradeBoardClient"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -839,8 +920,9 @@ def main() -> None:
     # installed (pending validation): rods() / rod_shop_ui() are not rerun;
     # later milestones read their sources from git at RODS_RELEASE.
     # InstallNetKg is FROZEN at the 187fe39 release: net_kg() is not rerun;
-    # InstallUpgradeBoard is FROZEN at af6a79a: upgrade_board() is not rerun.
-    rod_luck()
+    # InstallUpgradeBoard is FROZEN at af6a79a: upgrade_board() is not rerun;
+    # InstallRodLuck is FROZEN at 7584f1e: rod_luck() is not rerun.
+    meat_price()
 
 
 if __name__ == "__main__":

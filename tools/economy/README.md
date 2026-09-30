@@ -860,6 +860,65 @@ API access**, set the `UpgradesOpen` attribute on
 | L7 | Buy up to 3x | `3x MAX`, MAX; pressing again: "Rod Luck is at the maximum (3x)" |
 | L8 | Stop, Play again (real DataStore) | Your level is back on the card |
 
+## Upgrade board, milestone 3: Meat Price (`InstallMeatPrice.lua`)
+
+The Meat Price card (cyan) sells a saved **value multiplier** on your own
+fish:
+
+| Level | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| Meat Price | 1x | **2x** | 2.5x | 3x |
+| Price of this level | - | **$10** | $150 | $600 |
+
+Initial tuning in `Config.BoardUpgrades.MeatPrice`, with the same guard
+rails as Rod Luck. The card shows `1x > 2x`, not dollars, because fish
+values differ.
+
+**How it pays.** When the grinder cuts a fish, `EconomyService.issueFish`
+looks up the fish's **owner** (the same owner the sale pays).
+
+- The fish's whole sale value (tier value × Silver/Gold, both unchanged) is
+  multiplied **once** by that owner's committed Meat Price and rounded.
+- It is then split into the usual number of meat pieces. For example, a
+  tier-10 fish worth 42 at 2.5x is worth 105, which splits into 52 + 53
+  (not 53 + 53).
+- The pieces' values are fixed from then on, and each piece still pays
+  once. The duplicate-payment guard (settle removes the record) is
+  unchanged.
+- Only the owner's multiplier counts. A fish you net for someone else pays
+  them at theirs. An unowned fish pays nobody. Carriers are never paid.
+- An owner who isn't in the server (or whose money hasn't loaded) gets 1x
+  for that cut.
+- A fish cut **before** you bought keeps its old value even if it sells
+  after.
+- Rod-fish offer prices don't change.
+
+**Saving, checks and closing:** the same as Rod Luck
+(`upgrades.MeatPrice`, money + level in one write, `upgradeAction`'s
+checks, `UpgradesOpen` for a Studio validation).
+
+**Install:** `InstallMeatPrice.lua` (v2 guarded template). It needs
+`EconomyRodLuckBackup` and every source exactly as installed (Rod Luck
+`7584f1e`).
+
+- Changes: EconomyService, Config, Pricing, Ledger, Sales,
+  UpgradeBoardServer and UpgradeBoardClient.
+- Backup: `EconomyMeatPriceBackup`.
+- **Rollback:** `RollbackMeatPrice.lua`, before `RollbackRodLuck.lua`.
+  Pieces already cut keep the values they were cut with until sold.
+
+### Meat Price checklist (Studio, API access ON)
+
+| # | Do | Expect |
+|---|---|---|
+| P1 | Play, look at the board | Meat Price: `1x > 2x`, SOON |
+| P2 | Set `UpgradesOpen = true`; press Meat Price | −10; toast "Meat Price 1x → 2x (-$10)"; card `2x > 2.5x` `$150` |
+| P3 | Net a fish, sell its meat (truck or customer) | The "+$" popups add up to 2 × that fish's usual value |
+| P4 | A Gold fish | 2 × (its value × 5) |
+| P5 | Net a fish another player bought (their fish) | It pays them at their multiplier, not yours |
+| P6 | Meat already on the stack when you buy | Sells at the old value |
+| P7 | Stop, Play again (real DataStore) | Your level is back |
+
 ## Blender Bot recovery (`InstallBotRecovery.lua`)
 
 **The bug:** the Blender Bot's loop had no error handling. If anything
@@ -967,9 +1026,9 @@ changes; the rest re-check behaviour that already worked.
 ## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau          # 435 checks (rods 80, net kg 42, board upgrades 51)
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the Rod Luck RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 48 + 6, luck 30 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 363 checks
+python3 tools/economy/tests/run_tests.py path/to/luau          # 449 checks (rods 80, net kg 42, board upgrades 65)
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the Rod Luck RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 48 + 6, luck 30, meat 14 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 376 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

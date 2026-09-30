@@ -10,13 +10,29 @@ local Sales = {}
 
 -- A fish enters the grinder. `playerUserId` is the net-pad player (nil for
 -- the harpoon); `meta` the catch payload { OwnerId, Variant, Source }.
-function Sales.issue(ledger: Ledger.Ledger, playerUserId: number?, fishName: any, tier: any, meta: any): { string }
+-- `multiplierFor(ownerId)` (optional) is the owner's Meat Price right now:
+-- the whole fish's value is multiplied by it once, before the split.
+function Sales.issue(
+	ledger: Ledger.Ledger,
+	playerUserId: number?,
+	fishName: any,
+	tier: any,
+	meta: any,
+	multiplierFor: ((ownerId: number) -> number)?
+): { string }
+	local ownerId = PieceTags.ownerFor(playerUserId, meta)
+	local multiplier = nil
+	if ownerId and multiplierFor then
+		local ok, m = pcall(multiplierFor, ownerId)
+		multiplier = if ok then m else nil
+	end
 	return ledger:issueFish({
-		ownerId = PieceTags.ownerFor(playerUserId, meta),
+		ownerId = ownerId,
 		tier = tier,
 		variant = PieceTags.variantFrom(meta),
 		fishName = fishName,
 		source = PieceTags.sourceFrom(meta, playerUserId ~= nil),
+		multiplier = multiplier,
 	})
 end
 

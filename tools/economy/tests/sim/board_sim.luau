@@ -315,8 +315,8 @@ check("Rod Luck: its paid upgrades are closed by default (UpgradesOpen), not cha
 advance(0.5)
 press(A, "MeatPrice")
 advance(0.3)
-check("Meat Price: coming soon, sells nothing", lastNotice(A) == "Meat Price upgrades are coming soon" and price(A, "MeatPrice") == "SOON"
-	and Economy.balance(A) == before)
+check("Meat Price: closed by default too (UpgradesOpen), not charged", lastNotice(A) == "Meat Price upgrades open soon"
+	and price(A, "MeatPrice") == "SOON" and Economy.balance(A) == before)
 advance(0.5)
 press(A, "FasterReels")
 advance(0.3)

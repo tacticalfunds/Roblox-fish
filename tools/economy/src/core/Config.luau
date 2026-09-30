@@ -200,8 +200,13 @@ Config.BoardUpgrades = {
 	-- geometrically). 2x is not a guaranteed rare fish. Silver/Gold odds are
 	-- not touched.
 	RodLuck = { Name = "Rod Luck", Values = { 1, 2, 2.5, 3 }, Costs = { 10, 75, 300 }, FirstValue = 2, MaxValue = 5 },
+	-- Meat Price: the owner's VALUE multiplier on their own fish. When the
+	-- grinder cuts a fish, its whole sale value (tier value x Silver/Gold) is
+	-- multiplied by the owner's value once, rounded, then split into meat
+	-- pieces as before. Fish values differ, so the card shows 1x > 2x, not $.
+	MeatPrice = { Name = "Meat Price", Values = { 1, 2, 2.5, 3 }, Costs = { 10, 150, 600 }, FirstValue = 2, MaxValue = 5 },
 }
-Config.BoardUpgradeIds = { "RodLuck" } -- the order they are listed and checked
+Config.BoardUpgradeIds = { "RodLuck", "MeatPrice" } -- the order they are listed and checked
 -- PAID board upgrades (other than Net Strength, which is NetKgOpen) stay
 -- closed until the saved path is validated in Studio with real DataStore
 -- access: set true here, or (for a test) the UpgradesOpen attribute on

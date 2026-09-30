@@ -1,4 +1,4 @@
--- UpgradeBoardServer (Script in ServerScriptService). [Economy upgrade board v2: Rod Luck]
+-- UpgradeBoardServer (Script in ServerScriptService). [Economy upgrade board v3: Meat Price]
 --
 -- The four-upgrade board (Workspace.Board: its Main part's SurfaceGui.bord3).
 -- UpgradeBoardClient draws the four cards for each player and asks here
@@ -15,7 +15,10 @@
 --     the same checks, money + level saved in one write; paid board upgrades
 --     open with UpgradesOpen). RodFishingSystem reads the committed value
 --     once per accepted press.
---   * MeatPrice, FasterReels: not sold yet ("coming soon").
+--   * MeatPrice: the same, for the saved Meat Price level (EconomyService
+--     multiplies each of the player's own fish's whole value once, when the
+--     grinder cuts it).
+--   * FasterReels: not sold yet ("coming soon").
 --   * anything else: refused.
 -- The result is also a toast (EconomyService.notify).
 --
@@ -131,10 +134,9 @@ local SOLD: { [string]: (Player) -> (boolean, string) } = {
 	end,
 }
 local SOON: { [string]: string } = {
-	MeatPrice = "Meat Price upgrades are coming soon",
 	FasterReels = "Faster Reels upgrades are coming soon",
 }
-for _, id in ipairs({ "RodLuck" }) do
+for _, id in ipairs({ "RodLuck", "MeatPrice" }) do
 	if type(Economy.upgradeAction) == "function" and Economy.BoardUpgrades and Economy.BoardUpgrades.known(id) then
 		SOLD[id] = function(player: Player): (boolean, string)
 			local ok, message = Economy.upgradeAction(player, id, nearBoard(player))
