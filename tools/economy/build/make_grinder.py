@@ -23,10 +23,14 @@ GrinderUpgradesServer
         memory store outside Studio (purchases would vanish on leave)
       - a record it can't read is never overwritten: buying is off for that
         player this session
-      - the player's final Money save waits for the store write
-        (EconomyService.holdSave) and a failed write is refunded even if
-        the player left meanwhile (refundHeld); a successful write while
-        they left keeps the debit (they got the upgrade)
+      - JOURNALED (EconomyService.beginPurchase / finishPurchase): the debit
+        and an open entry are saved in the Money record in one write before
+        this store is touched; the upgrade is written HERE together with the
+        purchase token (a short `applied` list); then the entry is settled
+        (kept / refunded). An entry a shutdown, a slow write or a crash
+        leaves open is settled at the player's next load by reading this
+        store's tokens (the registered reader): delivered -> kept, else
+        refunded. No purchase is paid-for-and-lost or delivered-for-free.
 GrinderUpgradesClient
   * no longer writes the KG signs' PricePlate.PriceGui.Pill (KgSignClient
     is its only writer); conveyor / blade labels, ghost and blades are
@@ -65,9 +69,11 @@ def server() -> str:
         "-- [Economy board] The KG signs are sold by NetCapacityServer now (the one\n"
         "-- saved net capacity, shared with the upgrade board): this script only\n"
         "-- reports its saved kg count once per join (EconomyService.adoptLegacyNetKg).\n"
-        "-- Purchases hold the player's final Money save until the store write is\n"
-        "-- done, refund a failed write, never use a memory store outside Studio\n"
-        "-- and never overwrite a record they can't read.\n",
+        "-- Purchases are journaled in the Money record (EconomyService.beginPurchase):\n"
+        "-- the upgrade is saved here WITH its purchase token, and a purchase left\n"
+        "-- open by a shutdown / slow write / crash is settled at the next load from\n"
+        "-- these tokens. No memory store outside Studio; records it can't read are\n"
+        "-- never overwritten.\n",
     )
     p.rep(
         "\tif ok then ds = store else warn(\"[GrinderUpgrades] DataStore unavailable - using memory (Studio only)\") end\n",
@@ -137,6 +143,36 @@ def server() -> str:
         "\t\tend\n",
     )
     p.rep(
+        "-- Writes the new state; returns true only if it was saved.\n"
+        "local function save(p, newState)\n"
+        "\tlocal ok, err = pcall(update, p, function(old)\n"
+        "\t\tlocal out = type(old) == \"table\" and table.clone(old) or {}\n"
+        "\t\tout.conveyor = newState.conveyor\n"
+        "\t\tout.blade = newState.blade\n"
+        "\t\tout.kg = newState.kg\n"
+        "\t\treturn out\n"
+        "\tend)\n",
+        "-- Writes the new state; returns true only if it was saved.\n"
+        "-- Economy board: with `token`, the purchase token is written in the SAME\n"
+        "-- update (the last APPLIED_KEEP of them, in `applied`): proof of delivery\n"
+        "-- for a purchase whose Money entry is settled later.\n"
+        "local APPLIED_KEEP = 20\n"
+        "local function save(p, newState, token)\n"
+        "\tlocal ok, err = pcall(update, p, function(old)\n"
+        "\t\tlocal out = type(old) == \"table\" and table.clone(old) or {}\n"
+        "\t\tout.conveyor = newState.conveyor\n"
+        "\t\tout.blade = newState.blade\n"
+        "\t\tout.kg = newState.kg\n"
+        "\t\tif token then\n"
+        "\t\t\tlocal applied = type(out.applied) == \"table\" and table.clone(out.applied) or {}\n"
+        "\t\t\ttable.insert(applied, token)\n"
+        "\t\t\twhile #applied > APPLIED_KEEP do table.remove(applied, 1) end\n"
+        "\t\t\tout.applied = applied\n"
+        "\t\tend\n"
+        "\t\treturn out\n"
+        "\tend)\n",
+    )
+    p.rep(
         "local function buy(p, price, what, apply)\n"
         "\tlocal d = data[p]\n"
         "\tif not Economy then return end\n"
@@ -165,33 +201,40 @@ def server() -> str:
         "\tif storeOff then Economy.notify(p, \"Grinder upgrades are unavailable on this server\", \"error\") return end\n"
         "\tif not d then Economy.notify(p, \"Loading your upgrades...\", \"error\") return end\n"
         "\tif d.readOnly then Economy.notify(p, \"Your saved grinder upgrades couldn't be read - buying is off this session\", \"error\") return end\n"
-        "\t-- Economy board: the player's final Money save waits for this write, so a\n"
-        "\t-- failed write is refunded even if they leave meanwhile\n"
-        "\tlocal release = if type(Economy.holdSave) == \"function\" then Economy.holdSave(p) else function() end\n"
-        "\tlocal paid, why = Economy.tryDebit(p, price, \"GrinderUpgrade:\" .. what)\n"
-        "\tif not paid then\n"
-        "\t\trelease()\n"
-        "\t\tEconomy.notify(p, REASON[why] or tostring(why), \"error\")\n"
+        "\tif type(Economy.beginPurchase) ~= \"function\" then Economy.notify(p, \"Grinder upgrades are unavailable right now\", \"error\") return end\n"
+        "\t-- Economy board: debit + open entry saved in the Money record first (one write)\n"
+        "\tlocal token, why = Economy.beginPurchase(p, SOURCE, price, what)\n"
+        "\tif not token then\n"
+        "\t\tEconomy.notify(p, REASON[why] or \"Couldn't buy that right now - you were not charged\", \"error\")\n"
         "\t\treturn\n"
         "\tend\n"
         "\tlocal nextState = table.clone(d)\n"
         "\tapply(nextState)\n"
-        "\tlocal saved = save(p, nextState)\n"
-        "\tif saved then\n"
+        "\tlocal delivered = save(p, nextState, token) -- the upgrade and its token, one write\n"
+        "\tif not delivered then\n"
+        "\t\t-- a write can error after it landed: read back whether the token is here\n"
+        "\t\tlocal ok, rec = pcall(function()\n"
+        "\t\t\tif ds and p.UserId > 0 then return ds:GetAsync(key(p)) end\n"
+        "\t\t\treturn mem[key(p)]\n"
+        "\t\tend)\n"
+        "\t\tif ok then\n"
+        "\t\t\tdelivered = type(rec) == \"table\" and type(rec.applied) == \"table\" and table.find(rec.applied, token) ~= nil\n"
+        "\t\telse\n"
+        "\t\t\tdelivered = nil -- can't tell: the open entry is settled from this store later\n"
+        "\t\tend\n"
+        "\tend\n"
+        "\tEconomy.finishPurchase(p, token, delivered) -- kept / refunded / settled later\n"
+        "\tif delivered == true then\n"
         "\t\tif p.Parent then\n"
         "\t\t\tdata[p] = nextState\n"
         "\t\t\tpublish(p)\n"
         "\t\t\tEconomy.notify(p, \"Bought \" .. what .. \"!\", \"success\")\n"
         "\t\tend\n"
-        "\telse\n"
-        "\t\tif type(Economy.refundHeld) == \"function\" then\n"
-        "\t\t\tEconomy.refundHeld(p, price, \"GrinderUpgrade:\" .. what)\n"
-        "\t\telse\n"
-        "\t\t\tEconomy.refund(p, price, \"GrinderUpgrade:\" .. what)\n"
-        "\t\tend\n"
+        "\telseif delivered == false then\n"
         "\t\tif p.Parent then Economy.notify(p, \"Purchase failed, refunded\", \"error\") end\n"
+        "\telseif p.Parent then\n"
+        "\t\tEconomy.notify(p, \"Checking your purchase - it will be kept or refunded shortly\", \"info\")\n"
         "\tend\n"
-        "\trelease()\n"
         "end\n",
     )
     p.rep(
@@ -238,6 +281,39 @@ def server() -> str:
         "-- Economy board: the KG signs (board + price plate) are NetCapacityServer's\n",
     )
     p.rep("\tlastKg[p] = nil\n", "")
+    # the purchase journal: this store's tokens, for settling open entries
+    p.rep(
+        "------------------------------------------------------------ players\n",
+        "-- Economy board: how EconomyService reads this store's purchase tokens\n"
+        "-- (to settle a Money entry left open by a shutdown / slow write / crash)\n"
+        "if Economy and type(Economy.registerPurchaseSource) == \"function\" and not storeOff then\n"
+        "\tEconomy.registerPurchaseSource(SOURCE, function(userId)\n"
+        "\t\tlocal ok, rec = pcall(function()\n"
+        "\t\t\tif ds and userId > 0 then return ds:GetAsync(\"player_\" .. userId) end\n"
+        "\t\t\treturn mem[\"player_\" .. userId]\n"
+        "\t\tend)\n"
+        "\t\tif not ok then return nil end\n"
+        "\t\tlocal set = {}\n"
+        "\t\tif type(rec) == \"table\" and type(rec.applied) == \"table\" then\n"
+        "\t\t\tfor _, t in ipairs(rec.applied) do\n"
+        "\t\t\t\tif type(t) == \"string\" then set[t] = true end\n"
+        "\t\t\tend\n"
+        "\t\tend\n"
+        "\t\treturn set\n"
+        "\tend)\n"
+        "end\n"
+        "\n"
+        "------------------------------------------------------------ players\n",
+    )
+    p.rep(
+        "local REASON = { funds = \"Not enough Money!\", notLoaded = \"Money still loading...\" }\n",
+        "local REASON = { funds = \"Not enough Money!\", notLoaded = \"Money still loading...\" }\n"
+        "-- Economy board: the journal's name for this store's purchases\n"
+        "local SOURCE = \"GrinderUpgrades\"\n"
+        "REASON.unsettled = \"Finishing your last purchase - try again in a moment\"\n"
+        "REASON.busy = \"One moment - still saving\"\n"
+        "REASON.notSaved = \"Couldn't save the purchase - you were not charged. Try again.\"\n",
+    )
     src = p.src
     # nothing of the old KG path is left, nothing reads the live MaxWeight
     for gone in ("onKgSign", "kgClicked", "kgPrice", "baseKg", "NetMaxWeight\", Cfg", "netLift", "MouseClick"):
@@ -245,6 +321,9 @@ def server() -> str:
     # the conveyor / blade paths are still there
     for kept in ("onConveyorPad", "onBladePad", "hookPad(pad, onConveyorPad)", "hookPad(pad, onBladePad)", "out.kg = newState.kg"):
         assert kept in src, kept
+    # every purchase goes through the journal; no direct debit / refund is left
+    assert "Economy.tryDebit" not in src and "Economy.refund" not in src and "holdSave" not in src
+    assert src.index("local SOURCE = ") < src.index("local function buy(") < src.index("registerPurchaseSource")
     return src
 
 

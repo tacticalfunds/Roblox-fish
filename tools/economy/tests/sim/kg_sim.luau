@@ -7,7 +7,9 @@
 --     the money in one write; toast + panel say what happened
 --   * far / dead / loading / spam / funds / failed save / max refused, never charged
 --   * re-checked after waiting for a running save (walk away -> refused)
---   * shared net = highest loaded player's capacity (floor 15): join, buy,
+--   * the net is PER PLAYER (the live NetLiftScript reads the pad player's
+--     NetMaxWeight): each player's own capacity; NetLift.MaxWeight (the base,
+--     for anyone not yet published) never moves: join, buy,
 --     leave; fish in the river untouched
 --   (no EconomyService: kgnoecon_sim)
 
@@ -83,8 +85,8 @@ local fishBefore = #river:GetChildren()
 
 check("two panels, one per KGsign (duplicate names both bound)", #panels(A) == 2)
 check("loaded: 15 kg published", A:GetAttribute("NetKg") == 15 and A:GetAttribute("NetKgNext") == 20 and A:GetAttribute("NetKgCost") == 10)
-check("panel: Your net 15 → 20 kg, SOON, Net now: 15 kg", panelText(A, "Capacity") == "Your net 15 → 20 kg"
-	and panelText(A, "Price") == "SOON" and panelText(A, "Shared") == "Net now: 15 kg")
+check("panel: Your net 15 → 20 kg, SOON", panelText(A, "Capacity") == "Your net 15 → 20 kg"
+	and panelText(A, "Price") == "SOON" and panelText(A, "Shared") == nil)
 clickSign(A, 1)
 check("closed by default: refused, not charged", lastNotice(A) == "Net upgrades open soon" and Economy.balance(A) == 2000
 	and netLift:GetAttribute("MaxWeight") == 15)
@@ -103,13 +105,13 @@ clickSign(A, 1)
 dsHooks.before = nil
 check("sign 1: bought 15 → 20 kg for 10", lastNotice(A) == "Net capacity 15 → 20 kg (-$10)" and Economy.balance(A) == 1990)
 check("saved at once: money AND netKg in one write", writes == 1 and dsData[KEY .. "1"].netKg == 20 and dsData[KEY .. "1"].money == 1990)
-check("shared net now 20 kg", netLift:GetAttribute("MaxWeight") == 20)
-check("panel: 20 → 25 kg, $25, Net now: 20 kg", panelText(A, "Capacity") == "Your net 20 → 25 kg" and panelText(A, "Price") == "$25"
-	and panelText(A, "Shared") == "Net now: 20 kg")
+check("A's own net now 20 kg; NetLift.MaxWeight (the base) unchanged", A:GetAttribute("NetMaxWeight") == 20
+	and netLift:GetAttribute("MaxWeight") == 15)
+check("panel: 20 → 25 kg, $25", panelText(A, "Capacity") == "Your net 20 → 25 kg" and panelText(A, "Price") == "$25")
 moveTo(A, SIGN2 + Vector3.new(0, -7, 6))
 clickSign(A, 2)
 check("sign 2 (same name) works too: 20 → 25 kg for 25", lastNotice(A) == "Net capacity 20 → 25 kg (-$25)" and Economy.balance(A) == 1965
-	and netLift:GetAttribute("MaxWeight") == 25)
+	and A:GetAttribute("NetMaxWeight") == 25 and netLift:GetAttribute("MaxWeight") == 15)
 
 -- far / dead
 clickSign(A, 1) -- sign 1 is ~65 studs away
@@ -144,7 +146,7 @@ end
 clickSign(A, 2)
 dsHooks.before = nil
 check("save fails: refused, not charged, still 30 kg", lastNotice(A) == "Couldn't save the upgrade - you were not charged. Try again."
-	and Economy.balance(A) == 1915 and A:GetAttribute("NetKg") == 30 and netLift:GetAttribute("MaxWeight") == 30)
+	and Economy.balance(A) == 1915 and A:GetAttribute("NetKg") == 30 and A:GetAttribute("NetMaxWeight") == 30)
 
 -- re-checked after waiting for a running autosave
 local held = false
@@ -171,18 +173,20 @@ check("walked away while the purchase waited for a save: refused, not charged", 
 moveTo(A, SIGN2 + Vector3.new(0, -7, 6))
 advance(0.6)
 
------------------------------------------------------------- the shared net: join, leave
+------------------------------------------------------------ per player: join, leave
 
 dsData[KEY .. "2"] = { v = 2, money = 0, netKg = 45 }
 local B = join(2, "Strong", SIGN1 + Vector3.new(0, -7, 6))
 advance(0.5)
-check("B joins with 45 kg saved: shared net 45", netLift:GetAttribute("MaxWeight") == 45)
+check("B joins with 45 kg saved: B's own net 45, A's stays 30, the base stays 15", B:GetAttribute("NetMaxWeight") == 45
+	and A:GetAttribute("NetMaxWeight") == 30 and netLift:GetAttribute("MaxWeight") == 15)
 clickSign(B, 1)
 check("B can't afford 45 → 50 (340): refused", lastNotice(B) == "Not enough money" and B:GetAttribute("NetKg") == 45)
 dsData[KEY .. "3"] = { v = 2, money = 0, netKg = 60, lock = { job = "another-server", t = 1700000000 + 10 ^ 7 } }
 local C = join(3, "Loading", SIGN1 + Vector3.new(2, -7, 6))
 advance(0.5)
-check("a player whose money is still loading doesn't raise the net", netLift:GetAttribute("MaxWeight") == 45)
+check("a player whose money is still loading has no capacity of their own yet: the pad falls back to the BASE 15, never B's 45",
+	C:GetAttribute("NetMaxWeight") == nil and netLift:GetAttribute("MaxWeight") == 15)
 clickSign(C, 1)
 check("loading: refused", lastNotice(C) == "Your money is still loading - try again in a moment")
 -- B's final save is slow (as a real DataStore call): the net must drop at once anyway
@@ -193,12 +197,12 @@ dsHooks.before = function(key)
 end
 leave(B)
 advance(0.1)
-check("B leaves (final save still running): back to A's 30 kg at once", netLift:GetAttribute("MaxWeight") == 30)
+check("B leaves (final save still running): A keeps 30, the base 15", A:GetAttribute("NetMaxWeight") == 30 and netLift:GetAttribute("MaxWeight") == 15)
 advance(2.5)
 dsHooks.before = nil
 leave(A)
 advance(0.5)
-check("A leaves: back to the place's 15 kg", netLift:GetAttribute("MaxWeight") == 15)
+check("A leaves: the base is still the place's 15 kg", netLift:GetAttribute("MaxWeight") == 15)
 check("no fish were touched by any of it", #river:GetChildren() == fishBefore)
 
 ------------------------------------------------------------ the cap

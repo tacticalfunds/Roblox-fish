@@ -825,7 +825,7 @@ local function offerBillboard(
 	end
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "OfferGui"
-	gui.Size = UDim2.fromOffset(200, 96)
+	gui.Size = UDim2.fromScale(6.25, 3) -- locked world size
 	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.4, 0)
 	gui.AlwaysOnTop = true
 	gui.MaxDistance = 140

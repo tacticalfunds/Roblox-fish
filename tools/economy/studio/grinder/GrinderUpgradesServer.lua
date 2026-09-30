@@ -5,9 +5,11 @@
 -- [Economy board] The KG signs are sold by NetCapacityServer now (the one
 -- saved net capacity, shared with the upgrade board): this script only
 -- reports its saved kg count once per join (EconomyService.adoptLegacyNetKg).
--- Purchases hold the player's final Money save until the store write is
--- done, refund a failed write, never use a memory store outside Studio
--- and never overwrite a record they can't read.
+-- Purchases are journaled in the Money record (EconomyService.beginPurchase):
+-- the upgrade is saved here WITH its purchase token, and a purchase left
+-- open by a shutdown / slow write / crash is settled at the next load from
+-- these tokens. No memory store outside Studio; records it can't read are
+-- never overwritten.
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -116,12 +118,22 @@ local function load(p)
 end
 
 -- Writes the new state; returns true only if it was saved.
-local function save(p, newState)
+-- Economy board: with `token`, the purchase token is written in the SAME
+-- update (the last APPLIED_KEEP of them, in `applied`): proof of delivery
+-- for a purchase whose Money entry is settled later.
+local APPLIED_KEEP = 20
+local function save(p, newState, token)
 	local ok, err = pcall(update, p, function(old)
 		local out = type(old) == "table" and table.clone(old) or {}
 		out.conveyor = newState.conveyor
 		out.blade = newState.blade
 		out.kg = newState.kg
+		if token then
+			local applied = type(out.applied) == "table" and table.clone(out.applied) or {}
+			table.insert(applied, token)
+			while #applied > APPLIED_KEEP do table.remove(applied, 1) end
+			out.applied = applied
+		end
 		return out
 	end)
 	if not ok then warn("[GrinderUpgrades] save failed for " .. p.Name .. ": " .. tostring(err)) end
@@ -130,6 +142,11 @@ end
 
 ------------------------------------------------------------ purchases
 local REASON = { funds = "Not enough Money!", notLoaded = "Money still loading..." }
+-- Economy board: the journal's name for this store's purchases
+local SOURCE = "GrinderUpgrades"
+REASON.unsettled = "Finishing your last purchase - try again in a moment"
+REASON.busy = "One moment - still saving"
+REASON.notSaved = "Couldn't save the purchase - you were not charged. Try again."
 
 local function buy(p, price, what, apply)
 	local d = data[p]
@@ -137,33 +154,40 @@ local function buy(p, price, what, apply)
 	if storeOff then Economy.notify(p, "Grinder upgrades are unavailable on this server", "error") return end
 	if not d then Economy.notify(p, "Loading your upgrades...", "error") return end
 	if d.readOnly then Economy.notify(p, "Your saved grinder upgrades couldn't be read - buying is off this session", "error") return end
-	-- Economy board: the player's final Money save waits for this write, so a
-	-- failed write is refunded even if they leave meanwhile
-	local release = if type(Economy.holdSave) == "function" then Economy.holdSave(p) else function() end
-	local paid, why = Economy.tryDebit(p, price, "GrinderUpgrade:" .. what)
-	if not paid then
-		release()
-		Economy.notify(p, REASON[why] or tostring(why), "error")
+	if type(Economy.beginPurchase) ~= "function" then Economy.notify(p, "Grinder upgrades are unavailable right now", "error") return end
+	-- Economy board: debit + open entry saved in the Money record first (one write)
+	local token, why = Economy.beginPurchase(p, SOURCE, price, what)
+	if not token then
+		Economy.notify(p, REASON[why] or "Couldn't buy that right now - you were not charged", "error")
 		return
 	end
 	local nextState = table.clone(d)
 	apply(nextState)
-	local saved = save(p, nextState)
-	if saved then
+	local delivered = save(p, nextState, token) -- the upgrade and its token, one write
+	if not delivered then
+		-- a write can error after it landed: read back whether the token is here
+		local ok, rec = pcall(function()
+			if ds and p.UserId > 0 then return ds:GetAsync(key(p)) end
+			return mem[key(p)]
+		end)
+		if ok then
+			delivered = type(rec) == "table" and type(rec.applied) == "table" and table.find(rec.applied, token) ~= nil
+		else
+			delivered = nil -- can't tell: the open entry is settled from this store later
+		end
+	end
+	Economy.finishPurchase(p, token, delivered) -- kept / refunded / settled later
+	if delivered == true then
 		if p.Parent then
 			data[p] = nextState
 			publish(p)
 			Economy.notify(p, "Bought " .. what .. "!", "success")
 		end
-	else
-		if type(Economy.refundHeld) == "function" then
-			Economy.refundHeld(p, price, "GrinderUpgrade:" .. what)
-		else
-			Economy.refund(p, price, "GrinderUpgrade:" .. what)
-		end
+	elseif delivered == false then
 		if p.Parent then Economy.notify(p, "Purchase failed, refunded", "error") end
+	elseif p.Parent then
+		Economy.notify(p, "Checking your purchase - it will be kept or refunded shortly", "info")
 	end
-	release()
 end
 
 local function onConveyorPad(p)
@@ -204,6 +228,25 @@ for _, pad in ipairs(CollectionService:GetTagged("ConveyorPad")) do hookPad(pad,
 for _, pad in ipairs(CollectionService:GetTagged("BladePad")) do hookPad(pad, onBladePad) end
 
 -- Economy board: the KG signs (board + price plate) are NetCapacityServer's
+
+-- Economy board: how EconomyService reads this store's purchase tokens
+-- (to settle a Money entry left open by a shutdown / slow write / crash)
+if Economy and type(Economy.registerPurchaseSource) == "function" and not storeOff then
+	Economy.registerPurchaseSource(SOURCE, function(userId)
+		local ok, rec = pcall(function()
+			if ds and userId > 0 then return ds:GetAsync("player_" .. userId) end
+			return mem["player_" .. userId]
+		end)
+		if not ok then return nil end
+		local set = {}
+		if type(rec) == "table" and type(rec.applied) == "table" then
+			for _, t in ipairs(rec.applied) do
+				if type(t) == "string" then set[t] = true end
+			end
+		end
+		return set
+	end)
+end
 
 ------------------------------------------------------------ players
 Players.PlayerAdded:Connect(load)

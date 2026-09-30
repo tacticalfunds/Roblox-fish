@@ -612,13 +612,20 @@ reviewable diff of the live scripts):
   - At each join, GrinderUpgradesServer reports its saved `kg` count, and
     EconomyService adopts `netKg = max(netKg, 15 + 5 × kg)`.
   - Reporting again never adds.
-  - The base is the fixed 15, **never** the live `NetLift.MaxWeight` (which
-    NetCapacityServer raises).
+  - The base is the fixed 15, **never** the live `NetLift.MaxWeight`.
   - The old record is left exactly as it is.
-  - A player's net can't be bought, and doesn't count toward the shared
-    net, until that count is in (`Config.NetKgLegacy`).
-  - `NetMaxWeight` / `NetKgBuys` are now published from `netKg`, so they
-    don't move when `MaxWeight` changes.
+  - A player's net can't be bought until that count is in
+    (`Config.NetKgLegacy`).
+  - `NetMaxWeight` / `NetKgBuys` are now published from `netKg`
+    (EconomyService), so they don't move when `MaxWeight` changes.
+- **The net stays per player** (the live NetLiftScript's gate is
+  `player.NetMaxWeight or model.MaxWeight or 40`, carried unchanged and
+  checked by the installer):
+  - EconomyService publishes each player's `NetMaxWeight` = their `netKg`.
+  - `Workspace.NetLift.MaxWeight` is **never changed** (it stays the
+    place's 15). It is only the fallback for a player whose net isn't
+    published yet (money or the old count still loading), so nobody gets
+    another player's limit.
 - **One plate writer.** GrinderUpgradesClient no longer touches the Pill.
   KgSignClient writes Price (`$10`, green / red by your money, SOON, MAX,
   `...`), Info (`NET 15 KG → 20 KG`) and the Border colour, with the same
@@ -628,12 +635,8 @@ reviewable diff of the live scripts):
     outside Studio, nothing is loaded or bought;
   - a record it can't read is **never overwritten** (buying is off for that
     player);
-  - the player's **final Money save waits** for the store write
-    (`EconomyService.holdSave`, at most `Config.SaveHoldSeconds` = 20 s);
-  - a failed write is refunded **even if the player left** meanwhile
-    (`refundHeld`), so the saved balance is the one from before the
-    purchase;
-  - a successful write while leaving keeps both the debit and the upgrade.
+  - purchases are **journaled** (see below), so a shutdown or a slow or
+    failed write never loses money.
 - **Blade × Meat Price**, each exactly once:
   - Meat Price is in the piece's value, fixed when the grinder cuts the
     fish.
@@ -642,15 +645,46 @@ reviewable diff of the live scripts):
   - The "+$" popup shows what was actually credited; each piece still
     pays once.
 
-**The board's cards use the board's own art.**
+**Journaled pad purchases** (`EconomyService.beginPurchase` /
+`finishPurchase`), because the upgrade lives in a different DataStore from
+the Money:
+
+1. `beginPurchase` saves the debit **and** an open entry
+   (`pendingPurchases[token] = {source, amount, t, what}`) in **one** Money
+   write, before the grinder store is touched. If that write fails,
+   nothing is charged.
+2. The grinder store writes the upgrade **and** the token (a bounded
+   `applied` list, the last 20) in one `UpdateAsync`.
+3. `finishPurchase`: written → kept; failed → refunded at once; the write
+   errored → it is read back (token there → kept); can't tell → left open.
+4. An entry still open (the server shut down, the write took longer than
+   the 20 s leave wait, the outcome was unknown) stays in the saved Money
+   record. At the player's next load, once it is older than
+   `Config.PurchaseSettleSeconds` (120 s, so another server's write can't
+   still land), it is settled from the grinder store: token there → kept,
+   otherwise refunded. Exactly once: the entry is removed in the same save.
+5. Leaving and `BindToClose` wait (at most `Config.SaveHoldSeconds` = 20 s)
+   for purchases in flight, then save anyway: the entry makes that safe.
+
+Astra's case (20000, −4000 debit, shutdown, the upgrade write fails) now
+ends at 20000 after the next load (`journal_sim`). Known remaining window:
+none that loses money silently; a player whose grinder store stays
+unreadable keeps the entry open (debited) until it can be read, and can't
+buy another pad upgrade meanwhile (`unsettled`).
+
+**The board's cards follow the board's own card style.**
 
 - Each card is a copy of the board's first card that has the card
   structure: a "Buy" button with its Price, gradient, stroke and corner, an
   "Icons" image, and title / value labels told apart by height.
 - The copy is recoloured pink / lime / cyan / amber and relabelled.
-- **Icons:** set `Workspace.Board` attributes `IconNetStrength`,
-  `IconRodLuck`, `IconMeatPrice` and `IconFasterReels` to `rbxassetid://…`
-  images you have. A card without one shows its emoji over a hidden image.
+- **Icons:** the board has only **two** images today (the axe
+  `rbxassetid://75744565067217` and the miner `rbxassetid://137299198925368`),
+  neither of which fits these four upgrades. Set `Workspace.Board`
+  attributes `IconNetStrength`, `IconRodLuck`, `IconMeatPrice` and
+  `IconFasterReels` to `rbxassetid://…` images you have; a card without one
+  shows its emoji over a hidden image. So this is **not** an exact visual
+  match until those four images exist.
 
 **Install:** the prerequisite is `EconomyRodsBackup`. The installer refuses
 if any backup of the superseded per-milestone installers exists.
@@ -680,8 +714,12 @@ to the data:
   players are back to their old kg count; the Money they spent stays spent.
   Re-installing brings those steps back: the records are kept, and v2 keeps
   unknown fields.
+- **Open journal entries** (`pendingPurchases`) are not settled by the old
+  scripts. Roll back only when none are open (none can be while paid
+  upgrades are closed); re-installing settles any left over.
 - While paid upgrades are closed, no real purchases happen, so a rollback
-  during validation loses nothing.
+  during validation loses nothing. Use test records only during
+  validation.
 
 ### Live-baseline checklist (Studio, API access ON)
 
@@ -689,14 +727,17 @@ to the data:
 |---|---|---|
 | G1 | Run `InstallBoardUpgrades.lua` (Edit mode) | "Installed"; if it refuses, send the named script's current source |
 | G2 | Play with a player whose `GrinderUpgrades_v1` record has `kg = 3` | Their net shows 30 kg (plates `NET 30 KG → 35 KG`, card `30kg > 35kg`); `NetMaxWeight` 30 |
-| G3 | Change `Workspace.NetLift.MaxWeight` by hand | That player's `NetMaxWeight` stays 30 |
+| G3 | Change `Workspace.NetLift.MaxWeight` by hand | That player's `NetMaxWeight` stays 30; with nobody buying, `MaxWeight` itself is never changed by the scripts |
+| G3b | Second client with no old record joins while the first has 30 kg | Their `NetMaxWeight` is 15 (their own), not 30; a 20 kg load fails for them and lifts for the first |
 | G4 | `NetKgOpen = true`; click a post, then its price plate | Two separate purchases (−$100, then −$150); one toast each; `GrinderUpgrades_v1` kg still 3 |
 | G5 | Watch the plates for a few seconds | They keep YOUR values (no flicker back to $100 / old text) |
 | G6 | Blade pad / conveyor pad | Work as before (same prices, blade shows, sales pay × blade) |
-| G7 | Leave and rejoin | Still 40 kg (not 55): the old count isn't added again |
+| G7 | Leave and rejoin | Still the same kg as before leaving (e.g. 40 after G4, not 55): the old count isn't added again |
 | G8 | Meat Price 2x + an Uncommon blade, sell a fish | Pays 2 × value × 1.25 (each once); the popups add up to it |
 | G9 | Board | Four cards in the board's card style; icons from the attributes you set |
-| G10 | `RollbackBoardUpgrades.lua` | The live GrinderUpgrades scripts and EconomyService come back exactly |
+| G9b | Buy a blade, then stop the server (Stop) before the save answers | After rejoining and ~2 min: either the blade is there and the money spent, or a toast "... refunded" and the money back; never debited without the blade |
+| G9c | Buy a blade normally | Toast "Bought ..."; the Money record has no `pendingPurchases` left |
+| G10 | `RollbackBoardUpgrades.lua` | The live GrinderUpgrades scripts, EconomyService and NetLiftScript (untouched) come back exactly |
 
 ## +5 KG signs: net capacity (part of `InstallBoardUpgrades.lua`)
 
@@ -710,8 +751,8 @@ at 15 kg.
 - Clicking a sign's `Board Part` ClickDetector buys the clicker's next
   +5 kg.
 - A panel above each sign shows **your** capacity → next and the price
-  (**SOON** while closed, **MAX** at the cap), plus the shared net's
-  current capacity. It uses the same style as the rod Buy panel.
+  (**SOON** while closed, **MAX** at the cap). It uses the same style as
+  the rod Buy panel.
 - The result appears as the usual toast, e.g. "Net capacity 15 → 20 kg
   (-$25)" or "Walk up to the sign".
 
@@ -735,16 +776,16 @@ any step above `UpgradeCostCap` (5,000). To tune:
 - `Costs`: the listed first costs
 - `Growth`: the multiplier after the list
 
-**The shared net:**
+**The net is per player** (the live NetLiftScript, unchanged):
 
-- `Workspace.NetLift.MaxWeight`, which the weight gate, gauge and net
-  themes read, is the **highest capacity among players in the server whose
-  Money has loaded**. It never goes below the place's own value (15).
-- It updates on join (once loaded), on each purchase and on leave. A
-  player who leaves stops counting at once, even while their final save is
-  still running.
-- Only the attribute changes: no fish are touched, and NetLiftScript, the
-  dwell, ownership and harpoon code are unchanged.
+- Its weight gate reads `player.NetMaxWeight`, then
+  `Workspace.NetLift.MaxWeight`, then 40.
+- EconomyService publishes each player's `NetMaxWeight` = their `netKg`
+  once their money (and their old KG count) has loaded.
+- `MaxWeight` is **never changed** (the place's 15): it's only the fallback
+  for a player not yet published, so nobody lifts with another player's
+  limit (`netlift_sim`).
+- No fish are touched; the dwell, ownership and harpoon code are unchanged.
 
 **Protections:**
 
@@ -782,14 +823,14 @@ is validated. For a Studio validation **with API access**, set the
 
 | # | Do | Expect |
 |---|---|---|
-| K1 | Play, walk to either +5 KG sign | Panel: "Your net 15 → 20 kg", "SOON", "Net now: 15 kg" (above BOTH signs) |
+| K1 | Play, walk to either +5 KG sign | Panel: "Your net 15 → 20 kg", "SOON" (above BOTH signs) |
 | K2 | Click a sign (closed) | Toast "Net upgrades open soon"; nothing charged |
-| K3 | Set `ReplicatedStorage.Economy.NetKgOpen = true`; click | −25, toast "Net capacity 15 → 20 kg (-$25)"; `NetLift.MaxWeight` 20; panel $50 |
+| K3 | Set `ReplicatedStorage.Economy.NetKgOpen = true`; click | −25, toast "Net capacity 15 → 20 kg (-$25)"; your `NetMaxWeight` 20 (`NetLift.MaxWeight` stays 15); panel $50 |
 | K4 | Click the OTHER sign | Same thing (+5 kg, −50) |
 | K5 | Walk away 40+ studs, click | Toast "Walk up to the sign"; nothing charged |
-| K6 | Net a heavy load | The weight gate / gauge use the new MaxWeight |
-| K7 | Second client (15 kg) joins, then the first leaves | MaxWeight follows the highest present player, then drops to 15; no fish vanish |
-| K8 | Stop, Play again (real DataStore) | Your capacity is back; MaxWeight follows it once your money loads |
+| K6 | Net a load between 15 and 20 kg | It lifts for you; the same load fails for a 15 kg player |
+| K7 | Second client (15 kg) joins, then the first leaves | Each keeps their own `NetMaxWeight`; `MaxWeight` stays 15; no fish vanish |
+| K8 | Stop, Play again (real DataStore) | Your capacity is back as `NetMaxWeight` once your money loads |
 
 (With row 17 installed the prices in K3/K4 are $10 and $25, and the posts'
 own plates show them instead of the floating panel.)
@@ -826,8 +867,8 @@ hides the original **on that client only**.
 **Net Strength is the same saved capacity as the KGsign posts** (one
 progression, `netKg` in the Money record). Buying at the board or at either
 post moves the same number; the other place shows the new step at once.
-The shared `NetLift.MaxWeight` follows board purchases too (NetCapacityServer
-already follows each player's `NetKg`).
+A purchase raises only that player's `NetMaxWeight`; `NetLift.MaxWeight`
+isn't changed.
 
 **Pressing a card** (mouse, touch or gamepad: `Activated`):
 
@@ -870,7 +911,7 @@ fallback is **not** proof of persistence.
 | N2 | Look at both +5 KG posts | Their plates show `SOON` and `NET15KG->20KG`; no floating panel over them |
 | N3 | Press Net Strength (closed) | SOON; toast "Net upgrades open soon"; nothing charged |
 | N4 | Set `ReplicatedStorage.Economy.NetKgOpen = true` | Card and both plates: `$10` |
-| N5 | Press Net Strength | SAVING..., then BOUGHT!; −10; toast "Net capacity 15 → 20 kg (-$10)"; card `20kg > 25kg` `$25`; plates `$25` `NET20KG->25KG`; `NetLift.MaxWeight` 20 |
+| N5 | Press Net Strength | SAVING..., then BOUGHT!; −10; toast "Net capacity 15 → 20 kg (-$10)"; card `20kg > 25kg` `$25`; plates `$25` `NET20KG->25KG`; your `NetMaxWeight` 20 |
 | N6 | Click a post | −25, 20 → 25 kg; the board card follows (`25kg > 30kg`, `$50`) |
 | N7 | Press the card from 40+ studs away (or from a post) | TOO FAR; toast "Walk up to the board"; nothing charged |
 | N8 | Press Rod Luck / Meat Price / Faster Reels | SOON; toast "... coming soon"; nothing charged |
@@ -1155,9 +1196,9 @@ changes; the rest re-check behaviour that already worked.
 ## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau          # 461 checks (rods 80, net kg 52, board upgrades 67)
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 49 + 6, luck 30, meat 17, reels 15, grinder 27 + 7 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 336 checks
+python3 tools/economy/tests/run_tests.py path/to/luau          # 486 checks (rods 80, net kg 52, board upgrades 67, journal 25)
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 49 + 6, luck 30, meat 17, reels 15, grinder 27 + 7, journal 18, net lift 9 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 339 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

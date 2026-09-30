@@ -1403,6 +1403,11 @@ local function astraLive()
 	local cfg = new("ModuleScript", "GrinderUpgradesConfig")
 	cfg.Source = GLIVE.Config
 	cfg.Parent = sv.ReplicatedStorage
+	-- the live NetLiftScript (per-player NetMaxWeight gate) in Workspace.NetLift
+	local netLift = new("Model", "NetLift")
+	netLift.Parent = sv.Workspace
+	sc.NetLiftScript.Parent = netLift
+	sc.NetLiftScript.Source = GLIVE.NetLift
 	for _, name in ipairs({ "GrinderUpgradesBackup", "BillboardLockBackup" }) do
 		local f = new("Folder", name)
 		f.Parent = sv.ServerStorage
@@ -1442,8 +1447,11 @@ do
 		addsOk = addsOk and inst ~= nil and inst.Source == SUITE[a[3]] and inst:GetAttribute("EconomyOwned") == true
 	end
 	check("board upgrades: 6 scripts added, tagged EconomyOwned", addsOk)
-	check("board upgrades: Rods / shop / shop UI untouched", svc.Rods.Source == RODS.Rods and sc.RodShopServer.Source == RODS.Shop
-		and sc.RodShopController.Source == SHOPUI.New)
+	check("board upgrades: Rods / shop / shop UI / NetLiftScript untouched", svc.Rods.Source == RODS.Rods and sc.RodShopServer.Source == RODS.Shop
+		and sc.RodShopController.Source == SHOPUI.New and sc.NetLiftScript.Source == GLIVE.NetLift)
+	check("board upgrades: the BillboardLock line carried into the installed EconomyService",
+		svc.Source:find("gui.Size = UDim2.fromScale(6.25, 3) -- locked world size", 1, true) ~= nil
+		and svc.Source:find("fromOffset(200, 96)", 1, true) == nil)
 	check("board upgrades: backup = 9 changes + 6 adds", #sv.ServerStorage.EconomyBoardUpgradesBackup:GetChildren() == 15)
 	local kept = true
 	for name, tree in pairs(backups) do
@@ -1474,6 +1482,22 @@ do
 	suite(g, sv)
 	check("board upgrades on an EconomyService without the blade multiplier: refused, names the line", refused() and snapshot(g) == before
 		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
+do
+	local g, sv = astraLive()
+	-- the baseline b97a01c assumed (without BillboardLock): not what Studio has
+	sv.ServerScriptService.EconomyService.Source = GLIVE.EconomyService:gsub("gui.Size = UDim2.fromScale%(6.25, 3%) %-%- locked world size", "gui.Size = UDim2.fromOffset(200, 96)", 1)
+	local before = snapshot(g)
+	suite(g, sv)
+	check("board upgrades on an EconomyService without the BillboardLock line: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
+do
+	local g, sv, _, sc = astraLive()
+	sc.NetLiftScript.Source = GLIVE.NetLift:gsub('player:GetAttribute%("NetMaxWeight"%) or ', "", 1) -- a shared-only gate
+	local before = snapshot(g)
+	suite(g, sv)
+	check("board upgrades over a NetLiftScript that doesn't read NetMaxWeight: refused", refused() and snapshot(g) == before)
 end
 do
 	local g, sv = astraCurrent() -- no GrinderUpgrades at all
@@ -1676,6 +1700,7 @@ def main() -> int:
         ("Server", live / "GrinderUpgradesServer.lua"),
         ("Client", live / "GrinderUpgradesClient.lua"),
         ("Config", live / "GrinderUpgradesConfig.lua"),
+        ("NetLift", live / "NetLiftScript.grinder.lua"),
     )) + "}\n"
     tables += "local SUITE = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (
         ("EconomyService", ROOT / "src/server/EconomyService.luau"),

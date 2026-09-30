@@ -8,8 +8,10 @@
 	    Net Strength, Rod Luck, Meat Price, Faster Reels - with each player's
 	    own values. Icons: Board attributes IconNetStrength / IconRodLuck /
 	    IconMeatPrice / IconFasterReels (rbxassetid://...), else an emoji.
-	  * Net capacity: ONE saved value (the Money record's netKg, money + kg in
-	    one write), sold by both KG posts (NetCapacityServer, the only seller:
+	  * Net capacity: ONE saved value PER PLAYER (the Money record's netKg,
+	    money + kg in one write; published as NetMaxWeight, which the live
+	    NetLiftScript's gate reads for the pad player; NetLift.MaxWeight stays
+	    the place's base for anyone not published yet), sold by both KG posts (NetCapacityServer, the only seller:
 	    board and price plate, 24 studs) and the Net Strength card. First step
 	    $10. Earlier GrinderUpgrades KG buys (its kg count) are ADOPTED at join:
 	    netKg = max(netKg, 15 + 5 x kg) - idempotent, never compounded; the old
@@ -23,8 +25,10 @@
 	    rod's).
 	  * GrinderUpgradesServer: conveyor / blades unchanged in price and effect;
 	    no KG selling; no memory store outside Studio; unreadable records never
-	    overwritten; the final Money save waits for its store write and a
-	    failed write is refunded even if the player left.
+	    overwritten; purchases JOURNALED in the Money record (debit + open entry
+	    in one write before its own store is touched; the upgrade written with
+	    the purchase token; settled at once, or - after a shutdown, a slow
+	    write or a crash - at the player's next load from those tokens).
 	  * PAID UPGRADES STAY CLOSED: NetKgOpen (net) and UpgradesOpen (the other
 	    three) attributes on ReplicatedStorage.Economy, for a Studio validation.
 	Changes EconomyService, Config, MoneyStore, Pricing, Ledger, Sales,
@@ -891,7 +895,7 @@ local function offerBillboard(
 	end
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "OfferGui"
-	gui.Size = UDim2.fromOffset(200, 96)
+	gui.Size = UDim2.fromScale(6.25, 3) -- locked world size
 	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.4, 0)
 	gui.AlwaysOnTop = true
 	gui.MaxDistance = 140
@@ -1143,13 +1147,17 @@ return M
 --     record as the money; buying saves money + rod in one write before it
 --     counts; RodFishingSystem reads the presser's rod per cast (rodStats)
 --   * net capacity (child module NetKg): the +5 KG signs, saved the same way;
---     NetCapacityServer sets the shared NetLift.MaxWeight from netKg()
+--     it is PER PLAYER: NetLiftScript's gate reads the pad player's
+--     NetMaxWeight (published = netKg); NetLift.MaxWeight stays the base
 --   * the GrinderUpgrades KG signs' purchases (their own DataStore, a count of
 --     +5 kg buys) are ADOPTED into netKg once GrinderUpgradesServer reports a
 --     player's count (adoptLegacyNetKg); net purchases wait for that
---   * GrinderUpgradesServer's own purchases (conveyor, blades) can hold the
---     leaving player's final save while their store write runs (holdSave),
---     so a failed write is refunded before the Money is saved (refundHeld)
+--   * purchases another script delivers into its own store (GrinderUpgrades:
+--     conveyor, blades) are JOURNALED: beginPurchase saves the debit and an
+--     open entry in the Money record in one write, finishPurchase settles it;
+--     an entry left open by a shutdown, a slow write or a crash is settled at
+--     the player's next load by asking that store (its registered reader)
+--     whether the purchase token arrived: delivered -> kept, else refunded
 --   * the GrinderUpgrades blade multiplier (live enhancement) still applies
 --     at each sale, on top of the piece's value (Meat Price is in that value)
 --   * board upgrades (child module BoardUpgrades): levels saved the same way,
@@ -1314,6 +1322,7 @@ local function showMoney(player: Player)
 	v.Parent = stats
 	M._publishRods(player) -- rods load with the money
 	M._adoptLegacy(player) -- earlier KG-sign buys reported before the money loaded
+	M._settleOpen(player) -- purchases a shutdown / slow write / crash left open
 	M._publishNet(player)
 	M._publishUpgrades(player)
 end
@@ -1402,13 +1411,15 @@ local function saveWithRetry(userId: number, release: boolean): boolean
 	return false
 end
 
-local saveHolds: { [number]: number } = {} -- userId -> purchases elsewhere still being written (holdSave)
+local inFlight: { [number]: number } = {} -- userId -> journaled purchases still being delivered (beginPurchase)
 
 local function unloadPlayer(player: Player)
 	local userId = player.UserId
-	-- a purchase another script is still saving may need to refund first
+	-- let a purchase still being delivered settle first (a normal refund /
+	-- keep); if it takes longer, the final save keeps its open entry and the
+	-- next load settles it - nothing is lost either way
 	local t0 = os.clock()
-	while (saveHolds[userId] or 0) > 0 and os.clock() - t0 < Config.SaveHoldSeconds do
+	while (inFlight[userId] or 0) > 0 and os.clock() - t0 < Config.SaveHoldSeconds do
 		task.wait(0.1)
 	end
 	moneyValues[player] = nil
@@ -1553,6 +1564,12 @@ function M._start(): boolean
 		end
 	end)
 	game:BindToClose(function()
+		-- purchases still being delivered get a moment to settle; any left
+		-- open are saved as open entries and settled at the next load
+		local t0 = os.clock()
+		while next(inFlight) and os.clock() - t0 < Config.SaveHoldSeconds do
+			task.wait(0.1)
+		end
 		local waiting = 0
 		for _, userId in ipairs(money:users()) do
 			if money:state(userId) == "Ready" then
@@ -1641,43 +1658,165 @@ function M.credit(who: any, amount: number, reason: string): string
 	return result
 end
 
--- Another script's purchase (GrinderUpgradesServer) holds the player's
--- final Money save while its own store write runs: the Money is saved only
--- after release() (or after Config.SaveHoldSeconds), so refundHeld() still
--- reaches a player who left meanwhile. Returns release (call it once).
-function M.holdSave(player: Player): () -> ()
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") then
-		return function() end
+------------------------------------------------------------ journaled purchases (delivered by another store)
+
+-- source name -> reader(userId): the set of purchase tokens that source's
+-- own store holds ({ [token] = true }), or nil if it can't be read now. YIELDS.
+local purchaseSources: { [string]: (number) -> { [string]: boolean }? } = {}
+local liveTokens: { [string]: boolean } = {} -- begun in this server (settled by finishPurchase)
+local settlingTokens: { [string]: boolean } = {} -- being settled from their source's store
+
+-- Open entries loaded with the player's Money (a shutdown, a slow write or a
+-- crash left them): once old enough that no write from another server can
+-- still be on its way (Config.PurchaseSettleSeconds), ask the source's store
+-- whether the token arrived: delivered -> the debit stays, else refunded.
+-- Retries while the store can't be read; new purchases wait meanwhile.
+function M._settleOpen(player: Player)
+	local open = money:openPurchases(player.UserId)
+	if not open then
+		return
 	end
-	local userId = player.UserId
-	saveHolds[userId] = (saveHolds[userId] or 0) + 1
-	local released = false
-	return function()
-		if not released then
-			released = true
-			saveHolds[userId] = math.max(0, (saveHolds[userId] or 1) - 1)
-			if saveHolds[userId] == 0 then
-				saveHolds[userId] = nil
+	local pending = {}
+	for token, entry in pairs(open) do
+		if not liveTokens[token] and not settlingTokens[token] then
+			settlingTokens[token] = true
+			table.insert(pending, { token = token, entry = entry })
+		end
+	end
+	if #pending == 0 then
+		return
+	end
+	task.spawn(function()
+		while player.Parent == Players and #pending > 0 do
+			local rest = {}
+			local wait = nil
+			for _, p in ipairs(pending) do
+				local reader = purchaseSources[p.entry.source]
+				local age = os.time() - p.entry.t
+				if not reader then
+					table.insert(rest, p)
+					wait = 5 -- its source hasn't registered yet
+				elseif age < Config.PurchaseSettleSeconds then
+					table.insert(rest, p)
+					wait = math.min(wait or math.huge, Config.PurchaseSettleSeconds - age + 1)
+				else
+					local ok, applied = pcall(reader, player.UserId)
+					if ok and type(applied) == "table" then
+						settlingTokens[p.token] = nil
+						local delivered = applied[p.token] == true
+						if money:settlePurchase(player.UserId, p.token, delivered) == "settled" then
+							sync(player)
+							local what = p.entry.what or p.entry.source
+							log(string.format("%s: open purchase %s settled (%s)", player.Name, p.token, if delivered then "delivered" else "refunded"))
+							M.notify(player, if delivered
+								then "Your last purchase (" .. what .. ") went through"
+								else "Your last purchase (" .. what .. ") didn't go through - refunded " .. p.entry.amount, "info")
+							task.spawn(saveWithRetry, player.UserId, false)
+						end
+					else
+						table.insert(rest, p)
+						wait = math.min(wait or math.huge, 30)
+					end
+				end
 			end
+			pending = rest
+			if #pending > 0 then
+				task.wait(wait or 5)
+			end
+		end
+		for _, p in ipairs(pending) do
+			settlingTokens[p.token] = nil -- left: settled at their next load
+		end
+	end)
+end
+
+-- A script that delivers purchases into its own store registers how to read
+-- the tokens that store holds. Settles open entries of players already here.
+function M.registerPurchaseSource(name: string, reader: (number) -> { [string]: boolean }?)
+	purchaseSources[name] = reader
+	if startOk then
+		for _, p in ipairs(Players:GetPlayers()) do
+			M._settleOpen(p)
 		end
 	end
 end
 
--- A refund while holding the save: credited to the player's loaded Money
--- even if they already left (their final save is waiting for the hold).
--- Returns the credit result ("paid" | "pending" | "dropped" | ...).
-function M.refundHeld(player: Player, amount: number, reason: string): string
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") then
-		return "dropped"
+-- Opens a purchase `source` will deliver: debit + open entry saved in ONE
+-- write before this returns the token (checks: a real player here, loaded,
+-- one at a time, no older entry unsettled). The caller writes the token
+-- into its own store WITH the upgrade, then calls finishPurchase. YIELDS.
+-- Returns (token, nil) or (nil, reason): "funds" | "notLoaded" | "busy" |
+-- "unsettled" | "unavailable" | "notSaved".
+function M.beginPurchase(player: Player, source: string, amount: number, what: string?): (string?, string?)
+	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") or player.Parent ~= Players then
+		return nil, "unavailable"
 	end
-	local r = money:credit(player.UserId, amount)
-	if r == "paid" and moneyValues[player] then
-		sync(player)
+	if not purchaseSources[source] then
+		return nil, "unavailable"
 	end
-	if r ~= "paid" and r ~= "pending" then
-		warn(string.format("[Economy] held refund of %d to %s not applied (%s): %s", amount, player.Name, tostring(r), reason))
+	if not (type(amount) == "number" and amount == math.floor(amount) and amount > 0) then
+		return nil, "unavailable"
 	end
-	return r
+	local t0 = os.clock()
+	while money:isSaving(player.UserId) and os.clock() - t0 < 10 do
+		task.wait(0.05)
+	end
+	if player.Parent ~= Players then
+		return nil, "unavailable"
+	end
+	local token = source .. ":" .. HttpService:GenerateGUID(false)
+	liveTokens[token] = true
+	inFlight[player.UserId] = (inFlight[player.UserId] or 0) + 1
+	local ok, why = money:beginPurchase(player.UserId, token, source, amount, what)
+	if not ok then
+		liveTokens[token] = nil
+		inFlight[player.UserId] -= 1
+		if inFlight[player.UserId] <= 0 then
+			inFlight[player.UserId] = nil
+		end
+		local reason = if type(why) == "string" and string.sub(why, 1, 8) == "notSaved" then "notSaved"
+			elseif why == "purchasesUnavailable" then "unavailable"
+			else why
+		return nil, reason
+	end
+	sync(player)
+	return token, nil
+end
+
+-- Settles a purchase begun with beginPurchase: delivered = the token is in
+-- the source's own store with the upgrade. false -> refunded. nil = the
+-- source can't tell (its write errored and it couldn't read back): the entry
+-- stays open and is settled from that store once it can be read. If the
+-- player's Money is already saved and closed (they left, the server is
+-- shutting down), the entry stays in their record and is settled at their
+-- next load. Returns "settled" | "later" | "atNextLoad".
+function M.finishPurchase(player: Player, token: string, delivered: boolean?): string
+	local userId = player.UserId
+	if inFlight[userId] then
+		inFlight[userId] -= 1
+		if inFlight[userId] <= 0 then
+			inFlight[userId] = nil
+		end
+	end
+	liveTokens[token] = nil
+	if delivered == nil then
+		if player.Parent == Players then
+			M._settleOpen(player)
+		end
+		return "later"
+	end
+	if money:settlePurchase(userId, token, delivered == true) == "settled" then
+		if moneyValues[player] then
+			sync(player)
+		end
+		if player.Parent == Players then
+			task.spawn(saveWithRetry, userId, false)
+		end
+		return "settled"
+	end
+	warn(string.format("[Economy] purchase %s for %s left open (%s): settled at their next load", token, player.Name,
+		if delivered then "delivered" else "not delivered"))
+	return "atNextLoad"
 end
 
 function M.refund(player: Player, amount: number, reason: string)
@@ -2351,7 +2490,7 @@ local function offerBillboard(
 	end
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "OfferGui"
-	gui.Size = UDim2.fromOffset(200, 96)
+	gui.Size = UDim2.fromScale(6.25, 3) -- locked world size
 	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.4, 0)
 	gui.AlwaysOnTop = true
 	gui.MaxDistance = 140
@@ -2977,9 +3116,13 @@ Config.NetKgCooldown = 0.5 -- seconds between sign presses per player
 -- (and can be bought) only after GrinderUpgradesServer has reported that
 -- count this session; it is adopted as max(netKg, Base + Step x buys).
 Config.NetKgLegacy = true
--- Longest a leaving player's final Money save waits for another script's
--- purchase that is still being written (EconomyService.holdSave).
+-- Longest a leaving player's final Money save (and a shutdown) waits for a
+-- journaled purchase still being delivered (EconomyService.beginPurchase);
+-- one still open after that is saved as an open entry, settled at the next load.
 Config.SaveHoldSeconds = 20
+-- An open entry is settled at load only once it is this old (seconds): by
+-- then no write from the server that opened it can still be on its way.
+Config.PurchaseSettleSeconds = 120
 
 ------------------------------------------------------------ upgrade board (Workspace.Board)
 
@@ -3606,6 +3749,15 @@ return MoneyStore
 --     money, bought with one staged write, invalid data never overwritten.
 --   * `upgrades` (the upgrade board's levels, see BoardUpgrades): the same
 --     again; entries this build doesn't know are kept.
+--   * `pendingPurchases`: purchases another script delivers into ITS OWN
+--     store (GrinderUpgrades). beginPurchase saves the debit AND an entry
+--     { source, amount, t } under a fresh token in ONE write before the other
+--     store is touched; finishPurchase settles it (delivered: the entry goes;
+--     not: the money comes back and the entry goes - both in the same
+--     session, saved together). An entry still there when the record is next
+--     loaded (a shutdown, a timeout, a crash) is settled then by asking the
+--     other store whether the token arrived (EconomyService). So a purchase
+--     is never paid-for-and-lost nor delivered-and-free, whatever stops.
 
 local Config = require(script.Parent.Config)
 local Rods = require(script.Parent.Rods)
@@ -3638,10 +3790,45 @@ type Session = {
 	upgrades: BoardUpgrades.Levels, -- the board's levels (all 0 until loaded)
 	upgradesWritable: boolean, -- false: not loaded, or the saved field isn't valid (left untouched)
 	pendingUpgrades: BoardUpgrades.Levels?, -- an upgrade purchase being written, not yet committed
+	purchases: { [string]: Purchase }, -- pendingPurchases: token -> the open purchase
+	purchasesWritable: boolean, -- false: not loaded, or the saved field isn't valid (left untouched)
 }
+
+export type Purchase = { source: string, amount: number, t: number, what: string? }
 
 local MoneyStore = {}
 MoneyStore.__index = MoneyStore
+
+-- pendingPurchases: nil = none; otherwise every entry must be readable, or the
+-- whole field is left as it is (and no such purchases this session).
+local function validPurchase(k: any, v: any): boolean
+	return type(k) == "string" and #k > 0 and #k <= 80 and type(v) == "table" and type(v.source) == "string"
+		and type(v.amount) == "number" and v.amount == math.floor(v.amount) and v.amount > 0 and v.amount <= Config.MaxBalance
+		and type(v.t) == "number" and (v.what == nil or type(v.what) == "string")
+end
+local function loadPurchases(field: any): ({ [string]: Purchase }, boolean)
+	if field == nil then
+		return {}, true
+	end
+	if type(field) ~= "table" then
+		return {}, false
+	end
+	local out = {}
+	for k, v in pairs(field) do
+		if not validPurchase(k, v) then
+			return {}, false
+		end
+		out[k] = { source = v.source, amount = v.amount, t = v.t, what = v.what }
+	end
+	return out, true
+end
+local function copyPurchases(t: { [string]: Purchase }): { [string]: Purchase }
+	local out = {}
+	for k, v in pairs(t) do
+		out[k] = { source = v.source, amount = v.amount, t = v.t, what = v.what }
+	end
+	return out
+end
 
 export type MoneyStore = typeof(setmetatable(
 	{} :: {
@@ -3713,6 +3900,8 @@ function MoneyStore.begin(self: MoneyStore, userId: number)
 			netWritable = false,
 			upgrades = {},
 			upgradesWritable = false,
+			purchases = {},
+			purchasesWritable = false,
 		}
 	end
 end
@@ -3799,6 +3988,7 @@ function MoneyStore.attemptLoad(self: MoneyStore, userId: number): (string, stri
 		s.rods, s.rodsWritable = Rods.load(loaded.rods)
 		s.netKg, s.netWritable = NetKg.load(loaded.netKg)
 		s.upgrades, s.upgradesWritable = BoardUpgrades.load(loaded.upgrades)
+		s.purchases, s.purchasesWritable = loadPurchases(loaded.pendingPurchases)
 		s.state = "Ready"
 		if s.pending > 0 then
 			s.balance = math.min(Config.MaxBalance, s.balance + s.pending)
@@ -3907,6 +4097,9 @@ function MoneyStore.save(self: MoneyStore, userId: number, release: boolean): (b
 		if s.upgradesWritable then
 			-- an upgrade purchase in flight writes its staged levels
 			out.upgrades = BoardUpgrades.copy(s.pendingUpgrades or s.upgrades)
+		end
+		if s.purchasesWritable then
+			out.pendingPurchases = if next(s.purchases) then copyPurchases(s.purchases) else nil
 		end
 		out.lock = if release then nil else { job = self.jobId, t = self.now() }
 		written = s.balance
@@ -4041,6 +4234,84 @@ function MoneyStore.netKg(self: MoneyStore, userId: number): number?
 		return nil
 	end
 	return s.netKg
+end
+
+------------------------------------------------------------ purchases delivered by another store
+
+-- Opens a purchase another script will deliver into its own store: takes
+-- `amount` and WRITES the new balance and the entry { source, amount, t }
+-- under `token` in ONE store update before returning true. If that write
+-- fails, the money is back and there is no entry. One open purchase per
+-- player at a time (and none while an older one is unsettled). YIELDS.
+-- Returns (ok, reason): "notLoaded" | "purchasesUnavailable" | "busy" |
+-- "unsettled" | "badAmount" | "funds" | "notSaved: ...".
+function MoneyStore.beginPurchase(self: MoneyStore, userId: number, token: string, source: string, amount: number, what: string?): (boolean, string?)
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return false, "notLoaded"
+	end
+	if not s.purchasesWritable then
+		return false, "purchasesUnavailable"
+	end
+	if s.buying or s.saving then
+		return false, "busy"
+	end
+	if next(s.purchases) then
+		return false, "unsettled"
+	end
+	if type(token) ~= "string" or #token == 0 or #token > 80 or type(source) ~= "string" then
+		return false, "badAmount"
+	end
+	local paid, why = self:tryDebit(userId, amount)
+	if not paid then
+		return false, why
+	end
+	s.purchases[token] = { source = source, amount = amount, t = self.now(), what = what }
+	rodsChanged(s)
+	s.buying = true
+	local saved, reason = self:save(userId, false)
+	s.buying = false
+	if saved then
+		return true, nil
+	end
+	-- not written: no purchase (a write that did land is overwritten by the
+	-- next save while this server holds the lock, or settled at the next load)
+	s.purchases[token] = nil
+	if s.state == "Ready" then
+		s.balance = math.min(Config.MaxBalance, s.balance + amount)
+		s.dirty = true
+	end
+	return false, "notSaved: " .. tostring(reason)
+end
+
+-- Settles an open purchase in this session: delivered -> the entry goes;
+-- not delivered -> the money comes back and the entry goes. Saved together
+-- with the next save. Returns "settled" | "notOpen" (not loaded here / no
+-- such entry: it stays in the store and is settled at the next load).
+function MoneyStore.settlePurchase(self: MoneyStore, userId: number, token: string, delivered: boolean): string
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return "notOpen"
+	end
+	local entry = s.purchases[token]
+	if not entry then
+		return "notOpen"
+	end
+	s.purchases[token] = nil
+	if not delivered then
+		s.balance = math.min(Config.MaxBalance, s.balance + entry.amount)
+	end
+	rodsChanged(s)
+	return "settled"
+end
+
+-- The open purchases (a copy), or nil while not loaded.
+function MoneyStore.openPurchases(self: MoneyStore, userId: number): { [string]: Purchase }?
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" or not s.purchasesWritable then
+		return nil
+	end
+	return copyPurchases(s.purchases)
 end
 
 -- Adopts net capacity bought before (the legacy GrinderUpgrades KG signs):
@@ -6386,9 +6657,11 @@ end)
 -- [Economy board] The KG signs are sold by NetCapacityServer now (the one
 -- saved net capacity, shared with the upgrade board): this script only
 -- reports its saved kg count once per join (EconomyService.adoptLegacyNetKg).
--- Purchases hold the player's final Money save until the store write is
--- done, refund a failed write, never use a memory store outside Studio
--- and never overwrite a record they can't read.
+-- Purchases are journaled in the Money record (EconomyService.beginPurchase):
+-- the upgrade is saved here WITH its purchase token, and a purchase left
+-- open by a shutdown / slow write / crash is settled at the next load from
+-- these tokens. No memory store outside Studio; records it can't read are
+-- never overwritten.
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -6497,12 +6770,22 @@ local function load(p)
 end
 
 -- Writes the new state; returns true only if it was saved.
-local function save(p, newState)
+-- Economy board: with `token`, the purchase token is written in the SAME
+-- update (the last APPLIED_KEEP of them, in `applied`): proof of delivery
+-- for a purchase whose Money entry is settled later.
+local APPLIED_KEEP = 20
+local function save(p, newState, token)
 	local ok, err = pcall(update, p, function(old)
 		local out = type(old) == "table" and table.clone(old) or {}
 		out.conveyor = newState.conveyor
 		out.blade = newState.blade
 		out.kg = newState.kg
+		if token then
+			local applied = type(out.applied) == "table" and table.clone(out.applied) or {}
+			table.insert(applied, token)
+			while #applied > APPLIED_KEEP do table.remove(applied, 1) end
+			out.applied = applied
+		end
 		return out
 	end)
 	if not ok then warn("[GrinderUpgrades] save failed for " .. p.Name .. ": " .. tostring(err)) end
@@ -6511,6 +6794,11 @@ end
 
 ------------------------------------------------------------ purchases
 local REASON = { funds = "Not enough Money!", notLoaded = "Money still loading..." }
+-- Economy board: the journal's name for this store's purchases
+local SOURCE = "GrinderUpgrades"
+REASON.unsettled = "Finishing your last purchase - try again in a moment"
+REASON.busy = "One moment - still saving"
+REASON.notSaved = "Couldn't save the purchase - you were not charged. Try again."
 
 local function buy(p, price, what, apply)
 	local d = data[p]
@@ -6518,33 +6806,40 @@ local function buy(p, price, what, apply)
 	if storeOff then Economy.notify(p, "Grinder upgrades are unavailable on this server", "error") return end
 	if not d then Economy.notify(p, "Loading your upgrades...", "error") return end
 	if d.readOnly then Economy.notify(p, "Your saved grinder upgrades couldn't be read - buying is off this session", "error") return end
-	-- Economy board: the player's final Money save waits for this write, so a
-	-- failed write is refunded even if they leave meanwhile
-	local release = if type(Economy.holdSave) == "function" then Economy.holdSave(p) else function() end
-	local paid, why = Economy.tryDebit(p, price, "GrinderUpgrade:" .. what)
-	if not paid then
-		release()
-		Economy.notify(p, REASON[why] or tostring(why), "error")
+	if type(Economy.beginPurchase) ~= "function" then Economy.notify(p, "Grinder upgrades are unavailable right now", "error") return end
+	-- Economy board: debit + open entry saved in the Money record first (one write)
+	local token, why = Economy.beginPurchase(p, SOURCE, price, what)
+	if not token then
+		Economy.notify(p, REASON[why] or "Couldn't buy that right now - you were not charged", "error")
 		return
 	end
 	local nextState = table.clone(d)
 	apply(nextState)
-	local saved = save(p, nextState)
-	if saved then
+	local delivered = save(p, nextState, token) -- the upgrade and its token, one write
+	if not delivered then
+		-- a write can error after it landed: read back whether the token is here
+		local ok, rec = pcall(function()
+			if ds and p.UserId > 0 then return ds:GetAsync(key(p)) end
+			return mem[key(p)]
+		end)
+		if ok then
+			delivered = type(rec) == "table" and type(rec.applied) == "table" and table.find(rec.applied, token) ~= nil
+		else
+			delivered = nil -- can't tell: the open entry is settled from this store later
+		end
+	end
+	Economy.finishPurchase(p, token, delivered) -- kept / refunded / settled later
+	if delivered == true then
 		if p.Parent then
 			data[p] = nextState
 			publish(p)
 			Economy.notify(p, "Bought " .. what .. "!", "success")
 		end
-	else
-		if type(Economy.refundHeld) == "function" then
-			Economy.refundHeld(p, price, "GrinderUpgrade:" .. what)
-		else
-			Economy.refund(p, price, "GrinderUpgrade:" .. what)
-		end
+	elseif delivered == false then
 		if p.Parent then Economy.notify(p, "Purchase failed, refunded", "error") end
+	elseif p.Parent then
+		Economy.notify(p, "Checking your purchase - it will be kept or refunded shortly", "info")
 	end
-	release()
 end
 
 local function onConveyorPad(p)
@@ -6585,6 +6880,25 @@ for _, pad in ipairs(CollectionService:GetTagged("ConveyorPad")) do hookPad(pad,
 for _, pad in ipairs(CollectionService:GetTagged("BladePad")) do hookPad(pad, onBladePad) end
 
 -- Economy board: the KG signs (board + price plate) are NetCapacityServer's
+
+-- Economy board: how EconomyService reads this store's purchase tokens
+-- (to settle a Money entry left open by a shutdown / slow write / crash)
+if Economy and type(Economy.registerPurchaseSource) == "function" and not storeOff then
+	Economy.registerPurchaseSource(SOURCE, function(userId)
+		local ok, rec = pcall(function()
+			if ds and userId > 0 then return ds:GetAsync("player_" .. userId) end
+			return mem["player_" .. userId]
+		end)
+		if not ok then return nil end
+		local set = {}
+		if type(rec) == "table" and type(rec.applied) == "table" then
+			for _, t in ipairs(rec.applied) do
+				if type(t) == "string" then set[t] = true end
+			end
+		end
+		return set
+	end)
+end
 
 ------------------------------------------------------------ players
 Players.PlayerAdded:Connect(load)
@@ -7107,7 +7421,7 @@ end
 return BoardUpgrades
 ]] },
 	{ where = "ServerScriptService", name = "NetCapacityServer", class = "Script", source = [[
--- NetCapacityServer (Script in ServerScriptService). [Economy net capacity v2]
+-- NetCapacityServer (Script in ServerScriptService). [Economy net capacity v3]
 --
 -- The +5 KG signs: every sign tagged KgSign (CollectionService, as the place
 -- has them) and every Workspace child named KGsign - the same two posts,
@@ -7119,16 +7433,15 @@ return BoardUpgrades
 -- saved (money + capacity in one write) before it counts. The result is a
 -- toast. This is the ONLY KG-sign seller (GrinderUpgradesServer no longer is).
 --
--- The net lift is shared: Workspace.NetLift's MaxWeight attribute (read by
--- NetLiftScript's weight gate, the gauge and the net themes) is the highest
--- capacity owned by a player in the server whose money has loaded, never
--- below the place's own MaxWeight. It follows joins (once loaded), purchases
--- and leaves. Only the attribute changes; no fish are touched.
+-- The net is PER PLAYER, as the live NetLiftScript uses it: its weight gate
+-- reads the pad player's NetMaxWeight (EconomyService publishes it: that
+-- player's own saved capacity) before NetLift.MaxWeight. This script never
+-- changes NetLift.MaxWeight: it stays the place's base (15), the limit for
+-- anyone whose capacity isn't published yet (money loading, earlier buys not
+-- adopted) - never another player's.
 --
--- Without a running EconomyService: the signs do nothing and MaxWeight stays
--- the place's value (fail closed).
+-- Without a running EconomyService: the signs do nothing (fail closed).
 local CollectionService = game:GetService("CollectionService")
-local Players = game:GetService("Players")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local Economy = nil
@@ -7151,38 +7464,8 @@ do
 	end
 end
 
-local netLift = workspace:WaitForChild("NetLift")
--- the place's own capacity: the shared net never goes below it
-local FLOOR = netLift:GetAttribute("MaxWeight")
-if type(FLOOR) ~= "number" then
-	FLOOR = 15
-end
 local REACH_SLACK = 8 -- studs beyond the ClickDetector's own distance (server check)
 local CLICK_DISTANCE = 24 -- as GrinderUpgradesServer set it
-
------------------------------------------------------------- the shared net
-
-local function sharedMax(leaving: Player?): number
-	local best = FLOOR
-	if Economy then
-		for _, p in ipairs(Players:GetPlayers()) do
-			if p ~= leaving then
-				local kg = Economy.netKg(p)
-				if type(kg) == "number" and kg > best then
-					best = kg
-				end
-			end
-		end
-	end
-	return best
-end
-
-local function update(leaving: Player?)
-	local v = sharedMax(leaving)
-	if netLift:GetAttribute("MaxWeight") ~= v then
-		netLift:SetAttribute("MaxWeight", v)
-	end
-end
 
 ------------------------------------------------------------ the signs
 
@@ -7203,9 +7486,6 @@ local function click(detector: ClickDetector, part: BasePart)
 			return true, nil
 		end)
 		Economy.notify(player, message, if ok then "success" else "warn")
-		if ok then
-			update()
-		end
 	end)
 end
 local function bind(sign: Instance)
@@ -7246,24 +7526,6 @@ workspace.ChildAdded:Connect(function(child)
 		bind(child)
 	end
 end)
-
------------------------------------------------------------- players
-
-local function watch(player: Player)
-	-- EconomyService publishes NetKg once the player's money has loaded, and on every purchase
-	player:GetAttributeChangedSignal("NetKg"):Connect(function()
-		update()
-	end)
-	update()
-end
-Players.PlayerAdded:Connect(watch)
-for _, p in ipairs(Players:GetPlayers()) do
-	watch(p)
-end
-Players.PlayerRemoving:Connect(function(player)
-	update(player)
-end)
-update()
 ]] },
 	{ where = "ServerScriptService", name = "UpgradeBoardServer", class = "Script", source = [[
 -- UpgradeBoardServer (Script in ServerScriptService). [Economy upgrade board v4: Faster Reels]
@@ -7465,11 +7727,11 @@ remote.Parent = root
 --     green / amber - the look GrinderUpgradesClient gave it (it no longer
 --     writes the plate: this is the plate's only writer). On this client only.
 --   * a post without that plate gets a small floating panel instead (dark
---     box, white outlined text): your net → next, the price, the shared net.
+--     box, white outlined text): your net → next and the price.
 -- Click the post (or its plate) to buy; the server checks, charges and
 -- answers with a toast. Display only: values come from the server's
 -- attributes (NetKg, NetKgNext, NetKgCost on you; NetKgPaidOpen on
--- ReplicatedStorage.Economy; MaxWeight on Workspace.NetLift).
+-- ReplicatedStorage.Economy). The net is per player: the pad uses YOUR capacity.
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7505,7 +7767,7 @@ local function label(parent: Instance, name: string, y: number, h: number, color
 	return t
 end
 
-local panels = {} -- sign -> { gui, capacity, price, shared }
+local panels = {} -- sign -> { gui, capacity, price }
 local plates = {} -- sign -> { price, info, border } (the post's own PricePlate.PriceGui.Pill)
 local PLATE_WAIT = 10 -- seconds to wait for a post's PricePlate to appear
 
@@ -7538,8 +7800,6 @@ local function render()
 	local cost = player:GetAttribute("NetKgCost")
 	local econ = economy()
 	local open = econ ~= nil and econ:GetAttribute("NetKgPaidOpen") == true
-	local netLift = workspace:FindFirstChild("NetLift")
-	local shared = netLift and netLift:GetAttribute("MaxWeight")
 	local have = money()
 	for _, p in pairs(plates) do
 		local canBuy = false
@@ -7573,7 +7833,6 @@ local function render()
 			p.price.Text = if open then "$" .. tostring(cost) else "SOON"
 			p.price.TextColor3 = if open then LIME else GREY
 		end
-		p.shared.Text = if type(shared) == "number" then string.format("Net now: %d kg", shared) else ""
 	end
 end
 
@@ -7657,7 +7916,6 @@ local function addSign(sign: Instance)
 			gui = gui,
 			capacity = label(frame, "Capacity", 4, 26, WHITE),
 			price = label(frame, "Price", 30, 30, LIME),
-			shared = label(frame, "Shared", 60, 20, WHITE),
 		}
 		gui.Parent = playerGui
 	end
@@ -7724,14 +7982,6 @@ else
 			watchEconomy(c)
 		end
 	end)
-end
-local function watchNet(netLift: Instance)
-	netLift:GetAttributeChangedSignal("MaxWeight"):Connect(render)
-	render()
-end
-local netLift = workspace:FindFirstChild("NetLift")
-if netLift then
-	watchNet(netLift)
 end
 render()
 ]] },
@@ -8805,6 +9055,178 @@ function C.short(n)
 end
 
 return C
+]] },
+	{ key = "NetLiftScript", where = "Workspace/NetLift/NetLiftScript", class = "Script", source = [[
+-- Server: handles the step pad. The net animation + splash runs on each client (NetLiftClient).
+--
+-- [GrinderDwell patch v1] Each caught fish is destroyed and FishCaught fires
+-- once, when the client launch (now with ~1 s on the rollers) has finished:
+-- GrinderDwell.serverDelay() instead of 1.65 s. Payload and rewards unchanged.
+--
+-- [Economy patch v1] Changes vs. the live script are marked "Economy".
+-- Each catch also sends { OwnerId, Variant, Source = "Net" } as a 4th value, so a
+-- bought fish keeps its buyer (the grinder falls back to the pad player). While
+-- EconomyService reports the meat pipeline saturated, the pad refuses to lift
+-- (fish stay in the river). The MaxWeight rule is unchanged.
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+
+local model = script.Parent
+local hitbox = model.PadHitbox
+local pad = model.Pad
+local prints = model.Prints
+
+local lifted = model:FindFirstChild("NetLifted") or Instance.new("BindableEvent")
+lifted.Name = "NetLifted"
+lifted.Parent = model
+
+local padRest = pad.CFrame
+local printRest = {}
+for _, p in ipairs(prints:GetChildren()) do printRest[p] = p.CFrame end
+local function pressPad(down)
+	local off = down and CFrame.new(0, -0.3, 0) or CFrame.new()
+	local info = TweenInfo.new(0.08)
+	TweenService:Create(pad, info, { CFrame = off * padRest }):Play()
+	for p, cf in pairs(printRest) do TweenService:Create(p, info, { CFrame = off * cf }):Play() end
+end
+
+-- fish catching: any fish over the net when it fires gets launched into the grinder
+local fishFolder = workspace:WaitForChild("SwimmingFish")
+local netRoot = model.Net.NetRoot
+local NET_L = model:GetAttribute("NetL") or 34
+local NET_W = model:GetAttribute("NetW") or 14
+-- GrinderDwell: optional ~1 s tumble on the rollers before the pull-in
+-- (missing module -> original timing)
+local Dwell = nil
+do
+	local mod = game:GetService("ReplicatedStorage"):FindFirstChild("GrinderDwell")
+	if mod and mod:IsA("ModuleScript") then
+		local ok, m = pcall(require, mod)
+		if ok and type(m) == "table" then
+			Dwell = m
+		else
+			warn("[GrinderDwell] failed to load, using original timing: " .. tostring(m))
+		end
+	end
+end
+local CATCH_DELAY = if Dwell then Dwell.serverDelay() else 1.65 -- GrinderDwell
+local caughtEvent = model:FindFirstChild("FishCaught") or Instance.new("BindableEvent")
+caughtEvent.Name = "FishCaught" -- fires (player, fishName, tier) for each fish that lands in the grinder
+caughtEvent.Parent = model
+
+-- Economy: optional money service (missing or not running -> original behaviour)
+local Economy = nil
+do
+	local mod = game:GetService("ServerScriptService"):FindFirstChild("EconomyService")
+	if mod and mod:IsA("ModuleScript") then
+		local ok, api = pcall(require, mod)
+		if ok and type(api) == "table" then
+			local ran, running = pcall(api.start)
+			if ran and running then
+				Economy = api
+			else
+				warn("[NetLiftScript] economy not running, original behaviour: " .. tostring(running))
+			end
+		else
+			warn("[NetLiftScript] could not load EconomyService, original behaviour: " .. tostring(api))
+		end
+	end
+end
+
+local function fishPos(m, t)
+	local seed = m:GetAttribute("Seed") or 1
+	local weaveA, weaveF, phase = 0.8 + (seed % 7) * 0.15, 0.35 + (seed % 5) * 0.08, seed * 1.7
+	local z = m:GetAttribute("StartZ") + m:GetAttribute("Speed") * (t - m:GetAttribute("SpawnT"))
+	local x = m:GetAttribute("LaneX") + weaveA * math.sin(weaveF * t + phase)
+	return x, z
+end
+
+local function catchFish(player)
+	local t = workspace:GetServerTimeNow()
+	local c = netRoot.Position
+	local count = 0
+	for _, m in ipairs(fishFolder:GetChildren()) do
+		if m:GetAttribute("SpawnT") and not m:GetAttribute("CaughtT") and not m:GetAttribute("HarpoonT") then
+			local x, z = fishPos(m, t)
+			if math.abs(x - c.X) <= NET_L / 2 and math.abs(z - c.Z) <= NET_W / 2 then
+				m:SetAttribute("CaughtT", t)
+				count += 1
+				task.delay(CATCH_DELAY, function() -- GrinderDwell
+					caughtEvent:Fire(player, m.Name, m:GetAttribute("Tier"), {
+						OwnerId = m:GetAttribute("OwnerId"), -- Economy: a bought fish keeps its buyer
+						Variant = m:GetAttribute("Variant"),
+						Source = "Net",
+					})
+					if m.Parent then m:Destroy() end
+				end)
+			end
+		end
+	end
+	return count
+end
+
+-- weight system: total weight of the fish over the net (kg)
+local function weightOverNet(t)
+	local c = netRoot.Position
+	local total = 0
+	for _, m in ipairs(fishFolder:GetChildren()) do
+		if m:GetAttribute("SpawnT") and not m:GetAttribute("CaughtT") and not m:GetAttribute("HarpoonT") then
+			local x, z = fishPos(m, t)
+			if math.abs(x - c.X) <= NET_L / 2 and math.abs(z - c.Z) <= NET_W / 2 then
+				total += m:GetAttribute("Weight") or 1
+			end
+		end
+	end
+	return total
+end
+-- keep a live reading on the model so clients can show it
+task.spawn(function()
+	while true do
+		model:SetAttribute("CurrentWeight", weightOverNet(workspace:GetServerTimeNow()))
+		task.wait(0.2)
+	end
+end)
+
+local CYCLE = 2.3 -- matches the client animation length
+local busy = false
+hitbox.Touched:Connect(function(hit)
+	if busy then return end
+	local char = hit.Parent
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local player = hum and Players:GetPlayerFromCharacter(char)
+	if not player or hum.Health <= 0 then return end
+	busy = true
+	pressPad(true)
+	-- Economy: grinder backed up -> no lift; the fish stay in the river
+	if Economy and Economy.saturated() then
+		Economy.notify(player, "The grinder is backed up - let the meat clear first", "warn")
+		task.wait(0.6)
+		pressPad(false)
+		task.wait(0.4)
+		busy = false
+		return
+	end
+	local maxW = player:GetAttribute("NetMaxWeight") or model:GetAttribute("MaxWeight") or 40 -- GrinderUpgrades: per-player net limit
+	local w = weightOverNet(workspace:GetServerTimeNow())
+	if w > maxW then
+		-- too heavy: the net strains, flashes red and stays down
+		model:SetAttribute("FailWeight", w)
+		model:SetAttribute("FailId", (model:GetAttribute("FailId") or 0) + 1)
+		task.wait(1.4)
+		pressPad(false)
+		task.wait(0.4)
+		busy = false
+		return
+	end
+	model:SetAttribute("LiftId", (model:GetAttribute("LiftId") or 0) + 1)
+	catchFish(player)
+	task.wait(0.1)
+	lifted:Fire(player) -- net is up: hook fish catching here
+	task.wait(CYCLE - 0.1)
+	pressPad(false)
+	task.wait(0.3)
+	busy = false
+end)
 ]] },
 	{ key = "RodShopServer", where = "script:RodShopServer", class = "Script", source = [[
 -- Rod shop: every 5 minutes each player's stock re-rolls (rarer rods show up less and in smaller amounts).

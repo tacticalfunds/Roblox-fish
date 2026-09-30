@@ -642,12 +642,20 @@ def board_upgrades() -> list[str]:
     rods_svc = git_show(RODS_RELEASE, "tools/economy/src/server/EconomyService.luau")
     assert "GrinderUpgrades: the owner's blade tier" in live("EconomyService.grinder.lua") and live("EconomyService.grinder.lua") != rods_svc
     assert "GrinderUpgrades: the owner's blade tier" in cur("src/server/EconomyService.luau")  # carried
+    # BillboardLock (live): the offer label's locked world size, in the baseline AND what is installed
+    lock = "\tgui.Size = UDim2.fromScale(6.25, 3) -- locked world size\n"
+    assert live("EconomyService.grinder.lua").count(lock) == 1 and cur("src/server/EconomyService.luau").count(lock) == 1
+    assert "fromOffset(200, 96)" not in cur("src/server/EconomyService.luau")
     unchanged = []
     for name in ("Rods", "Offers", "PieceTags"):
         src = git_show(RODS_RELEASE, core(name))
         assert src == cur(f"src/core/{name}.luau"), name
         unchanged.append((mod(name), src))
     unchanged.append(({"key": "GrinderUpgradesConfig", "where": "ReplicatedStorage/GrinderUpgradesConfig", "class": "ModuleScript"}, live("GrinderUpgradesConfig.lua")))
+    # the net gate is per player because the live NetLiftScript reads NetMaxWeight first
+    net = live("NetLiftScript.grinder.lua")
+    assert 'player:GetAttribute("NetMaxWeight") or model:GetAttribute("MaxWeight")' in net
+    unchanged.append(({"key": "NetLiftScript", "where": "Workspace/NetLift/NetLiftScript", "class": "Script"}, net))
     shop = git_show(RODS_RELEASE, "tools/economy/studio/rods/RodShopServer.lua")
     assert shop == cur("studio/rods/RodShopServer.lua"), "RodShopServer"
     unchanged.append(({"key": "RodShopServer", "where": "script:RodShopServer", "class": "Script"}, shop))
@@ -669,8 +677,10 @@ The upgrade board and the ONE saved net capacity, on the live baseline
     Net Strength, Rod Luck, Meat Price, Faster Reels - with each player's
     own values. Icons: Board attributes IconNetStrength / IconRodLuck /
     IconMeatPrice / IconFasterReels (rbxassetid://...), else an emoji.
-  * Net capacity: ONE saved value (the Money record's netKg, money + kg in
-    one write), sold by both KG posts (NetCapacityServer, the only seller:
+  * Net capacity: ONE saved value PER PLAYER (the Money record's netKg,
+    money + kg in one write; published as NetMaxWeight, which the live
+    NetLiftScript's gate reads for the pad player; NetLift.MaxWeight stays
+    the place's base for anyone not published yet), sold by both KG posts (NetCapacityServer, the only seller:
     board and price plate, 24 studs) and the Net Strength card. First step
     $10. Earlier GrinderUpgrades KG buys (its kg count) are ADOPTED at join:
     netKg = max(netKg, 15 + 5 x kg) - idempotent, never compounded; the old
@@ -684,8 +694,10 @@ The upgrade board and the ONE saved net capacity, on the live baseline
     rod's).
   * GrinderUpgradesServer: conveyor / blades unchanged in price and effect;
     no KG selling; no memory store outside Studio; unreadable records never
-    overwritten; the final Money save waits for its store write and a
-    failed write is refunded even if the player left.
+    overwritten; purchases JOURNALED in the Money record (debit + open entry
+    in one write before its own store is touched; the upgrade written with
+    the purchase token; settled at once, or - after a shutdown, a slow
+    write or a crash - at the player's next load from those tokens).
   * PAID UPGRADES STAY CLOSED: NetKgOpen (net) and UpgradesOpen (the other
     three) attributes on ReplicatedStorage.Economy, for a Studio validation.
 Changes EconomyService, Config, MoneyStore, Pricing, Ledger, Sales,

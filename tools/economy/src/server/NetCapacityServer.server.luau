@@ -1,4 +1,4 @@
--- NetCapacityServer (Script in ServerScriptService). [Economy net capacity v2]
+-- NetCapacityServer (Script in ServerScriptService). [Economy net capacity v3]
 --
 -- The +5 KG signs: every sign tagged KgSign (CollectionService, as the place
 -- has them) and every Workspace child named KGsign - the same two posts,
@@ -10,16 +10,15 @@
 -- saved (money + capacity in one write) before it counts. The result is a
 -- toast. This is the ONLY KG-sign seller (GrinderUpgradesServer no longer is).
 --
--- The net lift is shared: Workspace.NetLift's MaxWeight attribute (read by
--- NetLiftScript's weight gate, the gauge and the net themes) is the highest
--- capacity owned by a player in the server whose money has loaded, never
--- below the place's own MaxWeight. It follows joins (once loaded), purchases
--- and leaves. Only the attribute changes; no fish are touched.
+-- The net is PER PLAYER, as the live NetLiftScript uses it: its weight gate
+-- reads the pad player's NetMaxWeight (EconomyService publishes it: that
+-- player's own saved capacity) before NetLift.MaxWeight. This script never
+-- changes NetLift.MaxWeight: it stays the place's base (15), the limit for
+-- anyone whose capacity isn't published yet (money loading, earlier buys not
+-- adopted) - never another player's.
 --
--- Without a running EconomyService: the signs do nothing and MaxWeight stays
--- the place's value (fail closed).
+-- Without a running EconomyService: the signs do nothing (fail closed).
 local CollectionService = game:GetService("CollectionService")
-local Players = game:GetService("Players")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local Economy = nil
@@ -42,38 +41,8 @@ do
 	end
 end
 
-local netLift = workspace:WaitForChild("NetLift")
--- the place's own capacity: the shared net never goes below it
-local FLOOR = netLift:GetAttribute("MaxWeight")
-if type(FLOOR) ~= "number" then
-	FLOOR = 15
-end
 local REACH_SLACK = 8 -- studs beyond the ClickDetector's own distance (server check)
 local CLICK_DISTANCE = 24 -- as GrinderUpgradesServer set it
-
------------------------------------------------------------- the shared net
-
-local function sharedMax(leaving: Player?): number
-	local best = FLOOR
-	if Economy then
-		for _, p in ipairs(Players:GetPlayers()) do
-			if p ~= leaving then
-				local kg = Economy.netKg(p)
-				if type(kg) == "number" and kg > best then
-					best = kg
-				end
-			end
-		end
-	end
-	return best
-end
-
-local function update(leaving: Player?)
-	local v = sharedMax(leaving)
-	if netLift:GetAttribute("MaxWeight") ~= v then
-		netLift:SetAttribute("MaxWeight", v)
-	end
-end
 
 ------------------------------------------------------------ the signs
 
@@ -94,9 +63,6 @@ local function click(detector: ClickDetector, part: BasePart)
 			return true, nil
 		end)
 		Economy.notify(player, message, if ok then "success" else "warn")
-		if ok then
-			update()
-		end
 	end)
 end
 local function bind(sign: Instance)
@@ -137,21 +103,3 @@ workspace.ChildAdded:Connect(function(child)
 		bind(child)
 	end
 end)
-
------------------------------------------------------------- players
-
-local function watch(player: Player)
-	-- EconomyService publishes NetKg once the player's money has loaded, and on every purchase
-	player:GetAttributeChangedSignal("NetKg"):Connect(function()
-		update()
-	end)
-	update()
-end
-Players.PlayerAdded:Connect(watch)
-for _, p in ipairs(Players:GetPlayers()) do
-	watch(p)
-end
-Players.PlayerRemoving:Connect(function(player)
-	update(player)
-end)
-update()

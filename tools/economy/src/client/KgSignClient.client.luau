@@ -12,11 +12,11 @@
 --     green / amber - the look GrinderUpgradesClient gave it (it no longer
 --     writes the plate: this is the plate's only writer). On this client only.
 --   * a post without that plate gets a small floating panel instead (dark
---     box, white outlined text): your net → next, the price, the shared net.
+--     box, white outlined text): your net → next and the price.
 -- Click the post (or its plate) to buy; the server checks, charges and
 -- answers with a toast. Display only: values come from the server's
 -- attributes (NetKg, NetKgNext, NetKgCost on you; NetKgPaidOpen on
--- ReplicatedStorage.Economy; MaxWeight on Workspace.NetLift).
+-- ReplicatedStorage.Economy). The net is per player: the pad uses YOUR capacity.
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -52,7 +52,7 @@ local function label(parent: Instance, name: string, y: number, h: number, color
 	return t
 end
 
-local panels = {} -- sign -> { gui, capacity, price, shared }
+local panels = {} -- sign -> { gui, capacity, price }
 local plates = {} -- sign -> { price, info, border } (the post's own PricePlate.PriceGui.Pill)
 local PLATE_WAIT = 10 -- seconds to wait for a post's PricePlate to appear
 
@@ -85,8 +85,6 @@ local function render()
 	local cost = player:GetAttribute("NetKgCost")
 	local econ = economy()
 	local open = econ ~= nil and econ:GetAttribute("NetKgPaidOpen") == true
-	local netLift = workspace:FindFirstChild("NetLift")
-	local shared = netLift and netLift:GetAttribute("MaxWeight")
 	local have = money()
 	for _, p in pairs(plates) do
 		local canBuy = false
@@ -120,7 +118,6 @@ local function render()
 			p.price.Text = if open then "$" .. tostring(cost) else "SOON"
 			p.price.TextColor3 = if open then LIME else GREY
 		end
-		p.shared.Text = if type(shared) == "number" then string.format("Net now: %d kg", shared) else ""
 	end
 end
 
@@ -204,7 +201,6 @@ local function addSign(sign: Instance)
 			gui = gui,
 			capacity = label(frame, "Capacity", 4, 26, WHITE),
 			price = label(frame, "Price", 30, 30, LIME),
-			shared = label(frame, "Shared", 60, 20, WHITE),
 		}
 		gui.Parent = playerGui
 	end
@@ -271,13 +267,5 @@ else
 			watchEconomy(c)
 		end
 	end)
-end
-local function watchNet(netLift: Instance)
-	netLift:GetAttributeChangedSignal("MaxWeight"):Connect(render)
-	render()
-end
-local netLift = workspace:FindFirstChild("NetLift")
-if netLift then
-	watchNet(netLift)
 end
 render()

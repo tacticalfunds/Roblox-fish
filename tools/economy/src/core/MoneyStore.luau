@@ -26,6 +26,15 @@
 --     money, bought with one staged write, invalid data never overwritten.
 --   * `upgrades` (the upgrade board's levels, see BoardUpgrades): the same
 --     again; entries this build doesn't know are kept.
+--   * `pendingPurchases`: purchases another script delivers into ITS OWN
+--     store (GrinderUpgrades). beginPurchase saves the debit AND an entry
+--     { source, amount, t } under a fresh token in ONE write before the other
+--     store is touched; finishPurchase settles it (delivered: the entry goes;
+--     not: the money comes back and the entry goes - both in the same
+--     session, saved together). An entry still there when the record is next
+--     loaded (a shutdown, a timeout, a crash) is settled then by asking the
+--     other store whether the token arrived (EconomyService). So a purchase
+--     is never paid-for-and-lost nor delivered-and-free, whatever stops.
 
 local Config = require(script.Parent.Config)
 local Rods = require(script.Parent.Rods)
@@ -58,10 +67,45 @@ type Session = {
 	upgrades: BoardUpgrades.Levels, -- the board's levels (all 0 until loaded)
 	upgradesWritable: boolean, -- false: not loaded, or the saved field isn't valid (left untouched)
 	pendingUpgrades: BoardUpgrades.Levels?, -- an upgrade purchase being written, not yet committed
+	purchases: { [string]: Purchase }, -- pendingPurchases: token -> the open purchase
+	purchasesWritable: boolean, -- false: not loaded, or the saved field isn't valid (left untouched)
 }
+
+export type Purchase = { source: string, amount: number, t: number, what: string? }
 
 local MoneyStore = {}
 MoneyStore.__index = MoneyStore
+
+-- pendingPurchases: nil = none; otherwise every entry must be readable, or the
+-- whole field is left as it is (and no such purchases this session).
+local function validPurchase(k: any, v: any): boolean
+	return type(k) == "string" and #k > 0 and #k <= 80 and type(v) == "table" and type(v.source) == "string"
+		and type(v.amount) == "number" and v.amount == math.floor(v.amount) and v.amount > 0 and v.amount <= Config.MaxBalance
+		and type(v.t) == "number" and (v.what == nil or type(v.what) == "string")
+end
+local function loadPurchases(field: any): ({ [string]: Purchase }, boolean)
+	if field == nil then
+		return {}, true
+	end
+	if type(field) ~= "table" then
+		return {}, false
+	end
+	local out = {}
+	for k, v in pairs(field) do
+		if not validPurchase(k, v) then
+			return {}, false
+		end
+		out[k] = { source = v.source, amount = v.amount, t = v.t, what = v.what }
+	end
+	return out, true
+end
+local function copyPurchases(t: { [string]: Purchase }): { [string]: Purchase }
+	local out = {}
+	for k, v in pairs(t) do
+		out[k] = { source = v.source, amount = v.amount, t = v.t, what = v.what }
+	end
+	return out
+end
 
 export type MoneyStore = typeof(setmetatable(
 	{} :: {
@@ -133,6 +177,8 @@ function MoneyStore.begin(self: MoneyStore, userId: number)
 			netWritable = false,
 			upgrades = {},
 			upgradesWritable = false,
+			purchases = {},
+			purchasesWritable = false,
 		}
 	end
 end
@@ -219,6 +265,7 @@ function MoneyStore.attemptLoad(self: MoneyStore, userId: number): (string, stri
 		s.rods, s.rodsWritable = Rods.load(loaded.rods)
 		s.netKg, s.netWritable = NetKg.load(loaded.netKg)
 		s.upgrades, s.upgradesWritable = BoardUpgrades.load(loaded.upgrades)
+		s.purchases, s.purchasesWritable = loadPurchases(loaded.pendingPurchases)
 		s.state = "Ready"
 		if s.pending > 0 then
 			s.balance = math.min(Config.MaxBalance, s.balance + s.pending)
@@ -327,6 +374,9 @@ function MoneyStore.save(self: MoneyStore, userId: number, release: boolean): (b
 		if s.upgradesWritable then
 			-- an upgrade purchase in flight writes its staged levels
 			out.upgrades = BoardUpgrades.copy(s.pendingUpgrades or s.upgrades)
+		end
+		if s.purchasesWritable then
+			out.pendingPurchases = if next(s.purchases) then copyPurchases(s.purchases) else nil
 		end
 		out.lock = if release then nil else { job = self.jobId, t = self.now() }
 		written = s.balance
@@ -461,6 +511,84 @@ function MoneyStore.netKg(self: MoneyStore, userId: number): number?
 		return nil
 	end
 	return s.netKg
+end
+
+------------------------------------------------------------ purchases delivered by another store
+
+-- Opens a purchase another script will deliver into its own store: takes
+-- `amount` and WRITES the new balance and the entry { source, amount, t }
+-- under `token` in ONE store update before returning true. If that write
+-- fails, the money is back and there is no entry. One open purchase per
+-- player at a time (and none while an older one is unsettled). YIELDS.
+-- Returns (ok, reason): "notLoaded" | "purchasesUnavailable" | "busy" |
+-- "unsettled" | "badAmount" | "funds" | "notSaved: ...".
+function MoneyStore.beginPurchase(self: MoneyStore, userId: number, token: string, source: string, amount: number, what: string?): (boolean, string?)
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return false, "notLoaded"
+	end
+	if not s.purchasesWritable then
+		return false, "purchasesUnavailable"
+	end
+	if s.buying or s.saving then
+		return false, "busy"
+	end
+	if next(s.purchases) then
+		return false, "unsettled"
+	end
+	if type(token) ~= "string" or #token == 0 or #token > 80 or type(source) ~= "string" then
+		return false, "badAmount"
+	end
+	local paid, why = self:tryDebit(userId, amount)
+	if not paid then
+		return false, why
+	end
+	s.purchases[token] = { source = source, amount = amount, t = self.now(), what = what }
+	rodsChanged(s)
+	s.buying = true
+	local saved, reason = self:save(userId, false)
+	s.buying = false
+	if saved then
+		return true, nil
+	end
+	-- not written: no purchase (a write that did land is overwritten by the
+	-- next save while this server holds the lock, or settled at the next load)
+	s.purchases[token] = nil
+	if s.state == "Ready" then
+		s.balance = math.min(Config.MaxBalance, s.balance + amount)
+		s.dirty = true
+	end
+	return false, "notSaved: " .. tostring(reason)
+end
+
+-- Settles an open purchase in this session: delivered -> the entry goes;
+-- not delivered -> the money comes back and the entry goes. Saved together
+-- with the next save. Returns "settled" | "notOpen" (not loaded here / no
+-- such entry: it stays in the store and is settled at the next load).
+function MoneyStore.settlePurchase(self: MoneyStore, userId: number, token: string, delivered: boolean): string
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return "notOpen"
+	end
+	local entry = s.purchases[token]
+	if not entry then
+		return "notOpen"
+	end
+	s.purchases[token] = nil
+	if not delivered then
+		s.balance = math.min(Config.MaxBalance, s.balance + entry.amount)
+	end
+	rodsChanged(s)
+	return "settled"
+end
+
+-- The open purchases (a copy), or nil while not loaded.
+function MoneyStore.openPurchases(self: MoneyStore, userId: number): { [string]: Purchase }?
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" or not s.purchasesWritable then
+		return nil
+	end
+	return copyPurchases(s.purchases)
 end
 
 -- Adopts net capacity bought before (the legacy GrinderUpgrades KG signs):

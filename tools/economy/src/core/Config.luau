@@ -182,9 +182,13 @@ Config.NetKgCooldown = 0.5 -- seconds between sign presses per player
 -- (and can be bought) only after GrinderUpgradesServer has reported that
 -- count this session; it is adopted as max(netKg, Base + Step x buys).
 Config.NetKgLegacy = true
--- Longest a leaving player's final Money save waits for another script's
--- purchase that is still being written (EconomyService.holdSave).
+-- Longest a leaving player's final Money save (and a shutdown) waits for a
+-- journaled purchase still being delivered (EconomyService.beginPurchase);
+-- one still open after that is saved as an open entry, settled at the next load.
 Config.SaveHoldSeconds = 20
+-- An open entry is settled at load only once it is this old (seconds): by
+-- then no write from the server that opened it can still be on its way.
+Config.PurchaseSettleSeconds = 120
 
 ------------------------------------------------------------ upgrade board (Workspace.Board)
 

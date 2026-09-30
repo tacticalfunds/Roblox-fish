@@ -1050,6 +1050,9 @@ services.DataStoreService = {
 				if r ~= nil then
 					data[key] = r
 				end
+				if dsHooks.after then
+					dsHooks.after(key, name) -- may error: a write that landed, then failed to answer
+				end
 				return data[key]
 			end,
 			GetAsync = function(_, key)

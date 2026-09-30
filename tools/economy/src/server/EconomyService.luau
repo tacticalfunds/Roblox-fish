@@ -14,13 +14,17 @@
 --     record as the money; buying saves money + rod in one write before it
 --     counts; RodFishingSystem reads the presser's rod per cast (rodStats)
 --   * net capacity (child module NetKg): the +5 KG signs, saved the same way;
---     NetCapacityServer sets the shared NetLift.MaxWeight from netKg()
+--     it is PER PLAYER: NetLiftScript's gate reads the pad player's
+--     NetMaxWeight (published = netKg); NetLift.MaxWeight stays the base
 --   * the GrinderUpgrades KG signs' purchases (their own DataStore, a count of
 --     +5 kg buys) are ADOPTED into netKg once GrinderUpgradesServer reports a
 --     player's count (adoptLegacyNetKg); net purchases wait for that
---   * GrinderUpgradesServer's own purchases (conveyor, blades) can hold the
---     leaving player's final save while their store write runs (holdSave),
---     so a failed write is refunded before the Money is saved (refundHeld)
+--   * purchases another script delivers into its own store (GrinderUpgrades:
+--     conveyor, blades) are JOURNALED: beginPurchase saves the debit and an
+--     open entry in the Money record in one write, finishPurchase settles it;
+--     an entry left open by a shutdown, a slow write or a crash is settled at
+--     the player's next load by asking that store (its registered reader)
+--     whether the purchase token arrived: delivered -> kept, else refunded
 --   * the GrinderUpgrades blade multiplier (live enhancement) still applies
 --     at each sale, on top of the piece's value (Meat Price is in that value)
 --   * board upgrades (child module BoardUpgrades): levels saved the same way,
@@ -185,6 +189,7 @@ local function showMoney(player: Player)
 	v.Parent = stats
 	M._publishRods(player) -- rods load with the money
 	M._adoptLegacy(player) -- earlier KG-sign buys reported before the money loaded
+	M._settleOpen(player) -- purchases a shutdown / slow write / crash left open
 	M._publishNet(player)
 	M._publishUpgrades(player)
 end
@@ -273,13 +278,15 @@ local function saveWithRetry(userId: number, release: boolean): boolean
 	return false
 end
 
-local saveHolds: { [number]: number } = {} -- userId -> purchases elsewhere still being written (holdSave)
+local inFlight: { [number]: number } = {} -- userId -> journaled purchases still being delivered (beginPurchase)
 
 local function unloadPlayer(player: Player)
 	local userId = player.UserId
-	-- a purchase another script is still saving may need to refund first
+	-- let a purchase still being delivered settle first (a normal refund /
+	-- keep); if it takes longer, the final save keeps its open entry and the
+	-- next load settles it - nothing is lost either way
 	local t0 = os.clock()
-	while (saveHolds[userId] or 0) > 0 and os.clock() - t0 < Config.SaveHoldSeconds do
+	while (inFlight[userId] or 0) > 0 and os.clock() - t0 < Config.SaveHoldSeconds do
 		task.wait(0.1)
 	end
 	moneyValues[player] = nil
@@ -424,6 +431,12 @@ function M._start(): boolean
 		end
 	end)
 	game:BindToClose(function()
+		-- purchases still being delivered get a moment to settle; any left
+		-- open are saved as open entries and settled at the next load
+		local t0 = os.clock()
+		while next(inFlight) and os.clock() - t0 < Config.SaveHoldSeconds do
+			task.wait(0.1)
+		end
 		local waiting = 0
 		for _, userId in ipairs(money:users()) do
 			if money:state(userId) == "Ready" then
@@ -512,43 +525,165 @@ function M.credit(who: any, amount: number, reason: string): string
 	return result
 end
 
--- Another script's purchase (GrinderUpgradesServer) holds the player's
--- final Money save while its own store write runs: the Money is saved only
--- after release() (or after Config.SaveHoldSeconds), so refundHeld() still
--- reaches a player who left meanwhile. Returns release (call it once).
-function M.holdSave(player: Player): () -> ()
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") then
-		return function() end
+------------------------------------------------------------ journaled purchases (delivered by another store)
+
+-- source name -> reader(userId): the set of purchase tokens that source's
+-- own store holds ({ [token] = true }), or nil if it can't be read now. YIELDS.
+local purchaseSources: { [string]: (number) -> { [string]: boolean }? } = {}
+local liveTokens: { [string]: boolean } = {} -- begun in this server (settled by finishPurchase)
+local settlingTokens: { [string]: boolean } = {} -- being settled from their source's store
+
+-- Open entries loaded with the player's Money (a shutdown, a slow write or a
+-- crash left them): once old enough that no write from another server can
+-- still be on its way (Config.PurchaseSettleSeconds), ask the source's store
+-- whether the token arrived: delivered -> the debit stays, else refunded.
+-- Retries while the store can't be read; new purchases wait meanwhile.
+function M._settleOpen(player: Player)
+	local open = money:openPurchases(player.UserId)
+	if not open then
+		return
 	end
-	local userId = player.UserId
-	saveHolds[userId] = (saveHolds[userId] or 0) + 1
-	local released = false
-	return function()
-		if not released then
-			released = true
-			saveHolds[userId] = math.max(0, (saveHolds[userId] or 1) - 1)
-			if saveHolds[userId] == 0 then
-				saveHolds[userId] = nil
+	local pending = {}
+	for token, entry in pairs(open) do
+		if not liveTokens[token] and not settlingTokens[token] then
+			settlingTokens[token] = true
+			table.insert(pending, { token = token, entry = entry })
+		end
+	end
+	if #pending == 0 then
+		return
+	end
+	task.spawn(function()
+		while player.Parent == Players and #pending > 0 do
+			local rest = {}
+			local wait = nil
+			for _, p in ipairs(pending) do
+				local reader = purchaseSources[p.entry.source]
+				local age = os.time() - p.entry.t
+				if not reader then
+					table.insert(rest, p)
+					wait = 5 -- its source hasn't registered yet
+				elseif age < Config.PurchaseSettleSeconds then
+					table.insert(rest, p)
+					wait = math.min(wait or math.huge, Config.PurchaseSettleSeconds - age + 1)
+				else
+					local ok, applied = pcall(reader, player.UserId)
+					if ok and type(applied) == "table" then
+						settlingTokens[p.token] = nil
+						local delivered = applied[p.token] == true
+						if money:settlePurchase(player.UserId, p.token, delivered) == "settled" then
+							sync(player)
+							local what = p.entry.what or p.entry.source
+							log(string.format("%s: open purchase %s settled (%s)", player.Name, p.token, if delivered then "delivered" else "refunded"))
+							M.notify(player, if delivered
+								then "Your last purchase (" .. what .. ") went through"
+								else "Your last purchase (" .. what .. ") didn't go through - refunded " .. p.entry.amount, "info")
+							task.spawn(saveWithRetry, player.UserId, false)
+						end
+					else
+						table.insert(rest, p)
+						wait = math.min(wait or math.huge, 30)
+					end
+				end
 			end
+			pending = rest
+			if #pending > 0 then
+				task.wait(wait or 5)
+			end
+		end
+		for _, p in ipairs(pending) do
+			settlingTokens[p.token] = nil -- left: settled at their next load
+		end
+	end)
+end
+
+-- A script that delivers purchases into its own store registers how to read
+-- the tokens that store holds. Settles open entries of players already here.
+function M.registerPurchaseSource(name: string, reader: (number) -> { [string]: boolean }?)
+	purchaseSources[name] = reader
+	if startOk then
+		for _, p in ipairs(Players:GetPlayers()) do
+			M._settleOpen(p)
 		end
 	end
 end
 
--- A refund while holding the save: credited to the player's loaded Money
--- even if they already left (their final save is waiting for the hold).
--- Returns the credit result ("paid" | "pending" | "dropped" | ...).
-function M.refundHeld(player: Player, amount: number, reason: string): string
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") then
-		return "dropped"
+-- Opens a purchase `source` will deliver: debit + open entry saved in ONE
+-- write before this returns the token (checks: a real player here, loaded,
+-- one at a time, no older entry unsettled). The caller writes the token
+-- into its own store WITH the upgrade, then calls finishPurchase. YIELDS.
+-- Returns (token, nil) or (nil, reason): "funds" | "notLoaded" | "busy" |
+-- "unsettled" | "unavailable" | "notSaved".
+function M.beginPurchase(player: Player, source: string, amount: number, what: string?): (string?, string?)
+	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") or player.Parent ~= Players then
+		return nil, "unavailable"
 	end
-	local r = money:credit(player.UserId, amount)
-	if r == "paid" and moneyValues[player] then
-		sync(player)
+	if not purchaseSources[source] then
+		return nil, "unavailable"
 	end
-	if r ~= "paid" and r ~= "pending" then
-		warn(string.format("[Economy] held refund of %d to %s not applied (%s): %s", amount, player.Name, tostring(r), reason))
+	if not (type(amount) == "number" and amount == math.floor(amount) and amount > 0) then
+		return nil, "unavailable"
 	end
-	return r
+	local t0 = os.clock()
+	while money:isSaving(player.UserId) and os.clock() - t0 < 10 do
+		task.wait(0.05)
+	end
+	if player.Parent ~= Players then
+		return nil, "unavailable"
+	end
+	local token = source .. ":" .. HttpService:GenerateGUID(false)
+	liveTokens[token] = true
+	inFlight[player.UserId] = (inFlight[player.UserId] or 0) + 1
+	local ok, why = money:beginPurchase(player.UserId, token, source, amount, what)
+	if not ok then
+		liveTokens[token] = nil
+		inFlight[player.UserId] -= 1
+		if inFlight[player.UserId] <= 0 then
+			inFlight[player.UserId] = nil
+		end
+		local reason = if type(why) == "string" and string.sub(why, 1, 8) == "notSaved" then "notSaved"
+			elseif why == "purchasesUnavailable" then "unavailable"
+			else why
+		return nil, reason
+	end
+	sync(player)
+	return token, nil
+end
+
+-- Settles a purchase begun with beginPurchase: delivered = the token is in
+-- the source's own store with the upgrade. false -> refunded. nil = the
+-- source can't tell (its write errored and it couldn't read back): the entry
+-- stays open and is settled from that store once it can be read. If the
+-- player's Money is already saved and closed (they left, the server is
+-- shutting down), the entry stays in their record and is settled at their
+-- next load. Returns "settled" | "later" | "atNextLoad".
+function M.finishPurchase(player: Player, token: string, delivered: boolean?): string
+	local userId = player.UserId
+	if inFlight[userId] then
+		inFlight[userId] -= 1
+		if inFlight[userId] <= 0 then
+			inFlight[userId] = nil
+		end
+	end
+	liveTokens[token] = nil
+	if delivered == nil then
+		if player.Parent == Players then
+			M._settleOpen(player)
+		end
+		return "later"
+	end
+	if money:settlePurchase(userId, token, delivered == true) == "settled" then
+		if moneyValues[player] then
+			sync(player)
+		end
+		if player.Parent == Players then
+			task.spawn(saveWithRetry, userId, false)
+		end
+		return "settled"
+	end
+	warn(string.format("[Economy] purchase %s for %s left open (%s): settled at their next load", token, player.Name,
+		if delivered then "delivered" else "not delivered"))
+	return "atNextLoad"
 end
 
 function M.refund(player: Player, amount: number, reason: string)
@@ -1222,7 +1357,7 @@ local function offerBillboard(
 	end
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "OfferGui"
-	gui.Size = UDim2.fromOffset(200, 96)
+	gui.Size = UDim2.fromScale(6.25, 3) -- locked world size
 	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.4, 0)
 	gui.AlwaysOnTop = true
 	gui.MaxDistance = 140

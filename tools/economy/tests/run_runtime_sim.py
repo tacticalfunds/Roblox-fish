@@ -73,6 +73,7 @@ def sources() -> dict:
     out["Kg_Server"] = (ROOT / "src" / "server" / "NetCapacityServer.server.luau").read_text()
     out["Kg_Client"] = (ROOT / "src" / "client" / "KgSignClient.client.luau").read_text()
     out["Board_Server"] = (ROOT / "src" / "server" / "UpgradeBoardServer.server.luau").read_text()
+    out["NetLift_Live"] = (ROOT / "studio" / "live" / "NetLiftScript.grinder.lua").read_text()
     out["Grinder_Config"] = (ROOT / "studio" / "live" / "GrinderUpgradesConfig.lua").read_text()
     out["Grinder_Server"] = (ROOT / "studio" / "grinder" / "GrinderUpgradesServer.lua").read_text()
     out["Grinder_Client"] = (ROOT / "studio" / "grinder" / "GrinderUpgradesClient.lua").read_text()

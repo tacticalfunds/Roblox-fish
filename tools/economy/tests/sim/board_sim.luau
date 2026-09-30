@@ -17,7 +17,8 @@
 --   * far / dead / loading / spam / funds / failed save / max refused, never
 --     charged; unknown / bad ids refused; the other three cards stay closed
 --     by default (bought and used in luck_sim, meat_sim, reels_sim)
---   * shared NetLift.MaxWeight follows board purchases
+--   * board purchases raise the buyer's own NetMaxWeight; NetLift.MaxWeight
+--     (the base) never moves
 --   (board missing / duplicated: boardmissing_sim)
 
 local Economy, root = installEconomy()
@@ -261,7 +262,7 @@ dsHooks.before = nil
 check("bought 15 → 20 kg for $10, the toast says so", lastNotice(A) == "Net capacity 15 → 20 kg (-$10)" and Economy.balance(A) == 1990)
 check("BOUGHT! on the button for a moment", price(A, "NetStrength") == "BOUGHT!")
 check("saved at once: money AND netKg in one write", writes == 1 and dsData[KEY .. "1"].netKg == 20 and dsData[KEY .. "1"].money == 1990)
-check("shared net now 20 kg", netLift:GetAttribute("MaxWeight") == 20)
+check("A's own net now 20 kg; the base stays 15", A:GetAttribute("NetMaxWeight") == 20 and netLift:GetAttribute("MaxWeight") == 15)
 advance(2)
 check("then: 20kg > 25kg, $25 on the card and on both plates", value(A, "NetStrength") == "20kg > 25kg" and price(A, "NetStrength") == "$25"
 	and seen(A, plates[1][1], "Text") == "$25" and seen(A, plates[2][2], "Text") == "NET 20 KG → 25 KG")
@@ -324,7 +325,7 @@ advance(0.3)
 dsHooks.before = nil
 check("save fails: NOT SAVED, not charged, still 30 kg", price(A, "NetStrength") == "NOT SAVED"
 	and lastNotice(A) == "Couldn't save the upgrade - you were not charged. Try again." and Economy.balance(A) == 1915
-	and A:GetAttribute("NetKg") == 30 and netLift:GetAttribute("MaxWeight") == 30)
+	and A:GetAttribute("NetKg") == 30 and A:GetAttribute("NetMaxWeight") == 30)
 advance(2)
 
 -- re-checked after waiting for a running autosave: walked away -> refused
@@ -396,7 +397,8 @@ check("B sees B's own step (45 → 50, $340) on the board and plates; A still se
 	and seen(A, plates[1][2], "Text") == "NET 30 KG → 35 KG" and seen(A, plates[1][1], "Text") == "$100")
 local short = card(B, "NetStrength").Buy.Price.TextColor3
 check("B can't afford it: the price is red", short.R > 0.9 and short.G < 0.5)
-check("shared net: B's 45 kg", netLift:GetAttribute("MaxWeight") == 45)
+check("B's own net 45 kg; A's 30; the base 15", B:GetAttribute("NetMaxWeight") == 45 and A:GetAttribute("NetMaxWeight") == 30
+	and netLift:GetAttribute("MaxWeight") == 15)
 press(B, "NetStrength")
 advance(0.3)
 check("B presses: NEED $, not charged", price(B, "NetStrength") == "NEED $" and lastNotice(B) == "Not enough money" and Economy.balance(B) == 5)
@@ -417,7 +419,8 @@ advance(1.5)
 press(D, "NetStrength")
 advance(0.5)
 check("D: 55 → 60 kg for $765", lastNotice(D) == "Net capacity 55 → 60 kg (-$765)" and Economy.balance(D) == 4235)
-check("shared net follows the board purchase: 60 kg", netLift:GetAttribute("MaxWeight") == 60)
+check("D's own net follows the board purchase: 60 kg; nobody else's moves", D:GetAttribute("NetMaxWeight") == 60
+	and B:GetAttribute("NetMaxWeight") == 45 and netLift:GetAttribute("MaxWeight") == 15)
 advance(2)
 check("at the cap: 60kg MAX, MAX on the card and plates", value(D, "NetStrength") == "60kg MAX" and price(D, "NetStrength") == "MAX"
 	and seen(D, plates[2][2], "Text") == "NET 60 KG MAX" and seen(D, plates[2][1], "Text") == "MAX")
@@ -426,7 +429,7 @@ advance(0.3)
 check("at the cap: refused, not charged", lastNotice(D) == "Your net is at the maximum (60 kg)" and Economy.balance(D) == 4235)
 leave(D)
 advance(0.5)
-check("D leaves: the shared net drops back to B's 45", netLift:GetAttribute("MaxWeight") == 45)
+check("D leaves: the base is still 15", netLift:GetAttribute("MaxWeight") == 15)
 
 ------------------------------------------------------------ the board streams out and back
 

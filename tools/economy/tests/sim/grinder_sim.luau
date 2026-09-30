@@ -132,7 +132,7 @@ check("A's 3 earlier buys adopted: net 15 + 3 x 5 = 30 kg", A:GetAttribute("NetK
 check("compat attributes from the saved net: NetMaxWeight 30, NetKgBuys 3", A:GetAttribute("NetMaxWeight") == 30
 	and A:GetAttribute("NetKgBuys") == 3)
 check("blade / conveyor still published by GrinderUpgradesServer", A:GetAttribute("BladeTier") == 2 and A:GetAttribute("OwnsConveyor") == true)
-check("shared net follows A's adopted 30 kg", netLift:GetAttribute("MaxWeight") == 30)
+check("NetLift.MaxWeight (the base for unpublished players) not raised by A's 30", netLift:GetAttribute("MaxWeight") == 15)
 check("B's old record still loading: no net published yet", B:GetAttribute("NetKg") == nil)
 root:SetAttribute("NetKgOpen", true)
 advance(0.1)
