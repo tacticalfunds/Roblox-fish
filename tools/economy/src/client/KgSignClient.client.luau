@@ -1,5 +1,5 @@
 -- KgSignClient (LocalScript in StarterPlayer.StarterPlayerScripts).
--- [Economy net capacity v1]
+-- [Economy net capacity v1 + upgrade board v1]
 --
 -- A small panel above every +5 KG sign (every Workspace child named KGsign),
 -- in the style of the rod Buy panel: dark box, bold FredokaOne white text
@@ -10,6 +10,14 @@
 -- answers with a toast. Display only: values come from the server's
 -- attributes (NetKg, NetKgNext, NetKgCost on you; NetKgPaidOpen on
 -- ReplicatedStorage.Economy; MaxWeight on Workspace.NetLift).
+--
+-- A post with its own price plate (KGsign.PricePlate.PriceGui, which shows
+-- "$100" and "NET15KG->20KG" in the place) shows YOUR values there instead:
+-- the plate's two labels are told apart by what they say (the one that is
+-- only a price, the one that names KG; exactly one of each, else the plate
+-- is left alone) and set on this client only: "$10" / SOON / MAX / ...,
+-- "NET15KG->20KG" / "NET60KG MAX". Such a post gets no floating panel. The
+-- upgrade board's Net Strength card sells the same saved capacity.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -42,6 +50,8 @@ local function label(parent: Instance, name: string, y: number, h: number, color
 end
 
 local panels = {} -- sign -> { gui, capacity, price, shared }
+local plates = {} -- sign -> { price, net } (the post's own PriceGui labels)
+local PLATE_WAIT = 10 -- seconds to wait for a post's PricePlate to appear
 
 local function economy(): Instance?
 	return ReplicatedStorage:FindFirstChild("Economy")
@@ -55,6 +65,18 @@ local function render()
 	local open = econ ~= nil and econ:GetAttribute("NetKgPaidOpen") == true
 	local netLift = workspace:FindFirstChild("NetLift")
 	local shared = netLift and netLift:GetAttribute("MaxWeight")
+	for _, p in pairs(plates) do
+		if type(kg) ~= "number" then
+			p.net.Text = "NET"
+			p.price.Text = "..."
+		elseif type(nextKg) ~= "number" or type(cost) ~= "number" then
+			p.net.Text = string.format("NET%dKG MAX", kg)
+			p.price.Text = "MAX"
+		else
+			p.net.Text = string.format("NET%dKG->%dKG", kg, nextKg)
+			p.price.Text = if open then "$" .. tostring(cost) else "SOON"
+		end
+	end
 	for _, p in pairs(panels) do
 		if type(kg) ~= "number" then
 			p.capacity.Text = "Your net"
@@ -73,8 +95,56 @@ local function render()
 	end
 end
 
+-- The post's own plate labels: (price, net) or nil if they can't be told apart.
+local function plateLabels(sign: Instance): (TextLabel?, TextLabel?)
+	local plate = sign:FindFirstChild("PricePlate")
+	local gui = plate and plate:FindFirstChild("PriceGui")
+	if not gui then
+		return nil, nil
+	end
+	local prices, nets = {}, {}
+	for _, d in ipairs(gui:GetDescendants()) do
+		if d:IsA("TextLabel") then
+			local t = string.upper(d.Text)
+			if string.match(t, "^%s*%$%s*[%d,]+%s*$") then
+				table.insert(prices, d)
+			elseif string.find(t, "KG", 1, true) then
+				table.insert(nets, d)
+			end
+		end
+	end
+	if #prices == 1 and #nets == 1 then
+		return prices[1], nets[1]
+	end
+	warn("[KgSign] " .. sign:GetFullName() .. ".PricePlate.PriceGui: expected one price label and one KG label; using the panel")
+	return nil, nil
+end
+
+local function removePanel(sign: Instance)
+	local p = panels[sign]
+	if p then
+		panels[sign] = nil
+		p.gui:Destroy()
+	end
+end
+
+-- waits a while for the post's plate (it may stream in after the post)
+local function bindPlate(sign: Instance)
+	local plate = sign:WaitForChild("PricePlate", PLATE_WAIT)
+	local gui = plate and plate:WaitForChild("PriceGui", PLATE_WAIT)
+	if not gui or not sign:IsDescendantOf(workspace) then
+		return
+	end
+	local price, net = plateLabels(sign)
+	if price and net then
+		plates[sign] = { price = price, net = net }
+		removePanel(sign)
+		render()
+	end
+end
+
 local function addSign(sign: Instance)
-	if panels[sign] or sign.Name ~= "KGsign" then
+	if panels[sign] or plates[sign] or sign.Name ~= "KGsign" then
 		return
 	end
 	local board = sign:FindFirstChild("Board Part")
@@ -109,13 +179,16 @@ local function addSign(sign: Instance)
 	}
 	panels[sign] = p
 	sign.AncestryChanged:Connect(function()
-		if not sign:IsDescendantOf(workspace) and panels[sign] == p then
-			panels[sign] = nil
-			gui:Destroy()
+		if not sign:IsDescendantOf(workspace) then
+			plates[sign] = nil
+			if panels[sign] == p then
+				removePanel(sign)
+			end
 		end
 	end)
 	gui.Parent = playerGui
 	render()
+	task.spawn(bindPlate, sign)
 end
 
 for _, child in ipairs(workspace:GetChildren()) do

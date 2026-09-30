@@ -474,6 +474,9 @@ local ISA = {
 	Model = { PVInstance = true },
 	Workspace = { Model = true, PVInstance = true },
 	TextButton = { GuiObject = true, GuiButton = true },
+	ImageButton = { GuiObject = true, GuiButton = true },
+	IntValue = { ValueBase = true },
+	NumberValue = { ValueBase = true },
 	TextLabel = { GuiObject = true },
 	Frame = { GuiObject = true },
 	ImageLabel = { GuiObject = true },
@@ -500,6 +503,25 @@ local DEFAULTS = {
 		Color = setmetatable({ R = 0.6, G = 0.6, B = 0.6 }, C3),
 	},
 }
+-- display properties a client can change locally on a server object
+local LOCAL_PROPS = {
+	SurfaceGui = { Enabled = true },
+	BillboardGui = { Enabled = true },
+	TextLabel = { Text = true, TextColor3 = true, Visible = true },
+	TextButton = { Text = true, TextColor3 = true, Visible = true },
+}
+-- (only for objects in the Workspace: GUIs the sims build in a PlayerGui stand
+-- for the client's own copies)
+local function inWorkspace(o)
+	local p = rawget(o, "_parent")
+	while p do
+		if rawget(p, "_props").ClassName == "Workspace" then
+			return true
+		end
+		p = rawget(p, "_parent")
+	end
+	return false
+end
 local Inst = {}
 local function isInst(x)
 	return type(x) == "table" and getmetatable(x) == Inst
@@ -524,6 +546,11 @@ Inst.__index = function(self, k)
 		if localEnabled and localEnabled[current] ~= nil then
 			return localEnabled[current]
 		end
+	end
+	-- a client's own change to a server object's display (see __newindex)
+	local shown = rawget(self, "_localProps")
+	if shown and isInst(current) and shown[current] and shown[current][k] ~= nil then
+		return shown[current][k]
 	end
 	if k == "LocalPlayer" and props.ClassName == "Players" then
 		return if isInst(current) then current else nil
@@ -592,6 +619,15 @@ Inst.__newindex = function(self, k, v)
 		local localEnabled = rawget(self, "_localEnabled") or {}
 		rawset(self, "_localEnabled", localEnabled)
 		localEnabled[current] = v
+		return
+	end
+	local localKind = LOCAL_PROPS[rawget(self, "_props").ClassName]
+	if localKind and localKind[k] and isInst(current) and rawget(self, "_owner") ~= current and inWorkspace(self) then
+		-- like Roblox: a client changing what a server GUI shows changes it only for itself
+		local shown = rawget(self, "_localProps") or {}
+		rawset(self, "_localProps", shown)
+		shown[current] = shown[current] or {}
+		shown[current][k] = v
 		return
 	end
 	if k == "Position" then
@@ -674,13 +710,17 @@ function Inst:FindFirstAncestorOfClass(cl)
 	end
 	return nil
 end
-function Inst:WaitForChild(n)
+function Inst:WaitForChild(n, timeout)
+	local waited = 0
 	while true do
 		local c = self:FindFirstChild(n)
 		if c then
 			return c
 		end
-		task.wait(0.05)
+		if timeout and waited >= timeout then
+			return nil
+		end
+		waited += task.wait(0.05)
 	end
 end
 function Inst:GetAttribute(k)

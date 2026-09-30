@@ -159,14 +159,17 @@ Config.RodActionCooldown = 0.5
 -- Each player OWNS a net capacity in kg, saved with their Money. The net
 -- lift's MaxWeight is the highest capacity among the players in the server
 -- (never below the place's own MaxWeight). A +5 KG sign sells the next step.
+-- The same saved capacity is sold by both KGsign posts and the upgrade
+-- board's Net Strength card.
 -- Costs: the list first, then the previous cost x Growth rounded to 5, up
--- to Max (15 -> 60 kg: 25, 50, 100, 150, 225, 340, 510, 765, 1150 = 3315).
+-- to Max (15 -> 60 kg: 10, 25, 50, 100, 150, 225, 340, 510, 765 = 2175).
+-- The first step is Config.UpgradeFirstCost like every board upgrade.
 -- INITIAL tuning, not measured pacing.
 Config.NetKg = {
 	Base = 15, -- everyone starts here (the place's NetLift.MaxWeight)
 	Step = 5, -- kg per purchase
 	Max = 60, -- nothing is sold past this
-	Costs = { 25, 50, 100 },
+	Costs = { 10, 25, 50, 100 },
 	Growth = 1.5,
 }
 -- PAID signs stay closed until the saved path is validated in Studio with
@@ -174,6 +177,14 @@ Config.NetKg = {
 -- attribute on ReplicatedStorage.Economy.
 Config.NetKgOpen = false
 Config.NetKgCooldown = 0.5 -- seconds between sign presses per player
+
+------------------------------------------------------------ upgrade board (Workspace.Board)
+
+-- Every board upgrade's FIRST step costs this; later steps come from each
+-- upgrade's own tuning and never cost more than UpgradeCostCap.
+Config.UpgradeFirstCost = 10
+Config.UpgradeCostCap = 5000
+Config.UpgradeBoardReach = 20 -- studs from the board's face (server check, plus half the board)
 
 ------------------------------------------------------------ checks
 
@@ -229,6 +240,18 @@ function Config.check(firstTankUpgradeCost: number?): (boolean, string?)
 			return false, "NetKg: Costs must be increasing whole numbers"
 		end
 		last = c
+	end
+	if n.Costs[1] ~= Config.UpgradeFirstCost then
+		return false, "NetKg: the first step must cost UpgradeFirstCost"
+	end
+	-- the whole curve (the list, then x Growth rounded to 5) stays under the cap
+	local steps = (n.Max - n.Base) / n.Step
+	local c = 0
+	for i = 1, steps do
+		c = if i <= #n.Costs then n.Costs[i] else math.floor(c * n.Growth / 5 + 0.5) * 5
+		if c > Config.UpgradeCostCap then
+			return false, "NetKg: a step costs more than UpgradeCostCap"
+		end
 	end
 	return true, nil
 end

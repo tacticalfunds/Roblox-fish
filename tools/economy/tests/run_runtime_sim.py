@@ -71,6 +71,8 @@ def sources() -> dict:
     out["Rods_Fishing"] = (ROOT / "studio" / "rods" / "RodFishingSystem.lua").read_text()
     out["Kg_Server"] = (ROOT / "src" / "server" / "NetCapacityServer.server.luau").read_text()
     out["Kg_Client"] = (ROOT / "src" / "client" / "KgSignClient.client.luau").read_text()
+    out["Board_Server"] = (ROOT / "src" / "server" / "UpgradeBoardServer.server.luau").read_text()
+    out["Board_Client"] = (ROOT / "src" / "client" / "UpgradeBoardClient.client.luau").read_text()
     out["Rods_ShopUI"] = (ROOT / "studio" / "rods" / "RodShopController.lua").read_text()
     out["Live_RodShopController"] = (ROOT / "studio" / "live" / "RodShopController.lua").read_text()
     panel = ROOT.parent / "aquarium-panel"

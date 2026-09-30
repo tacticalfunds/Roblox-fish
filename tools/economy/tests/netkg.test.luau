@@ -76,7 +76,17 @@ while true do
 	table.insert(costs, cost)
 	kg = nextKg
 end
-check("costs 25, 50, 100, then x1.5 rounded to 5, to 60 kg", table.concat(costs, ",") == "25,50,100,150,225,340,510,765,1150" and kg == 60)
+check("costs 10, 25, 50, 100, then x1.5 rounded to 5, to 60 kg", table.concat(costs, ",") == "10,25,50,100,150,225,340,510,765" and kg == 60)
+check("the first step costs the board's UpgradeFirstCost ($10)", costs[1] == Config.UpgradeFirstCost and Config.UpgradeFirstCost == 10)
+do
+	local saved = Config.NetKg.Costs
+	Config.NetKg.Costs = { 25, 50, 100 }
+	check("config check: a first step other than UpgradeFirstCost is refused", Config.check() == false)
+	Config.NetKg.Costs = { 10, 25, 50, 4000 }
+	check("config check: a step over UpgradeCostCap (4000 x1.5) is refused", Config.check() == false)
+	Config.NetKg.Costs = saved
+	check("config check passes again", Config.check() == true)
+end
 check("nothing past the cap", NetKg.nextStep(60) == nil and NetKg.nextStep(75) == nil)
 check("shared net: the highest, never below the floor", NetKg.shared({ 20, 35, 15 }, 15) == 35 and NetKg.shared({}, 15) == 15 and NetKg.shared({ 10 }, 15) == 15)
 
@@ -138,26 +148,26 @@ do
 	local m = loaded(store)
 	local writes = store.writes
 	local ok, why, newKg, cost = m:buyNetKg(9)
-	check("buy +5: ok, 15 -> 20 kg for 25", ok and why == nil and newKg == 20 and cost == 25)
-	check("one write with money - 25 AND 20 kg; rods and other fields kept", store.writes == writes + 1 and store.data[KEY].money == 975
+	check("buy +5: ok, 15 -> 20 kg for 10", ok and why == nil and newKg == 20 and cost == 10)
+	check("one write with money - 10 AND 20 kg; rods and other fields kept", store.writes == writes + 1 and store.data[KEY].money == 990
 		and store.data[KEY].netKg == 20 and store.data[KEY].rods.owned.FishingRod3 == true and store.data[KEY].other == "x")
-	check("memory matches", m:netKg(9) == 20 and m:balance(9) == 975)
+	check("memory matches", m:netKg(9) == 20 and m:balance(9) == 990)
 	local _, _, k2, c2 = m:buyNetKg(9)
 	local _, _, k3, c3 = m:buyNetKg(9)
-	check("next steps: 25 kg for 50, 30 kg for 100", k2 == 25 and c2 == 50 and k3 == 30 and c3 == 100 and m:balance(9) == 825)
+	check("next steps: 25 kg for 25, 30 kg for 50", k2 == 25 and c2 == 25 and k3 == 30 and c3 == 50 and m:balance(9) == 915)
 end
 do
 	local store = fakeStore()
-	store.data[KEY] = { v = 2, money = 20 }
+	store.data[KEY] = { v = 2, money = 9 }
 	local m = loaded(store)
-	check("not enough money (20 < 25): nothing charged or written", select(2, m:buyNetKg(9)) == "funds" and m:balance(9) == 20 and m:netKg(9) == 15)
+	check("not enough money (9 < 10): nothing charged or written", select(2, m:buyNetKg(9)) == "funds" and m:balance(9) == 9 and m:netKg(9) == 15)
 end
 do
 	local store = fakeStore()
 	store.data[KEY] = { v = 2, money = 99999, netKg = 55 }
 	local m = loaded(store)
-	check("last step: 55 -> 60 for 1150", select(3, m:buyNetKg(9)) == 60 and m:balance(9) == 99999 - 1150)
-	check("at the cap: refused, not charged", select(2, m:buyNetKg(9)) == "max" and m:balance(9) == 99999 - 1150)
+	check("last step: 55 -> 60 for 765", select(3, m:buyNetKg(9)) == 60 and m:balance(9) == 99999 - 765)
+	check("at the cap: refused, not charged", select(2, m:buyNetKg(9)) == "max" and m:balance(9) == 99999 - 765)
 end
 for _, mode in ipairs({ "error", "errorAfter" }) do
 	local store = fakeStore()
@@ -189,7 +199,7 @@ do
 	end
 	check("successful buy", m:buyNetKg(9))
 	check("during its write: 15 kg; a second buy and a rod buy refused (busy)", seen == 15 and again[2] == "busy" and rod[2] == "busy")
-	check("charged once; 20 kg after", m:balance(9) == 75 and m:netKg(9) == 20)
+	check("charged once; 20 kg after", m:balance(9) == 90 and m:netKg(9) == 20)
 end
 
 ------------------------------------------------------------ rejoin
@@ -204,8 +214,8 @@ do
 	m:forget(9)
 	t += 10
 	local m2 = loaded(store, "jobB")
-	check("rejoin elsewhere: 25 kg and the money", m2:netKg(9) == 25 and m2:balance(9) == 425)
-	check("next price continues from 25 kg (100 -> 30 kg)", select(4, m2:buyNetKg(9)) == 100)
+	check("rejoin elsewhere: 25 kg and the money", m2:netKg(9) == 25 and m2:balance(9) == 465)
+	check("next price continues from 25 kg (50 -> 30 kg)", select(4, m2:buyNetKg(9)) == 50)
 end
 
 print(string.format("%d passed, %d failed", passes, failures))

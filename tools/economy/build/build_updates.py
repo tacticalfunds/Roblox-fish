@@ -54,6 +54,9 @@ LATER_THAN_BOT = ["EconomyMeatGlowBackup"]
 LATER_THAN_RODS = ["EconomyRodShopUIBackup"]  # the shop UI reads what InstallRods publishes
 # InstallRods + InstallRodShopUI as installed by Astra (pending validation)
 RODS_RELEASE = "61a7bd4"  # tools/fish-variants InstallMeatGlow patches BotSystem too
+# InstallNetKg as released for Astra (187fe39): frozen; the upgrade board
+# builds on the sources it writes, read from that commit.
+NETKG_RELEASE = "187fe39"
 
 
 def git_show(commit: str, path: str) -> str:
@@ -657,6 +660,76 @@ Requires: rods (EconomyRodsBackup; its sources exactly as installed).
     return keys
 
 
+def upgrade_board() -> list[str]:
+    """Upgrade board milestone 1: the four-card board on Workspace.Board;
+    Net Strength sells the same saved net capacity as the KGsign posts
+    (first step now $10); the posts' PricePlate shows each player's own
+    values. On top of the net kg release (187fe39)."""
+    core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
+    at_netkg = lambda path: git_show(NETKG_RELEASE, f"tools/economy/{path}")  # noqa: E731
+    changes = [
+        (
+            {"key": "Config", "where": "ServerScriptService/EconomyService/Config", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("netkg", at_netkg("src/core/Config.luau"), (ROOT / "src/core/Config.luau").read_text())],
+        ),
+        (
+            {"key": "KgSignClient", "where": "StarterPlayer/StarterPlayerScripts/KgSignClient", "class": "LocalScript", "tag": "EconomyOwned"},
+            [("netkg", at_netkg("src/client/KgSignClient.client.luau"), (ROOT / "src/client/KgSignClient.client.luau").read_text())],
+        ),
+    ]
+    unchanged = []
+    svc = at_netkg("src/server/EconomyService.luau")
+    assert svc == (ROOT / "src/server/EconomyService.luau").read_text(), "EconomyService"
+    unchanged.append(({"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"}, svc))
+    for name in ("MoneyStore", "NetKg", "Rods", "Pricing", "Ledger", "Offers", "PieceTags", "Sales"):
+        src = git_show(NETKG_RELEASE, core(name))
+        assert src == (ROOT / "src" / "core" / f"{name}.luau").read_text(), name
+        unchanged.append(({"key": name, "where": f"ServerScriptService/EconomyService/{name}", "class": "ModuleScript", "tag": "EconomyOwned"}, src))
+    server = at_netkg("src/server/NetCapacityServer.server.luau")
+    assert server == (ROOT / "src/server/NetCapacityServer.server.luau").read_text(), "NetCapacityServer"
+    unchanged.append(({"key": "NetCapacityServer", "where": "ServerScriptService/NetCapacityServer", "class": "Script", "tag": "EconomyOwned"}, server))
+    adds = [
+        {"where": "ServerScriptService", "name": "UpgradeBoardServer", "class": "Script", "source": (ROOT / "src/server/UpgradeBoardServer.server.luau").read_text()},
+        {"where": "StarterPlayer/StarterPlayerScripts", "name": "UpgradeBoardClient", "class": "LocalScript", "source": (ROOT / "src/client/UpgradeBoardClient.client.luau").read_text()},
+    ]
+    keys = write_pair_v2(
+        "InstallUpgradeBoard.lua",
+        "RollbackUpgradeBoard.lua",
+        """
+Upgrade board, milestone 1 (Net Strength): the board on Workspace.Board
+(Main.SurfaceGui.bord3) shows four cards to each player - Net Strength
+(pink), Rod Luck (lime), Meat Price (cyan), Faster Reels (amber) - drawn
+on a per-player copy (the place's board is only hidden on each client,
+never changed). Found by exact path (one Board, one Main, one SurfaceGui,
+one bord3); the two old "Frame" cards are never looked up by name.
+  * Net Strength sells the SAME saved net capacity as both KGsign posts
+    (one progression): 15 -> 20 kg first, now $10 for everyone's first
+    step (10, 25, 50, 100, then x1.5 rounded to 5, up to 60 kg). Saved with
+    the money in one write before it counts; alive, loaded, near the board,
+    one purchase at a time, re-checked right before the debit.
+  * Rod Luck / Meat Price / Faster Reels show SOON and sell nothing yet.
+  * The posts' PricePlate.PriceGui ("$100", "NET15KG->20KG" in the place)
+    shows each player's own price and step (on that client only).
+  * PAID UPGRADES STAY CLOSED (Config.NetKgOpen = false): SOON on the card
+    and plates. For a Studio validation set the NetKgOpen attribute on
+    ReplicatedStorage.Economy.
+Changes Config and KgSignClient; adds ServerScriptService.UpgradeBoardServer
+and StarterPlayerScripts.UpgradeBoardClient.
+Requires: net kg (EconomyNetKgBackup; its sources exactly as installed).
+""",
+        "EconomyUpgradeBoardBackup",
+        [["EconomyNetKgBackup"]],
+        ["EconomyUpgradeBoardBackup"],
+        [],
+        changes,
+        unchanged,
+        adds,
+        ROOT,
+    )
+    assert keys == ["Config", "KgSignClient"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -669,7 +742,8 @@ def main() -> None:
     # InstallRods / InstallRodShopUI are FROZEN at the 61a7bd4 release Astra
     # installed (pending validation): rods() / rod_shop_ui() are not rerun;
     # later milestones read their sources from git at RODS_RELEASE.
-    net_kg()
+    # InstallNetKg is FROZEN at the 187fe39 release: net_kg() is not rerun.
+    upgrade_board()
 
 
 if __name__ == "__main__":

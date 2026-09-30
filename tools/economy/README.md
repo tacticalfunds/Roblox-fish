@@ -597,14 +597,19 @@ at 15 kg.
 - The result appears as the usual toast, e.g. "Net capacity 15 → 20 kg
   (-$25)" or "Walk up to the sign".
 
-**Pricing (`Config.NetKg`, initial tuning, not measured pacing):**
+**Pricing (`Config.NetKg`, initial tuning, not measured pacing).** As
+released in `187fe39` the steps were 25, 50, 100, ... (3,315 in total).
+The upgrade board (row 17, `InstallUpgradeBoard.lua`) makes the first step
+$10 like every board upgrade:
 
 | From → to (kg) | 15→20 | 20→25 | 25→30 | 30→35 | 35→40 | 40→45 | 45→50 | 50→55 | 55→60 |
 |---|---|---|---|---|---|---|---|---|---|
-| Cost | 25 | 50 | 100 | 150 | 225 | 340 | 510 | 765 | 1150 |
+| Cost (row 17) | 10 | 25 | 50 | 100 | 150 | 225 | 340 | 510 | 765 |
 
-After the listed costs (25, 50, 100), each step is the previous cost × 1.5,
-rounded to 5, up to **Max 60 kg**: 3,315 in total from 15 kg. To tune:
+After the listed costs (10, 25, 50, 100), each step is the previous cost ×
+1.5, rounded to 5, up to **Max 60 kg**: 2,175 in total from 15 kg.
+`Config.check` refuses a first step other than `UpgradeFirstCost` (10) or
+any step above `UpgradeCostCap` (5,000). To tune:
 
 - `Base`: the start, the place's MaxWeight
 - `Step`: kg per purchase
@@ -673,6 +678,101 @@ earlier backup is untouched. **Rollback:** `RollbackNetKg.lua`. Saved
 | K6 | Net a heavy load | The weight gate / gauge use the new MaxWeight |
 | K7 | Second client (15 kg) joins, then the first leaves | MaxWeight follows the highest present player, then drops to 15; no fish vanish |
 | K8 | Stop, Play again (real DataStore) | Your capacity is back; MaxWeight follows it once your money loads |
+
+(With row 17 installed the prices in K3/K4 are $10 and $25, and the posts'
+own plates show them instead of the floating panel.)
+
+## Upgrade board, milestone 1: Net Strength (`InstallUpgradeBoard.lua`)
+
+The board at `Workspace.Board` (its `Main` part, `SurfaceGui.bord3`) becomes
+four upgrade cards, drawn **for each player**:
+
+| Card | Colour | Shows | Sells (this milestone) |
+|---|---|---|---|
+| Net Strength | pink | your net, e.g. `15kg > 20kg` | the next +5 kg: **$10** first |
+| Rod Luck | lime | `1x > 2x` | nothing yet: SOON |
+| Meat Price | cyan | `1x > 2x` (a value multiplier: fish values differ) | nothing yet: SOON |
+| Faster Reels | amber | `1x > 1.2x` | nothing yet: SOON |
+
+2 × 2 grid in a wooden frame; white outlined text, a themed icon (emoji
+text, no image assets) and a green Buy button on each card.
+
+**The board in the place is never changed.** `UpgradeBoardClient` copies
+`Main.SurfaceGui` into the player's PlayerGui (adorned to `Main`), removes
+the old cards and the list layout from the copy, builds the four cards and
+hides the original **on that client only**.
+
+- Found by exact path: exactly one Workspace child `Board`, one `Main` in
+  it, one `SurfaceGui` on it, one `bord3` in that. The two old cards (both
+  named `Frame`, each with two labels named `Text`) are never looked up by
+  name. If the path is missing or ambiguous (two `Board`s), the server sells
+  nothing and warns; the client draws nothing and hides nothing.
+- The client looks for the board every second, so streaming in/out works.
+
+**Net Strength is the same saved capacity as the KGsign posts** (one
+progression, `netKg` in the Money record). Buying at the board or at either
+post moves the same number; the other place shows the new step at once.
+The shared `NetLift.MaxWeight` follows board purchases too (NetCapacityServer
+already follows each player's `NetKg`).
+
+**Pressing a card** (mouse, touch or gamepad: `Activated`):
+
+- the client asks `ReplicatedStorage.Economy.UpgradeAction` (a
+  RemoteFunction made at run time, never saved) with the card's id. One
+  request per card at a time; **SAVING...** meanwhile
+- the server: known id only (anything else, or a non-string, is refused),
+  0.25 s between presses per player, then `EconomyService.netKgAction` with
+  "near the board" (20 studs + half the board) as its place check: alive,
+  money loaded, one purchase at a time (shared with rods and the posts),
+  cooldown, re-checked right before the debit, money + capacity saved in
+  one write before it counts
+- the answer shows on the button for a moment (BOUGHT! / NEED $ / TOO FAR /
+  NOT SAVED / MAX / WAIT / SOON) and as the usual toast with the full
+  message
+- the button also shows: `$10` (red when you can't afford it), `...` while
+  your money loads, **SOON** while paid upgrades are closed, **MAX** at
+  60 kg, **OFF** if the server's board isn't running
+
+**The posts' price plates.** Each `KGsign.PricePlate.PriceGui` (a live edit
+showing `$100` and `NET15KG->20KG`) now shows **your** values: `$10` /
+SOON / MAX / `...`, and `NET15KG->20KG` / `NET60KG MAX`. The labels are
+told apart by what they say (exactly one that is only a price, exactly one
+that names KG); if that isn't clear-cut the plate is left alone and the
+post keeps the floating panel. A post with a bound plate has no floating
+panel. Changes are on each client only.
+
+**Paid upgrades stay CLOSED** (`Config.NetKgOpen = false`): SOON on the card
+and the plates. For a Studio validation **with API access**, set the
+`NetKgOpen` attribute on `ReplicatedStorage.Economy`. Studio's memory
+fallback is **not** proof of persistence.
+
+**Install:** `InstallUpgradeBoard.lua` (v2 guarded template). Needs
+`EconomyNetKgBackup` and the net kg sources exactly as released (`187fe39`:
+EconomyService, MoneyStore, NetKg, NetCapacityServer, the other core
+modules). Changes `Config` (net costs, board settings) and `KgSignClient`
+(the plates); adds `ServerScriptService.UpgradeBoardServer` and
+`StarterPlayerScripts.UpgradeBoardClient`. Backup:
+`EconomyUpgradeBoardBackup`; every earlier backup is untouched. It checks
+scripts only: `Workspace.Board.Main.SurfaceGui.bord3` is checked at run
+time (N1: UpgradeBoardServer warns in Output if it is missing or doubled). **Rollback:**
+`RollbackUpgradeBoard.lua` (before `RollbackNetKg.lua`, which refuses while
+the board is in). Saved capacities stay.
+
+### Upgrade board checklist (Studio, API access ON)
+
+| # | Do | Expect |
+|---|---|---|
+| N1 | Play, look at the board | Four cards in a 2 × 2 wooden frame: Net Strength (pink) `15kg > 20kg`, Rod Luck (lime) `1x > 2x`, Meat Price (cyan) `1x > 2x`, Faster Reels (amber) `1x > 1.2x`; all SOON. No Axe Speed / Buy Miner cards. No `[UpgradeBoard]` warning in Output |
+| N2 | Look at both +5 KG posts | Their plates show `SOON` and `NET15KG->20KG`; no floating panel over them |
+| N3 | Press Net Strength (closed) | SOON; toast "Net upgrades open soon"; nothing charged |
+| N4 | Set `ReplicatedStorage.Economy.NetKgOpen = true` | Card and both plates: `$10` |
+| N5 | Press Net Strength | SAVING..., then BOUGHT!; −10; toast "Net capacity 15 → 20 kg (-$10)"; card `20kg > 25kg` `$25`; plates `$25` `NET20KG->25KG`; `NetLift.MaxWeight` 20 |
+| N6 | Click a post | −25, 20 → 25 kg; the board card follows (`25kg > 30kg`, `$50`) |
+| N7 | Press the card from 40+ studs away (or from a post) | TOO FAR; toast "Walk up to the board"; nothing charged |
+| N8 | Press Rod Luck / Meat Price / Faster Reels | SOON; toast "... coming soon"; nothing charged |
+| N9 | On a phone emulator and with a mouse | The buttons press the same way |
+| N10 | Second client with little money | Their own values on the card and plates; red price; NEED $ when pressed |
+| N11 | Stop, Play again (real DataStore) | Your capacity is back on the card, plates and posts |
 
 ## Blender Bot recovery (`InstallBotRecovery.lua`)
 
@@ -781,9 +881,9 @@ changes; the rest re-check behaviour that already worked.
 ## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau          # 335 checks (rods 73)
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 21, earnings 47, money HUD 41, rods 58, panel 47, bot 14, meat glow 21, harpoon blend 15 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 307 checks
+python3 tools/economy/tests/run_tests.py path/to/luau          # 384 checks (rods 80, net kg 42)
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67, shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 47 + 6 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 347 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

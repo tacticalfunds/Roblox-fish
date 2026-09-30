@@ -154,6 +154,8 @@ EARNINGS_RELEASE = "0829fc9"  # InstallEarnings as installed by Astra
 EARNINGS_FROZEN = ["InstallEarnings.lua", "RollbackEarnings.lua"]
 RODS_RELEASE = "61a7bd4"  # InstallRods + InstallRodShopUI as installed by Astra
 RODS_FROZEN = ["InstallRods.lua", "RollbackRods.lua", "InstallRodShopUI.lua", "RollbackRodShopUI.lua"]
+NETKG_RELEASE = "187fe39"  # InstallNetKg as released for Astra
+NETKG_FROZEN = ["InstallNetKg.lua", "RollbackNetKg.lua"]
 SALES_FROZEN = ["UpgradeAquariumV12.lua", "RollbackAquariumV12.lua", "InstallSales.lua", "RollbackSales.lua", "InstallUpgrades.lua", "RollbackUpgrades.lua"]
 AQUARIUM_V1 = "2e320f9"
 AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
@@ -1454,6 +1456,87 @@ do
 	check("net kg over an edited Rods module: refused", refused() and snapshot(g) == before)
 end
 
+-- upgrade board (Net Strength): on top of net kg
+local function board(g, s) warnings = {} runBoard(g, s.Workspace) end
+local function boardBack(g, s) warnings = {} runBoardBack(g, s.Workspace) end
+do
+	local g, sv, history, sc = astraCurrent()
+	netKg(g, sv)
+	assert(not refused(), "net kg: " .. tostring(warnings[#warnings]))
+	local svc = sv.ServerScriptService.EconomyService
+	local sps = sv.StarterPlayer.StarterPlayerScripts
+	local backups = {}
+	for _, bk in ipairs(sv.ServerStorage:GetChildren()) do
+		backups[bk.Name] = subtree(bk)
+	end
+	local before = snapshot(g)
+	sv.RunService.running = true
+	board(g, sv)
+	check("board in Play: refused", refused() and snapshot(g) == before)
+	sv.RunService.running = false
+	local commits = history.commits
+	board(g, sv)
+	check("board on net kg: one undo step", not refused() and history.commits == commits + 1)
+	check("board: Config and KgSignClient updated; EconomyService / MoneyStore / NetKg / NetCapacityServer as net kg left them",
+		svc.Config.Source == BOARD.Config and sps.KgSignClient.Source == BOARD.KgClient and svc.Source == NETKG.EconomyService
+		and svc.MoneyStore.Source == NETKG.MoneyStore and svc.NetKg.Source == NETKG.NetKg
+		and sv.ServerScriptService.NetCapacityServer.Source == NETKG.Server)
+	check("board: UpgradeBoardServer (Script) and UpgradeBoardClient (LocalScript) added, tagged",
+		sv.ServerScriptService:FindFirstChild("UpgradeBoardServer") and sv.ServerScriptService.UpgradeBoardServer.ClassName == "Script"
+		and sv.ServerScriptService.UpgradeBoardServer.Source == BOARD.Server and sv.ServerScriptService.UpgradeBoardServer:GetAttribute("EconomyOwned") == true
+		and sps:FindFirstChild("UpgradeBoardClient") and sps.UpgradeBoardClient.ClassName == "LocalScript" and sps.UpgradeBoardClient.Source == BOARD.Client
+		and sps.UpgradeBoardClient:GetAttribute("EconomyOwned") == true)
+	check("board: rods scripts untouched", svc.Rods.Source == RODS.Rods and sc.RodShopServer.Source == RODS.Shop and sc.RodFishingSystem.Source == RODS.Fishing)
+	check("board: backup = 2 changes + 2 adds", #sv.ServerStorage.EconomyUpgradeBoardBackup:GetChildren() == 4)
+	local kept = true
+	for name, tree in pairs(backups) do
+		kept = kept and sv.ServerStorage:FindFirstChild(name) ~= nil and subtree(sv.ServerStorage[name]) == tree
+	end
+	check("board: every earlier backup untouched (net kg, rods, shop UI, jump rate, panel, ...)", kept)
+	local after = snapshot(g)
+	board(g, sv)
+	check("board twice: refused", refused() and snapshot(g) == after)
+	netKgBack(g, sv)
+	check("net kg rollback refused while the board is in", refused() and snapshot(g) == after)
+	netKg(g, sv)
+	check("net kg again while the board is in: refused", refused() and snapshot(g) == after)
+	sps.UpgradeBoardClient.Source ..= "\n-- hand edit"
+	local edited = snapshot(g)
+	boardBack(g, sv)
+	check("board rollback over an edited UpgradeBoardClient: refused", refused() and snapshot(g) == edited)
+	sps.UpgradeBoardClient.Source = BOARD.Client
+	boardBack(g, sv)
+	check("board rollback: exactly the net kg state (added scripts removed)", not refused() and snapshot(g) == before
+		and sv.ServerScriptService:FindFirstChild("UpgradeBoardServer") == nil and sps:FindFirstChild("UpgradeBoardClient") == nil
+		and svc.Config.Source == NETKG.Config and sps.KgSignClient.Source == NETKG.Client)
+	netKgBack(g, sv)
+	check("then net kg rolls back too", not refused())
+end
+do
+	local g, sv = astraCurrent() -- no net kg
+	local before = snapshot(g)
+	board(g, sv)
+	check("board without net kg: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraCurrent()
+	netKg(g, sv)
+	local mine = new("Script", "UpgradeBoardServer")
+	mine.Source = "-- someone else's"
+	mine.Parent = sv.ServerScriptService
+	local before = snapshot(g)
+	board(g, sv)
+	check("board when an UpgradeBoardServer already exists: refused, kept", refused() and snapshot(g) == before and mine.Source == "-- someone else's")
+end
+do
+	local g, sv = astraCurrent()
+	netKg(g, sv)
+	sv.ServerScriptService.NetCapacityServer.Source ..= "\n-- tuned"
+	local before = snapshot(g)
+	board(g, sv)
+	check("board over an edited NetCapacityServer: refused", refused() and snapshot(g) == before)
+end
+
 -- the old baseline (no HarpoonT in the despawn guard) is not what Studio has: refused
 do
 	local g, sv, _, sc = astraPlace()
@@ -1557,6 +1640,10 @@ def main() -> int:
         if (ROOT.parent / "fish-jump" / frozen).read_text() != git_show(frozen, "1a19061", "tools/fish-jump/"):
             print(f"FAIL: fish-jump/{frozen} differs from the 1a19061 release")
             return 1
+    for frozen in NETKG_FROZEN:
+        if (ROOT / frozen).read_text() != git_show(frozen, NETKG_RELEASE):
+            print(f"FAIL: {frozen} differs from the {NETKG_RELEASE} net kg release")
+            return 1
     for frozen in EARNINGS_FROZEN:
         if (ROOT / frozen).read_text() != git_show(frozen, EARNINGS_RELEASE):
             print(f"FAIL: {frozen} differs from the {EARNINGS_RELEASE} earnings release")
@@ -1609,15 +1696,23 @@ def main() -> int:
     tables += "local SHOPUI = {\n" + "".join(
         f"\t{k} = {lua_string(git_show(v, RODS_RELEASE))},\n" for k, v in (("Live", "studio/live/RodShopController.lua"), ("New", "studio/rods/RodShopController.lua"))
     ) + "}\n"
+    # what InstallNetKg writes (the 187fe39 release)
     netkg_files = {
-        "EconomyService": ROOT / "src/server/EconomyService.luau",
-        "Config": ROOT / "src/core/Config.luau",
-        "MoneyStore": ROOT / "src/core/MoneyStore.luau",
-        "NetKg": ROOT / "src/core/NetKg.luau",
-        "Server": ROOT / "src/server/NetCapacityServer.server.luau",
-        "Client": ROOT / "src/client/KgSignClient.client.luau",
+        "EconomyService": "src/server/EconomyService.luau",
+        "Config": "src/core/Config.luau",
+        "MoneyStore": "src/core/MoneyStore.luau",
+        "NetKg": "src/core/NetKg.luau",
+        "Server": "src/server/NetCapacityServer.server.luau",
+        "Client": "src/client/KgSignClient.client.luau",
     }
-    tables += "local NETKG = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in netkg_files.items()) + "}\n"
+    tables += "local NETKG = {\n" + "".join(f"\t{k} = {lua_string(git_show(v, NETKG_RELEASE))},\n" for k, v in netkg_files.items()) + "}\n"
+    board_files = {
+        "Config": ROOT / "src/core/Config.luau",
+        "KgClient": ROOT / "src/client/KgSignClient.client.luau",
+        "Server": ROOT / "src/server/UpgradeBoardServer.server.luau",
+        "Client": ROOT / "src/client/UpgradeBoardClient.client.luau",
+    }
+    tables += "local BOARD = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in board_files.items()) + "}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1712,6 +1807,8 @@ def main() -> int:
         + wrap("runShopUiBack", (ROOT / "RollbackRodShopUI.lua").read_text())
         + wrap("runNetKg", (ROOT / "InstallNetKg.lua").read_text())
         + wrap("runNetKgBack", (ROOT / "RollbackNetKg.lua").read_text())
+        + wrap("runBoard", (ROOT / "InstallUpgradeBoard.lua").read_text())
+        + wrap("runBoardBack", (ROOT / "RollbackUpgradeBoard.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:
