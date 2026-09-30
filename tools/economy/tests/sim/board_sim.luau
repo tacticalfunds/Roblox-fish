@@ -5,7 +5,7 @@
 --   UIPadding, a UIListLayout and TWO cards both named "Frame", each with
 --   two TextLabels both named "Text" (Axe Speed / x1.00 > x1.15 and
 --   Buy Miner / 1/64, $ 120); two KGsign posts, each with PricePlate.PriceGui
---   showing "$100" and "NET15KG->20KG"; a third post whose plate can't be
+--   showing "$100" and "NET 15 KG → 20 KG"; a third post whose plate can't be
 --   read unambiguously (two prices).
 -- Checks:
 --   * four cards (Net Strength / Rod Luck / Meat Price / Faster Reels) in a
@@ -21,6 +21,9 @@
 --   (board missing / duplicated: boardmissing_sim)
 
 local Economy, root = installEconomy()
+-- this scene has no GrinderUpgradesServer to report earlier KG-sign buys
+-- (grinder_sim covers that): nothing to wait for
+Economy.Config.NetKgLegacy = false
 local SSS = services.ServerScriptService
 local ws = workspaceInst
 local KEY = Economy.Config.KeyPrefix
@@ -44,32 +47,53 @@ surface._props.Enabled = true
 local bord = new("Frame", "bord3")
 new("UIPadding", "UIPadding").Parent = bord
 new("UIListLayout", "UIListLayout").Parent = bord
-local function oldCard(title, value)
+-- a card as the place has it (Workspace inventory): Buy (Price, UIStroke,
+-- UIGradient, UICorner), Icons (image), two labels both named "Text"
+local function oldCard(title, value, image)
 	local card = new("Frame", "Frame")
+	card._props.BackgroundTransparency = 1
 	local buy = new("TextButton", "Buy")
+	buy._props.Position = UDim2.fromScale(0.532, 0.885)
+	buy._props.Size = UDim2.fromScale(0.827, 0.12)
+	buy._props.BackgroundColor3 = Color3.new(1, 1, 1)
 	local price = new("TextLabel", "Price")
 	price._props.Text = "$ 120"
 	price.Parent = buy
+	new("UIStroke", "UIStroke").Parent = buy
+	local grad = new("UIGradient", "UIGradient")
+	grad:SetAttribute("BoardArt", true) -- marks the place's own gradient
+	grad.Parent = buy
+	new("UICorner", "UICorner").Parent = buy
 	buy.Parent = card
-	new("ImageLabel", "Icons").Parent = card
+	local icons = new("ImageLabel", "Icons")
+	icons._props.Image = image
+	icons._props.Position = UDim2.fromScale(0.479, 0.434)
+	icons._props.Size = UDim2.fromScale(0.5, 0.5)
+	icons.Parent = card
 	local t1 = new("TextLabel", "Text")
 	t1._props.Text = title
+	t1._props.Position = UDim2.fromScale(0.499, 0.093)
 	t1.Parent = card
 	local t2 = new("TextLabel", "Text")
 	t2._props.Text = value
+	t2._props.Position = UDim2.fromScale(0.499, 0.742)
 	t2.Parent = card
 	card.Parent = bord
 	return buy
 end
-local oldBuy = oldCard("Axe Speed", "x1.00 > x1.15")
-oldCard("Buy Miner", "1/64")
+local oldBuy = oldCard("Axe Speed", "x1.00 > x1.15", "rbxassetid://75744565067217")
+oldCard("Buy Miner", "1/64", "rbxassetid://137299198925368")
+board:SetAttribute("IconRodLuck", "rbxassetid://424242") -- a supplied icon for one card
 bord.Parent = surface
 surface.Parent = main
 board.Parent = ws
 
 -- the posts, each with the place's price plate
 local detectors, plates = {}, {}
-local function post(pos, labels)
+-- a post as the place has it: tagged KgSign, Board Part (ClickDetector) and
+-- PricePlate.PriceGui.Pill (Price, Info, Border) - or, for the third post,
+-- a plate without a Pill (it keeps the floating panel)
+local function post(pos, withPill)
 	local sign = new("Model", "KGsign")
 	local boardPart = part("Board Part", pos, sign, Vector3.new(8, 4, 0.5))
 	local cd = new("ClickDetector", "ClickDetector")
@@ -77,23 +101,36 @@ local function post(pos, labels)
 	cd.Parent = boardPart
 	local plate = part("PricePlate", pos + Vector3.new(0, 3, 0), sign, Vector3.new(4, 1.5, 0.2))
 	local gui = new("SurfaceGui", "PriceGui")
-	local frame = new("Frame", "Frame")
 	local made = {}
-	for _, text in ipairs(labels) do
+	if withPill then
+		local pill = new("Frame", "Pill")
+		local price = new("TextLabel", "Price")
+		price._props.Text = "$100"
+		price.Parent = pill
+		local info = new("TextLabel", "Info")
+		info._props.Text = "NET 15 KG → 20 KG"
+		info.Parent = pill
+		local border = new("UIStroke", "Border")
+		border.Parent = pill
+		pill.Parent = gui
+		made = { price, info, border }
+	else
 		local l = new("TextLabel", "TextLabel")
-		l._props.Text = text
-		l.Parent = frame
-		table.insert(made, l)
+		l._props.Text = "$100"
+		l.Parent = gui
+		made = { l }
 	end
-	frame.Parent = gui
 	gui.Parent = plate
 	sign.Parent = ws
+	if withPill then
+		addTag(sign, "KgSign")
+	end
 	table.insert(detectors, cd)
 	table.insert(plates, made)
 end
-post(SIGN1, { "$100", "NET15KG->20KG" })
-post(SIGN2, { "$100", "NET15KG->20KG" })
-post(SIGN3, { "$100", "$5", "NET15KG->20KG" }) -- can't tell which price: left alone
+post(SIGN1, true)
+post(SIGN2, true)
+post(SIGN3, false) -- no Pill: left alone, gets the panel
 current = nil
 
 dsData[KEY .. "1"] = { v = 2, money = 2000 }
@@ -159,16 +196,23 @@ check("old cards and list layout gone from the copy; a 2x2 grid; padding kept", 
 	and copy:FindFirstChildOfClass("UIGridLayout") ~= nil and copy:FindFirstChildOfClass("UIPadding") ~= nil)
 local grid = copy:FindFirstChildOfClass("UIGridLayout")
 check("grid cells fit two by two", grid.CellSize.X.Scale * 2 + grid.CellPadding.X.Scale <= 1 and grid.CellSize.Y.Scale * 2 + grid.CellPadding.Y.Scale <= 1)
-check("each card: icon, white outlined title and value, green Buy with a price", (function()
-	for _, id in ipairs({ "NetStrength", "RodLuck", "MeatPrice", "FasterReels" }) do
-		local c = card(A, id)
-		if not (c.Icon.Text ~= "" and c.Title:FindFirstChildOfClass("UIStroke") and c.Value:FindFirstChildOfClass("UIStroke")
-			and c.Title.TextColor3.R == 1 and c.Buy:FindFirstChildOfClass("UIGradient") and c.Buy.Price) then
-			return false
+check("each card is the board's own card art: its Buy (gradient, stroke, corner), Price and Icons frame, title above value",
+	(function()
+		for _, id in ipairs({ "NetStrength", "RodLuck", "MeatPrice", "FasterReels" }) do
+			local c = card(A, id)
+			local grad = c.Buy:FindFirstChildOfClass("UIGradient")
+			if not (grad and grad:GetAttribute("BoardArt") and c.Buy:FindFirstChildOfClass("UIStroke") and c.Buy:FindFirstChildOfClass("UICorner")
+				and c.Buy.Price and c:FindFirstChild("Icons") and c.Title.Position.Y.Scale < c.Value.Position.Y.Scale
+				and c.Title.TextColor3.R == 1 and c:FindFirstChild("Text") == nil) then
+				return false
+			end
 		end
-	end
-	return true
-end)())
+		return true
+	end)())
+check("icons: the supplied Board IconRodLuck image is used (no emoji); cards without one show their emoji over a hidden image",
+	card(A, "RodLuck").Icons.Image == "rbxassetid://424242" and card(A, "RodLuck"):FindFirstChild("Icon") == nil
+	and card(A, "NetStrength").Icons.ImageTransparency == 1 and card(A, "NetStrength").Icon.Text ~= ""
+	and card(A, "MeatPrice").Icon.Text ~= "" and card(A, "FasterReels").Icon.Text ~= "")
 check("card colours: pink, lime, cyan, amber", card(A, "NetStrength").BackgroundColor3.R > card(A, "NetStrength").BackgroundColor3.G
 	and card(A, "RodLuck").BackgroundColor3.G > card(A, "RodLuck").BackgroundColor3.R
 	and card(A, "MeatPrice").BackgroundColor3.B > card(A, "MeatPrice").BackgroundColor3.R
@@ -179,8 +223,8 @@ check("closed by default: every card says SOON", price(A, "NetStrength") == "SOO
 	and price(A, "MeatPrice") == "SOON" and price(A, "FasterReels") == "SOON")
 
 -- the posts' plates
-check("both posts' plates show A's own step, SOON while closed", seen(A, plates[1][1], "Text") == "SOON" and seen(A, plates[1][2], "Text") == "NET15KG->20KG"
-	and seen(A, plates[2][1], "Text") == "SOON" and seen(A, plates[2][2], "Text") == "NET15KG->20KG")
+check("both posts' plates show A's own step, SOON while closed", seen(A, plates[1][1], "Text") == "SOON" and seen(A, plates[1][2], "Text") == "NET 15 KG → 20 KG"
+	and seen(A, plates[2][1], "Text") == "SOON" and seen(A, plates[2][2], "Text") == "NET 15 KG → 20 KG")
 check("plates are unchanged in the place (server view)", plates[1][1].Text == "$100" and plates[2][1].Text == "$100")
 local panelCount = 0
 for _, gui in ipairs(A.PlayerGui:GetChildren()) do
@@ -188,8 +232,8 @@ for _, gui in ipairs(A.PlayerGui:GetChildren()) do
 		panelCount += 1
 	end
 end
-check("posts with a readable plate get no floating panel; the ambiguous one keeps its panel", panelCount == 1
-	and seen(A, plates[3][1], "Text") == "$100" and seen(A, plates[3][2], "Text") == "$5")
+check("posts with a Pill plate get no floating panel; the one without keeps its panel and its plate is left alone", panelCount == 1
+	and seen(A, plates[3][1], "Text") == "$100")
 
 press(A, "NetStrength")
 advance(0.3)
@@ -220,7 +264,7 @@ check("saved at once: money AND netKg in one write", writes == 1 and dsData[KEY 
 check("shared net now 20 kg", netLift:GetAttribute("MaxWeight") == 20)
 advance(2)
 check("then: 20kg > 25kg, $25 on the card and on both plates", value(A, "NetStrength") == "20kg > 25kg" and price(A, "NetStrength") == "$25"
-	and seen(A, plates[1][1], "Text") == "$25" and seen(A, plates[2][2], "Text") == "NET20KG->25KG")
+	and seen(A, plates[1][1], "Text") == "$25" and seen(A, plates[2][2], "Text") == "NET 20 KG → 25 KG")
 
 -- the same progression at a post
 moveTo(A, SIGN1 + Vector3.new(0, -7, 6))
@@ -348,8 +392,8 @@ local B = join(2, "Short", NEAR + Vector3.new(3, 0, 0))
 clientScripts(B)
 advance(1.5)
 check("B sees B's own step (45 → 50, $340) on the board and plates; A still sees A's", value(B, "NetStrength") == "45kg > 50kg"
-	and price(B, "NetStrength") == "$340" and seen(B, plates[1][2], "Text") == "NET45KG->50KG" and seen(B, plates[1][1], "Text") == "$340"
-	and seen(A, plates[1][2], "Text") == "NET30KG->35KG" and seen(A, plates[1][1], "Text") == "$100")
+	and price(B, "NetStrength") == "$340" and seen(B, plates[1][2], "Text") == "NET 45 KG → 50 KG" and seen(B, plates[1][1], "Text") == "$340"
+	and seen(A, plates[1][2], "Text") == "NET 30 KG → 35 KG" and seen(A, plates[1][1], "Text") == "$100")
 local short = card(B, "NetStrength").Buy.Price.TextColor3
 check("B can't afford it: the price is red", short.R > 0.9 and short.G < 0.5)
 check("shared net: B's 45 kg", netLift:GetAttribute("MaxWeight") == 45)
@@ -376,7 +420,7 @@ check("D: 55 → 60 kg for $765", lastNotice(D) == "Net capacity 55 → 60 kg (-
 check("shared net follows the board purchase: 60 kg", netLift:GetAttribute("MaxWeight") == 60)
 advance(2)
 check("at the cap: 60kg MAX, MAX on the card and plates", value(D, "NetStrength") == "60kg MAX" and price(D, "NetStrength") == "MAX"
-	and seen(D, plates[2][2], "Text") == "NET60KG MAX" and seen(D, plates[2][1], "Text") == "MAX")
+	and seen(D, plates[2][2], "Text") == "NET 60 KG MAX" and seen(D, plates[2][1], "Text") == "MAX")
 press(D, "NetStrength")
 advance(0.3)
 check("at the cap: refused, not charged", lastNotice(D) == "Your net is at the maximum (60 kg)" and Economy.balance(D) == 4235)

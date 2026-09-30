@@ -1,23 +1,23 @@
 -- KgSignClient (LocalScript in StarterPlayer.StarterPlayerScripts).
--- [Economy net capacity v1 + upgrade board v1]
+-- [Economy net capacity v2]
 --
--- A small panel above every +5 KG sign (every Workspace child named KGsign),
--- in the style of the rod Buy panel: dark box, bold FredokaOne white text
--- with dark outlines, the price in lime. It shows YOUR net capacity and what
--- the next +5 kg costs (15 → 20 kg, $25), MAX at the cap, SOON while paid
--- upgrades aren't open, and the shared net's current capacity. Click the
--- sign itself (its ClickDetector) to buy; the server checks and charges and
+-- The +5 KG posts (tagged KgSign, as the place has them, or named KGsign;
+-- the same two posts, each once). Each shows YOUR saved net capacity - the
+-- one EconomyService keeps, sold by these posts and by the upgrade board's
+-- Net Strength card alike:
+--   * on the post's own price plate, PricePlate.PriceGui.Pill (found by that
+--     exact path): Price "$10" (green when you can afford it, red when not),
+--     SOON while paid net upgrades aren't open, MAX at the cap, "..." while
+--     your money loads; Info "NET 15 KG → 20 KG" / "NET 60 KG MAX"; the Border
+--     green / amber - the look GrinderUpgradesClient gave it (it no longer
+--     writes the plate: this is the plate's only writer). On this client only.
+--   * a post without that plate gets a small floating panel instead (dark
+--     box, white outlined text): your net → next, the price, the shared net.
+-- Click the post (or its plate) to buy; the server checks, charges and
 -- answers with a toast. Display only: values come from the server's
 -- attributes (NetKg, NetKgNext, NetKgCost on you; NetKgPaidOpen on
 -- ReplicatedStorage.Economy; MaxWeight on Workspace.NetLift).
---
--- A post with its own price plate (KGsign.PricePlate.PriceGui, which shows
--- "$100" and "NET15KG->20KG" in the place) shows YOUR values there instead:
--- the plate's two labels are told apart by what they say (the one that is
--- only a price, the one that names KG; exactly one of each, else the plate
--- is left alone) and set on this client only: "$10" / SOON / MAX / ...,
--- "NET15KG->20KG" / "NET60KG MAX". Such a post gets no floating panel. The
--- upgrade board's Net Strength card sells the same saved capacity.
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -28,6 +28,9 @@ local WHITE = Color3.new(1, 1, 1)
 local LIME = Color3.fromRGB(120, 255, 40)
 local GREY = Color3.fromRGB(170, 170, 175)
 local OUTLINE = Color3.fromRGB(10, 10, 12)
+local CAN_BUY = Color3.fromRGB(120, 255, 60) -- the plate's own colours (as GrinderUpgradesClient drew it)
+local SHORT = Color3.fromRGB(255, 80, 70)
+local AMBER = Color3.fromRGB(255, 205, 60)
 local PANEL_W, PANEL_H = 170, 84
 local MAX_DISTANCE = 45
 
@@ -50,11 +53,30 @@ local function label(parent: Instance, name: string, y: number, h: number, color
 end
 
 local panels = {} -- sign -> { gui, capacity, price, shared }
-local plates = {} -- sign -> { price, net } (the post's own PriceGui labels)
+local plates = {} -- sign -> { price, info, border } (the post's own PricePlate.PriceGui.Pill)
 local PLATE_WAIT = 10 -- seconds to wait for a post's PricePlate to appear
 
 local function economy(): Instance?
 	return ReplicatedStorage:FindFirstChild("Economy")
+end
+
+local function money(): number?
+	local stats = player:FindFirstChild("leaderstats")
+	local m = stats and stats:FindFirstChild("Money")
+	local v = m and (m :: any).Value
+	return if type(v) == "number" then v else nil
+end
+
+-- as GrinderUpgradesConfig.short: $950, $1.4K, $2.5M
+local function short(n: number): string
+	if n >= 1e9 then
+		return string.format("$%gB", math.floor(n / 1e7) / 100)
+	elseif n >= 1e6 then
+		return string.format("$%gM", math.floor(n / 1e4) / 100)
+	elseif n >= 1e3 then
+		return string.format("$%gK", math.floor(n / 10) / 100)
+	end
+	return "$" .. tostring(n)
 end
 
 local function render()
@@ -65,16 +87,23 @@ local function render()
 	local open = econ ~= nil and econ:GetAttribute("NetKgPaidOpen") == true
 	local netLift = workspace:FindFirstChild("NetLift")
 	local shared = netLift and netLift:GetAttribute("MaxWeight")
+	local have = money()
 	for _, p in pairs(plates) do
+		local canBuy = false
 		if type(kg) ~= "number" then
-			p.net.Text = "NET"
+			p.info.Text = "NET ... KG"
 			p.price.Text = "..."
 		elseif type(nextKg) ~= "number" or type(cost) ~= "number" then
-			p.net.Text = string.format("NET%dKG MAX", kg)
+			p.info.Text = string.format("NET %d KG MAX", kg)
 			p.price.Text = "MAX"
 		else
-			p.net.Text = string.format("NET%dKG->%dKG", kg, nextKg)
-			p.price.Text = if open then "$" .. tostring(cost) else "SOON"
+			p.info.Text = string.format("NET %d KG → %d KG", kg, nextKg)
+			p.price.Text = if open then short(cost) else "SOON"
+			canBuy = open and have ~= nil and have >= cost
+		end
+		p.price.TextColor3 = if canBuy then CAN_BUY elseif p.price.Text == "SOON" or p.price.Text == "MAX" or p.price.Text == "..." then GREY else SHORT
+		if p.border then
+			p.border.Color = if canBuy then CAN_BUY else AMBER
 		end
 	end
 	for _, p in pairs(panels) do
@@ -95,29 +124,19 @@ local function render()
 	end
 end
 
--- The post's own plate labels: (price, net) or nil if they can't be told apart.
-local function plateLabels(sign: Instance): (TextLabel?, TextLabel?)
+-- The post's own plate: PricePlate.PriceGui.Pill with its Price and Info
+-- labels (and Border stroke), or nil.
+local function pill(sign: Instance)
 	local plate = sign:FindFirstChild("PricePlate")
 	local gui = plate and plate:FindFirstChild("PriceGui")
-	if not gui then
-		return nil, nil
+	local pillFrame = gui and gui:FindFirstChild("Pill")
+	local price = pillFrame and pillFrame:FindFirstChild("Price")
+	local info = pillFrame and pillFrame:FindFirstChild("Info")
+	if not (price and price:IsA("GuiObject") and info and info:IsA("GuiObject")) then
+		return nil
 	end
-	local prices, nets = {}, {}
-	for _, d in ipairs(gui:GetDescendants()) do
-		if d:IsA("TextLabel") then
-			local t = string.upper(d.Text)
-			if string.match(t, "^%s*%$%s*[%d,]+%s*$") then
-				table.insert(prices, d)
-			elseif string.find(t, "KG", 1, true) then
-				table.insert(nets, d)
-			end
-		end
-	end
-	if #prices == 1 and #nets == 1 then
-		return prices[1], nets[1]
-	end
-	warn("[KgSign] " .. sign:GetFullName() .. ".PricePlate.PriceGui: expected one price label and one KG label; using the panel")
-	return nil, nil
+	local border = pillFrame:FindFirstChild("Border")
+	return { price = price, info = info, border = if border and border:IsA("UIStroke") then border else nil }
 end
 
 local function removePanel(sign: Instance)
@@ -132,69 +151,105 @@ end
 local function bindPlate(sign: Instance)
 	local plate = sign:WaitForChild("PricePlate", PLATE_WAIT)
 	local gui = plate and plate:WaitForChild("PriceGui", PLATE_WAIT)
-	if not gui or not sign:IsDescendantOf(workspace) then
+	local pillFrame = gui and gui:WaitForChild("Pill", PLATE_WAIT)
+	if not pillFrame or not sign:IsDescendantOf(workspace) then
 		return
 	end
-	local price, net = plateLabels(sign)
-	if price and net then
-		plates[sign] = { price = price, net = net }
+	local found = pill(sign)
+	if found then
+		plates[sign] = found
 		removePanel(sign)
 		render()
+	else
+		warn("[KgSign] " .. sign:GetFullName() .. ".PricePlate.PriceGui.Pill has no Price / Info labels; using the panel")
 	end
 end
 
+local signs = {}
 local function addSign(sign: Instance)
-	if panels[sign] or plates[sign] or sign.Name ~= "KGsign" then
+	if signs[sign] then
 		return
 	end
-	local board = sign:FindFirstChild("Board Part")
-	if not (board and board:IsA("BasePart")) then
-		return
-	end
-	local gui = Instance.new("BillboardGui")
-	gui.Name = "KgSignPanel"
-	gui.Adornee = board
-	gui.Size = UDim2.fromOffset(PANEL_W, PANEL_H)
-	gui.StudsOffsetWorldSpace = Vector3.new(0, board.Size.Y / 2 + 2.5, 0)
-	gui.MaxDistance = MAX_DISTANCE
-	gui.LightInfluence = 0
-	gui.ResetOnSpawn = false
-	local frame = Instance.new("Frame")
-	frame.Name = "Panel"
-	frame.Size = UDim2.fromOffset(PANEL_W, PANEL_H)
-	frame.BackgroundColor3 = Color3.fromRGB(14, 14, 16)
-	frame.BackgroundTransparency = 0.3
-	frame.Parent = gui
-	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 4)
-	local border = Instance.new("UIStroke")
-	border.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	border.Color = Color3.new(0, 0, 0)
-	border.Thickness = 1.5
-	border.Parent = frame
-	local p = {
-		gui = gui,
-		capacity = label(frame, "Capacity", 4, 26, WHITE),
-		price = label(frame, "Price", 30, 30, LIME),
-		shared = label(frame, "Shared", 60, 20, WHITE),
-	}
-	panels[sign] = p
+	signs[sign] = true
 	sign.AncestryChanged:Connect(function()
 		if not sign:IsDescendantOf(workspace) then
+			signs[sign] = nil
 			plates[sign] = nil
-			if panels[sign] == p then
-				removePanel(sign)
-			end
+			removePanel(sign)
 		end
 	end)
-	gui.Parent = playerGui
+	local board = sign:FindFirstChild("Board Part")
+	if board and board:IsA("BasePart") then
+		local gui = Instance.new("BillboardGui")
+		gui.Name = "KgSignPanel"
+		gui.Adornee = board
+		gui.Size = UDim2.fromOffset(PANEL_W, PANEL_H)
+		gui.StudsOffsetWorldSpace = Vector3.new(0, board.Size.Y / 2 + 2.5, 0)
+		gui.MaxDistance = MAX_DISTANCE
+		gui.LightInfluence = 0
+		gui.ResetOnSpawn = false
+		local frame = Instance.new("Frame")
+		frame.Name = "Panel"
+		frame.Size = UDim2.fromOffset(PANEL_W, PANEL_H)
+		frame.BackgroundColor3 = Color3.fromRGB(14, 14, 16)
+		frame.BackgroundTransparency = 0.3
+		frame.Parent = gui
+		Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 4)
+		local border = Instance.new("UIStroke")
+		border.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		border.Color = Color3.new(0, 0, 0)
+		border.Thickness = 1.5
+		border.Parent = frame
+		panels[sign] = {
+			gui = gui,
+			capacity = label(frame, "Capacity", 4, 26, WHITE),
+			price = label(frame, "Price", 30, 30, LIME),
+			shared = label(frame, "Shared", 60, 20, WHITE),
+		}
+		gui.Parent = playerGui
+	end
 	render()
 	task.spawn(bindPlate, sign)
 end
 
-for _, child in ipairs(workspace:GetChildren()) do
-	addSign(child)
+for _, sign in ipairs(CollectionService:GetTagged("KgSign")) do
+	addSign(sign)
 end
-workspace.ChildAdded:Connect(addSign)
+CollectionService:GetInstanceAddedSignal("KgSign"):Connect(addSign)
+for _, child in ipairs(workspace:GetChildren()) do
+	if child.Name == "KGsign" then
+		addSign(child)
+	end
+end
+workspace.ChildAdded:Connect(function(child)
+	if child.Name == "KGsign" then
+		addSign(child)
+	end
+end)
+
+-- the price turns green / red with your money
+local watchedMoney: Instance? = nil
+local function watchMoney()
+	local stats = player:FindFirstChild("leaderstats")
+	local m = stats and stats:FindFirstChild("Money")
+	if m and m ~= watchedMoney and m:IsA("ValueBase") then
+		watchedMoney = m
+		local value: any = m
+		value.Changed:Connect(render)
+		render()
+	end
+end
+player.ChildAdded:Connect(function(c)
+	if c.Name == "leaderstats" then
+		c.ChildAdded:Connect(watchMoney)
+		watchMoney()
+	end
+end)
+local stats = player:FindFirstChild("leaderstats")
+if stats then
+	stats.ChildAdded:Connect(watchMoney)
+	watchMoney()
+end
 
 player.AttributeChanged:Connect(function(name)
 	if name == "NetKg" or name == "NetKgNext" or name == "NetKgCost" then

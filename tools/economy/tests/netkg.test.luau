@@ -202,6 +202,44 @@ do
 	check("charged once; 20 kg after", m:balance(9) == 90 and m:netKg(9) == 20)
 end
 
+------------------------------------------------------------ adopting earlier KG-sign buys (GrinderUpgrades)
+
+do
+	local store = fakeStore()
+	store.data[KEY] = { v = 2, money = 500 }
+	local m = loaded(store)
+	local writes = store.writes
+	check("adopt 3 earlier buys (30 kg): raised, no write yet, money untouched", m:adoptNetKg(9, 30) == "raised" and m:netKg(9) == 30
+		and store.writes == writes and m:balance(9) == 500 and m:isDirty(9))
+	check("the same report again: kept (never added twice)", m:adoptNetKg(9, 30) == "kept" and m:netKg(9) == 30)
+	check("a lower report: kept (never lowers)", m:adoptNetKg(9, 20) == "kept" and m:netKg(9) == 30)
+	check("invalid reports refused", m:adoptNetKg(9, 12) == "invalid" and m:adoptNetKg(9, 31.5) == "invalid"
+		and m:adoptNetKg(9, "40") == "invalid" and m:adoptNetKg(9, 0 / 0) == "invalid" and m:netKg(9) == 30)
+	m:save(9, false)
+	check("saved with the next save", store.data[KEY].netKg == 30 and store.data[KEY].money == 500)
+	check("next step continues from 30 (30 -> 35 for 100)", select(4, m:buyNetKg(9)) == 100)
+end
+do
+	local store = fakeStore()
+	store.data[KEY] = { v = 2, money = 500, netKg = 45 }
+	local m = loaded(store)
+	check("already higher (bought here since): kept at 45", m:adoptNetKg(9, 30) == "kept" and m:netKg(9) == 45)
+end
+do
+	local store = fakeStore()
+	store.data[KEY] = { v = 2, money = 500, netKg = "junk" }
+	local m = loaded(store)
+	check("unreadable netKg: not adopted, never overwritten", m:adoptNetKg(9, 30) == "netUnavailable" and m:netKg(9) == 15)
+	m:save(9, false)
+	check("unreadable netKg still as it was", store.data[KEY].netKg == "junk")
+end
+do
+	local store = fakeStore()
+	local m = MoneyStore.new(store, "jobA", now)
+	m:begin(9)
+	check("not loaded: not adopted", m:adoptNetKg(9, 30) == "notLoaded")
+end
+
 ------------------------------------------------------------ rejoin
 
 do

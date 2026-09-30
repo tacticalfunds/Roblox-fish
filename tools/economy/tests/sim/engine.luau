@@ -509,6 +509,7 @@ local LOCAL_PROPS = {
 	BillboardGui = { Enabled = true },
 	TextLabel = { Text = true, TextColor3 = true, Visible = true },
 	TextButton = { Text = true, TextColor3 = true, Visible = true },
+	UIStroke = { Color = true },
 }
 -- (only for objects in the Workspace: GUIs the sims build in a PlayerGui stand
 -- for the client's own copies)
@@ -1009,6 +1010,14 @@ function Players:GetPlayers()
 	end
 	return out
 end
+function Players:GetPlayerFromCharacter(char)
+	for _, p in ipairs(self:GetPlayers()) do
+		if p._props.Character == char then
+			return p
+		end
+	end
+	return nil
+end
 function Players:GetPlayerByUserId(id)
 	for _, p in ipairs(self:GetPlayers()) do
 		if p._props.UserId == id then
@@ -1018,24 +1027,36 @@ function Players:GetPlayerByUserId(id)
 	return nil
 end
 local dsData = {}
+local studioMode = { on = true } -- a sim sets .on = false to act as a live server
+-- stores a sim keeps apart (dsOther[name] = {}): every other store is dsData
+local dsOther = {}
 -- dsHooks.before(key): runs at the start of every UpdateAsync (a sim can
 -- task.wait() in it for latency, or error() for a failed request)
 local dsHooks = {}
+-- dsHooks.store(name): runs in GetDataStore (error() = DataStore unavailable);
+-- dsHooks.get(key): runs at the start of every GetAsync
 services.DataStoreService = {
-	GetDataStore = function()
+	GetDataStore = function(_, name)
+		if dsHooks.store then
+			dsHooks.store(name)
+		end
+		local data = dsOther[name] or dsData
 		return {
 			UpdateAsync = function(_, key, fn)
 				if dsHooks.before then
-					dsHooks.before(key)
+					dsHooks.before(key, name)
 				end
-				local r = fn(dsData[key])
+				local r = fn(data[key])
 				if r ~= nil then
-					dsData[key] = r
+					data[key] = r
 				end
-				return dsData[key]
+				return data[key]
 			end,
 			GetAsync = function(_, key)
-				return dsData[key]
+				if dsHooks.get then
+					dsHooks.get(key, name)
+				end
+				return data[key]
 			end,
 		}
 	end,
@@ -1052,7 +1073,7 @@ services.RunService = {
 	RenderStepped = RenderStepped,
 	Stepped = Heartbeat,
 	IsStudio = function()
-		return true
+		return studioMode.on
 	end,
 	IsRunning = function()
 		return true
@@ -1137,6 +1158,36 @@ services.SoundService = new("SoundService", "SoundService")
 services.PhysicsService = {
 	RegisterCollisionGroup = function() end,
 	CollisionGroupSetCollidable = function() end,
+}
+-- CollectionService: tags on instances (a sim tags with addTag)
+local tagged, tagSignals = {}, {}
+local function addTag(inst, tag)
+	tagged[tag] = tagged[tag] or {}
+	table.insert(tagged[tag], inst)
+	if tagSignals[tag] then
+		tagSignals[tag]:Fire(inst)
+	end
+end
+services.CollectionService = {
+	GetTagged = function(_, tag)
+		local out = {}
+		for _, inst in ipairs(tagged[tag] or {}) do
+			if inst:IsDescendantOf(game) then
+				table.insert(out, inst)
+			end
+		end
+		return out
+	end,
+	HasTag = function(_, inst, tag)
+		return table.find(tagged[tag] or {}, inst) ~= nil
+	end,
+	AddTag = function(_, inst, tag)
+		addTag(inst, tag)
+	end,
+	GetInstanceAddedSignal = function(_, tag)
+		tagSignals[tag] = tagSignals[tag] or Signal.new()
+		return tagSignals[tag]
+	end,
 }
 local closers = {}
 function game:GetService(n)

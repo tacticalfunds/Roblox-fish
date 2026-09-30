@@ -13,20 +13,6 @@
 --   * rods (child module Rods): owned / equipped rods saved in the same
 --     record as the money; buying saves money + rod in one write before it
 --     counts; RodFishingSystem reads the presser's rod per cast (rodStats)
---   * net capacity (child module NetKg): the +5 KG signs, saved the same way;
---     NetCapacityServer sets the shared NetLift.MaxWeight from netKg()
---   * the GrinderUpgrades KG signs' purchases (their own DataStore, a count of
---     +5 kg buys) are ADOPTED into netKg once GrinderUpgradesServer reports a
---     player's count (adoptLegacyNetKg); net purchases wait for that
---   * GrinderUpgradesServer's own purchases (conveyor, blades) can hold the
---     leaving player's final save while their store write runs (holdSave),
---     so a failed write is refunded before the Money is saved (refundHeld)
---   * the GrinderUpgrades blade multiplier (live enhancement) still applies
---     at each sale, on top of the piece's value (Meat Price is in that value)
---   * board upgrades (child module BoardUpgrades): levels saved the same way,
---     bought at the upgrade board (UpgradeBoardServer -> upgradeAction);
---     gameplay reads the committed value (upgradeValue; Meat Price in
---     issueFish: the owner's multiplier on the whole fish, once)
 --
 -- Every patched live script loads this with FindFirstChild + pcall(require)
 -- and calls start(); if it is missing or fails, those scripts behave
@@ -51,13 +37,10 @@ local PieceTags = require(script.PieceTags)
 local Sales = require(script.Sales)
 local Offers = require(script.Offers)
 local Rods = require(script.Rods)
-local NetKg = require(script.NetKg)
-local BoardUpgrades = require(script.BoardUpgrades)
 
 local M = {}
 M.Config = Config
 M.Pricing = Pricing
-M.BoardUpgrades = BoardUpgrades
 
 local started = false
 local starting = false -- start() yields (Studio DataStore probe); other callers wait
@@ -184,9 +167,6 @@ local function showMoney(player: Player)
 	moneyValues[player] = v
 	v.Parent = stats
 	M._publishRods(player) -- rods load with the money
-	M._adoptLegacy(player) -- earlier KG-sign buys reported before the money loaded
-	M._publishNet(player)
-	M._publishUpgrades(player)
 end
 
 ------------------------------------------------------------ load / save
@@ -273,15 +253,8 @@ local function saveWithRetry(userId: number, release: boolean): boolean
 	return false
 end
 
-local saveHolds: { [number]: number } = {} -- userId -> purchases elsewhere still being written (holdSave)
-
 local function unloadPlayer(player: Player)
 	local userId = player.UserId
-	-- a purchase another script is still saving may need to refund first
-	local t0 = os.clock()
-	while (saveHolds[userId] or 0) > 0 and os.clock() - t0 < Config.SaveHoldSeconds do
-		task.wait(0.1)
-	end
 	moneyValues[player] = nil
 	local state = money:state(userId)
 	if state == "Ready" then
@@ -446,14 +419,6 @@ function M._start(): boolean
 	root:GetAttributeChangedSignal("RodShopOpen"):Connect(function()
 		root:SetAttribute("RodShopPaidOpen", M.rodShopOpen())
 	end)
-	root:SetAttribute("NetKgPaidOpen", M.netKgOpen())
-	root:GetAttributeChangedSignal("NetKgOpen"):Connect(function()
-		root:SetAttribute("NetKgPaidOpen", M.netKgOpen())
-	end)
-	root:SetAttribute("UpgradesPaidOpen", M.upgradesOpen())
-	root:GetAttributeChangedSignal("UpgradesOpen"):Connect(function()
-		root:SetAttribute("UpgradesPaidOpen", M.upgradesOpen())
-	end)
 	root:SetAttribute("Running", true)
 	root:SetAttribute("Store", storeKind)
 	log("running (" .. storeKind .. " store)")
@@ -510,45 +475,6 @@ function M.credit(who: any, amount: number, reason: string): string
 		sync(player)
 	end
 	return result
-end
-
--- Another script's purchase (GrinderUpgradesServer) holds the player's
--- final Money save while its own store write runs: the Money is saved only
--- after release() (or after Config.SaveHoldSeconds), so refundHeld() still
--- reaches a player who left meanwhile. Returns release (call it once).
-function M.holdSave(player: Player): () -> ()
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") then
-		return function() end
-	end
-	local userId = player.UserId
-	saveHolds[userId] = (saveHolds[userId] or 0) + 1
-	local released = false
-	return function()
-		if not released then
-			released = true
-			saveHolds[userId] = math.max(0, (saveHolds[userId] or 1) - 1)
-			if saveHolds[userId] == 0 then
-				saveHolds[userId] = nil
-			end
-		end
-	end
-end
-
--- A refund while holding the save: credited to the player's loaded Money
--- even if they already left (their final save is waiting for the hold).
--- Returns the credit result ("paid" | "pending" | "dropped" | ...).
-function M.refundHeld(player: Player, amount: number, reason: string): string
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") then
-		return "dropped"
-	end
-	local r = money:credit(player.UserId, amount)
-	if r == "paid" and moneyValues[player] then
-		sync(player)
-	end
-	if r ~= "paid" and r ~= "pending" then
-		warn(string.format("[Economy] held refund of %d to %s not applied (%s): %s", amount, player.Name, tostring(r), reason))
-	end
-	return r
 end
 
 function M.refund(player: Player, amount: number, reason: string)
@@ -725,24 +651,15 @@ end
 
 ------------------------------------------------------------ meat ledger
 
--- The owner's Meat Price right now (1 if they aren't in this server or
--- their money hasn't loaded): the committed level only.
-local function meatMultiplier(ownerId: number): number
-	local level = money:upgradeLevel(ownerId, "MeatPrice")
-	return if level then BoardUpgrades.value("MeatPrice", level) else 1
-end
-
 -- GrinderProcessor: cut one fish into ledger pieces. Returns their ids
 -- (count = meat yield for the tier). `player` is the net-pad player (nil
 -- for the harpoon); `meta` is the catch payload ({ OwnerId, Variant, Source }).
--- The owner's Meat Price multiplies the whole fish's value once, here; the
--- pieces' values are fixed from now on (each still pays once).
 function M.issueFish(player: Player?, fishName: any, tier: any, meta: any): { string }
 	if not startOk then
 		return {}
 	end
 	local playerId = if player then player.UserId else nil
-	return Sales.issue(ledger, playerId, fishName, tier, meta, meatMultiplier)
+	return Sales.issue(ledger, playerId, fishName, tier, meta)
 end
 
 -- Stamps a piece's identity on the object that stands for it.
@@ -827,320 +744,6 @@ function M._tellEarned(piece: Ledger.Piece, kind: string, added: number, route: 
 	pcall(function()
 		(earned :: RemoteEvent):FireClient(player, added, route, piece.fishName, piece.variant, kind, piece.value)
 	end)
-end
-
------------------------------------------------------------- net capacity (+5 KG signs)
-
-local lastNetAction: { [Player]: number } = {}
-M.onPlayerLeaving(function(player: Player)
-	lastNetAction[player] = nil
-end)
-
--- Paid +5 KG: Config.NetKgOpen, or (for a Studio validation) the NetKgOpen
--- attribute on ReplicatedStorage.Economy.
-function M.netKgOpen(): boolean
-	return startOk and (Config.NetKgOpen == true or root:GetAttribute("NetKgOpen") == true)
-end
-
--- Legacy KG signs (GrinderUpgradesServer, before this): it kept a COUNT of
--- +5 kg buys in its own store. With Config.NetKgLegacy on, a player's net
--- counts - and can be bought - only once GrinderUpgradesServer has reported
--- that count this session (adoptLegacyNetKg); the count is adopted as
--- netKg = max(netKg, Base + Step x buys): idempotent, never added twice, and
--- never based on the live NetLift.MaxWeight (which this service's own
--- NetCapacityServer raises).
-local legacyNet: { [Player]: number } = {}
-M.onPlayerLeaving(function(player: Player)
-	legacyNet[player] = nil
-end)
-local function legacyReady(player: Player): boolean
-	return Config.NetKgLegacy ~= true or legacyNet[player] ~= nil
-end
-function M._adoptLegacy(player: Player)
-	local buys = legacyNet[player]
-	if buys and money:netKg(player.UserId) then
-		local r = money:adoptNetKg(player.UserId, Config.NetKg.Base + Config.NetKg.Step * buys)
-		if r == "raised" then
-			log(string.format("%s: adopted %d earlier +%d kg buys (net %d kg)", player.Name, buys, Config.NetKg.Step, money:netKg(player.UserId) :: number))
-		elseif r ~= "kept" then
-			warn(string.format("[Economy] %s's earlier kg buys (%d) not adopted: %s", player.Name, buys, tostring(r)))
-		end
-	end
-end
-
--- GrinderUpgradesServer: this player's earlier KG-sign buys (its `kg`
--- count, loaded from its own store). Returns true when accepted.
-function M.adoptLegacyNetKg(player: Player, buys: any): boolean
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") or player.Parent ~= Players then
-		return false
-	end
-	if not (type(buys) == "number" and buys == buys and buys == math.floor(buys) and buys >= 0 and buys <= 100000) then
-		warn("[Economy] " .. player.Name .. "'s earlier kg buys are not a count; net purchases stay off this session")
-		return false
-	end
-	legacyNet[player] = buys
-	M._adoptLegacy(player) -- or when their money loads
-	M._publishNet(player)
-	return true
-end
-
--- The player's owned (committed) net capacity, or nil while not loaded
--- (or while their earlier KG-sign buys haven't been reported yet).
-function M.netKg(player: Player): number?
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") or not legacyReady(player) then
-		return nil
-	end
-	return money:netKg(player.UserId)
-end
-
--- Display only (the sign plates / board read these): NetKg, NetKgNext,
--- NetKgCost; and, as the GrinderUpgrades scripts published them, NetMaxWeight
--- (= NetKg, the player's own capacity - never the shared MaxWeight plus
--- anything) and NetKgBuys (steps above Base).
-function M._publishNet(player: Player)
-	local kg = M.netKg(player)
-	if not kg or not player.Parent then
-		return
-	end
-	local nextKg, cost = NetKg.nextStep(kg)
-	player:SetAttribute("NetKg", kg)
-	player:SetAttribute("NetKgNext", nextKg)
-	player:SetAttribute("NetKgCost", cost)
-	player:SetAttribute("NetMaxWeight", kg)
-	player:SetAttribute("NetKgBuys", math.max(0, (kg - Config.NetKg.Base) // Config.NetKg.Step))
-end
-
-local NET_REASONS = {
-	funds = "Not enough money",
-	notLoaded = "Your money is still loading - try again in a moment",
-	netUnavailable = "Your saved net couldn't be read, so net upgrades are off this session",
-	busy = "One moment - still saving",
-}
-
--- One press of a +5 KG sign: buys the next step for this player, saved
--- (money + capacity, one write) before it counts; nothing is charged if the
--- write fails. `canBuy()` is the sign's own check (in reach). Everything is
--- checked before any wait for a running save AND again right before the
--- debit, with no yield in between. Returns (ok, message, newKg?).
-function M.netKgAction(player: Player, canBuy: (() -> (boolean, string?))?): (boolean, string, number?)
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") or player.Parent ~= Players then
-		return false, "Net upgrades are unavailable right now", nil
-	end
-	if rodBusy[player] then -- one purchase at a time per player (rods or net)
-		return false, NET_REASONS.busy, nil
-	end
-	local now = os.clock()
-	if lastNetAction[player] and now - lastNetAction[player] < Config.NetKgCooldown then
-		return false, "Slow down a little", nil
-	end
-	lastNetAction[player] = now
-	local function buyable(): (boolean, string?)
-		if player.Parent ~= Players then
-			return false, "Net upgrades are unavailable right now"
-		end
-		local ch = player.Character
-		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-		if not (hum and hum.Health > 0) then
-			return false, "You can't do that right now"
-		end
-		if not M.netKgOpen() then
-			return false, "Net upgrades open soon"
-		end
-		if not legacyReady(player) then
-			return false, "Your net upgrades are still loading - try again in a moment"
-		end
-		local kg = money:netKg(player.UserId)
-		if not kg then
-			return false, NET_REASONS.notLoaded
-		end
-		if not NetKg.nextStep(kg) then
-			return false, string.format("Your net is at the maximum (%d kg)", kg)
-		end
-		if canBuy then
-			local allowed, why = canBuy()
-			if not allowed then
-				return false, why or "You can't buy that here"
-			end
-		end
-		return true, nil
-	end
-	local allowed, refusal = buyable()
-	if not allowed then
-		return false, refusal :: string, nil
-	end
-	local before = money:netKg(player.UserId) :: number
-	rodBusy[player] = true
-	local ran, ok, why, newKg, cost = pcall(function()
-		local t0 = os.clock()
-		while money:isSaving(player.UserId) and os.clock() - t0 < 10 do
-			task.wait(0.05)
-		end
-		local still, changed = buyable()
-		if not still then
-			return false, "refused:" .. tostring(changed), nil, nil
-		end
-		before = money:netKg(player.UserId) :: number
-		return money:buyNetKg(player.UserId) -- saves money + capacity in one write
-	end)
-	rodBusy[player] = nil
-	if not ran then
-		warn("[Economy] net upgrade failed: " .. tostring(ok))
-		return false, "Couldn't save the upgrade - you were not charged. Try again.", nil
-	end
-	if not ok then
-		if type(why) == "string" and string.sub(why, 1, 8) == "refused:" then
-			return false, string.sub(why, 9), nil
-		end
-		if type(why) == "string" and string.sub(why, 1, 8) == "notSaved" then
-			warn(string.format("[Economy] %s's net upgrade not saved (%s); not charged", player.Name, why))
-			return false, "Couldn't save the upgrade - you were not charged. Try again.", nil
-		end
-		return false, NET_REASONS[why or ""] or "Couldn't do that right now", nil
-	end
-	sync(player)
-	M._publishNet(player)
-	log(string.format("%s net %d -> %d kg for %d", player.Name, before, newKg, cost))
-	return true, string.format("Net capacity %d → %d kg (-$%d)", before, newKg, cost), newKg
-end
-
------------------------------------------------------------- board upgrades (Rod Luck, ...)
-
-local lastUpgradeAction: { [Player]: number } = {}
-M.onPlayerLeaving(function(player: Player)
-	lastUpgradeAction[player] = nil
-end)
-
--- Paid board upgrades: Config.BoardUpgradesOpen, or (for a Studio
--- validation) the UpgradesOpen attribute on ReplicatedStorage.Economy.
-function M.upgradesOpen(): boolean
-	return startOk and (Config.BoardUpgradesOpen == true or root:GetAttribute("UpgradesOpen") == true)
-end
-
--- The effect a player's COMMITTED level gives (1 = none): what gameplay
--- reads, e.g. RodFishingSystem once per accepted press. Not loaded, not
--- running, or an unknown id -> 1.
-function M.upgradeValue(player: Player, id: string): number
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") or not BoardUpgrades.known(id) then
-		return 1
-	end
-	local level = money:upgradeLevel(player.UserId, id)
-	return if level then BoardUpgrades.value(id, level) else 1
-end
-
--- Display only (the board reads these): Upg<Id> = current value,
--- Upg<Id>Next / Upg<Id>Cost = the next level's value and price (nil at max).
-function M._publishUpgrades(player: Player)
-	if not player.Parent then
-		return
-	end
-	for _, id in ipairs(BoardUpgrades.ids()) do
-		local level = money:upgradeLevel(player.UserId, id)
-		if level then
-			local _, cost, nextValue = BoardUpgrades.nextStep(id, level)
-			player:SetAttribute("Upg" .. id, BoardUpgrades.value(id, level))
-			player:SetAttribute("Upg" .. id .. "Next", nextValue)
-			player:SetAttribute("Upg" .. id .. "Cost", cost)
-		end
-	end
-end
-
-local UPGRADE_REASONS = {
-	funds = "Not enough money",
-	notLoaded = "Your money is still loading - try again in a moment",
-	upgradesUnavailable = "Your saved upgrades couldn't be read, so board upgrades are off this session",
-	busy = "One moment - still saving",
-}
-local function formatValue(v: number): string
-	return (string.format("%.2f", v):gsub("0+$", ""):gsub("%.$", "")) .. "x"
-end
-M.formatUpgradeValue = formatValue
-
--- One press of a board upgrade card: buys the next level for this player,
--- saved (money + levels, one write) before it counts; nothing is charged if
--- the write fails. `canBuy()` is the board's own check (in reach). Checked
--- before any wait for a running save AND again right before the debit, with
--- no yield in between. Returns (ok, message, newValue?).
-function M.upgradeAction(player: Player, id: any, canBuy: (() -> (boolean, string?))?): (boolean, string, number?)
-	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") or player.Parent ~= Players then
-		return false, "Upgrades are unavailable right now", nil
-	end
-	if not BoardUpgrades.known(id) then
-		return false, "Unknown upgrade", nil
-	end
-	local name = Config.BoardUpgrades[id].Name or id
-	if rodBusy[player] then -- one purchase at a time per player (rods, net or board)
-		return false, UPGRADE_REASONS.busy, nil
-	end
-	local now = os.clock()
-	if lastUpgradeAction[player] and now - lastUpgradeAction[player] < Config.BoardUpgradeCooldown then
-		return false, "Slow down a little", nil
-	end
-	lastUpgradeAction[player] = now
-	local function buyable(): (boolean, string?)
-		if player.Parent ~= Players then
-			return false, "Upgrades are unavailable right now"
-		end
-		local ch = player.Character
-		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-		if not (hum and hum.Health > 0) then
-			return false, "You can't do that right now"
-		end
-		if not M.upgradesOpen() then
-			return false, name .. " upgrades open soon"
-		end
-		local level = money:upgradeLevel(player.UserId, id)
-		if not level then
-			return false, UPGRADE_REASONS.notLoaded
-		end
-		if not BoardUpgrades.nextStep(id, level) then
-			return false, string.format("%s is at the maximum (%s)", name, formatValue(BoardUpgrades.value(id, level)))
-		end
-		if canBuy then
-			local allowed, why = canBuy()
-			if not allowed then
-				return false, why or "You can't buy that here"
-			end
-		end
-		return true, nil
-	end
-	local allowed, refusal = buyable()
-	if not allowed then
-		return false, refusal :: string, nil
-	end
-	local before = money:upgradeLevel(player.UserId, id) :: number
-	rodBusy[player] = true
-	local ran, ok, why, newLevel, cost = pcall(function()
-		local t0 = os.clock()
-		while money:isSaving(player.UserId) and os.clock() - t0 < 10 do
-			task.wait(0.05)
-		end
-		local still, changed = buyable()
-		if not still then
-			return false, "refused:" .. tostring(changed), nil, nil
-		end
-		before = money:upgradeLevel(player.UserId, id) :: number
-		return money:buyUpgrade(player.UserId, id) -- saves money + levels in one write
-	end)
-	rodBusy[player] = nil
-	if not ran then
-		warn("[Economy] upgrade failed: " .. tostring(ok))
-		return false, "Couldn't save the upgrade - you were not charged. Try again.", nil
-	end
-	if not ok then
-		if type(why) == "string" and string.sub(why, 1, 8) == "refused:" then
-			return false, string.sub(why, 9), nil
-		end
-		if type(why) == "string" and string.sub(why, 1, 8) == "notSaved" then
-			warn(string.format("[Economy] %s's %s upgrade not saved (%s); not charged", player.Name, id, why))
-			return false, "Couldn't save the upgrade - you were not charged. Try again.", nil
-		end
-		return false, UPGRADE_REASONS[why or ""] or "Couldn't do that right now", nil
-	end
-	sync(player)
-	M._publishUpgrades(player)
-	local fromValue, toValue = BoardUpgrades.value(id, before), BoardUpgrades.value(id, newLevel)
-	log(string.format("%s %s %s -> %s for %d", player.Name, id, formatValue(fromValue), formatValue(toValue), cost))
-	return true, string.format("%s %s → %s (-$%d)", name, formatValue(fromValue), formatValue(toValue), cost), toValue
 end
 
 -- The object for a piece is gone without a sale: keep the piece as data.

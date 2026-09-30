@@ -19,7 +19,7 @@ reviews and installs. Nothing here touches Studio on its own.
 | Earnings popup (`561c4d1`; pending / balance-limit amounts fixed later): "+$N" for the owner when their meat sells | done | **yes**: `InstallEarnings.lua` (after sales; after upgrades if used) |
 | Blender Bot recovery (`e933db6`): an error mid-trip keeps the piece | done | **yes**: `InstallBotRecovery.lua` (after sales; before meat glow) |
 | Rods milestone 1: saved ownership + equip + faster bites (paid shop still closed) | **installed** (Astra, pending validation), frozen at `61a7bd4` | `InstallRods.lua` + `InstallRodShopUI.lua` |
-| +5 KG signs: saved per-player net capacity, shared MaxWeight (paid signs closed) | done, needs Studio validation | **yes**: `InstallNetKg.lua` (after rods) |
+| Upgrade board + one saved net capacity (KG posts and board), on the live GrinderUpgrades baseline (paid upgrades closed) | done, needs Studio validation | **yes**: `InstallBoardUpgrades.lua` (after rods and the GrinderUpgrades system) |
 
 **All installers in one place, in order, with rollbacks: [`tools/INSTALL_GUIDE.md`](../INSTALL_GUIDE.md).**
 
@@ -580,7 +580,125 @@ while this is in.
 | R11 | (shop UI) Walk away, press Coral; press Magma broke | TOO FAR / NEED $ with the full message; nothing charged |
 | R12 | Check the new status line doesn't cover anything | Readable under the cards (layout is untested visually) |
 
-## +5 KG signs: net capacity (`InstallNetKg.lua`)
+## Upgrade board on the live baseline (`InstallBoardUpgrades.lua`)
+
+**One installer** for the whole upgrade board and the one saved net
+capacity (the sections below describe the parts). It is built on what
+Studio has now (Astra, 2026-09-30): rods `61a7bd4` plus the
+**GrinderUpgrades** system Astra installed.
+
+- The live EconomyService has the blade multiplier in the sale callback.
+- GrinderUpgradesServer sold the KG signs and kept a **count** of +5 kg buys
+  in its own store, `GrinderUpgrades_v1` (`kg`).
+- GrinderUpgradesClient wrote the posts' `PricePlate.PriceGui.Pill` every
+  0.25 s.
+
+The exact live sources are in `studio/live/` (`EconomyService.grinder.lua`,
+`GrinderUpgrades{Server,Client,Config}.lua`). The installer checks every
+script it touches against them and **refuses on anything else**, naming the
+first different line.
+
+**What it does to the GrinderUpgrades system** (`build/make_grinder.py`, a
+reviewable diff of the live scripts):
+
+- **One seller, one progression.**
+  - NetCapacityServer is the **only** KG-sign seller: the board and the
+    PricePlate ClickDetectors, at 24 studs as before.
+  - It sells the Money record's `netKg`: money + kg in **one** write, which
+    the Net Strength card sells too.
+  - GrinderUpgradesServer no longer binds the signs, so there's no second
+    handler and no second charge.
+- **Migration** (idempotent, no compounding):
+  - At each join, GrinderUpgradesServer reports its saved `kg` count, and
+    EconomyService adopts `netKg = max(netKg, 15 + 5 × kg)`.
+  - Reporting again never adds.
+  - The base is the fixed 15, **never** the live `NetLift.MaxWeight` (which
+    NetCapacityServer raises).
+  - The old record is left exactly as it is.
+  - A player's net can't be bought, and doesn't count toward the shared
+    net, until that count is in (`Config.NetKgLegacy`).
+  - `NetMaxWeight` / `NetKgBuys` are now published from `netKg`, so they
+    don't move when `MaxWeight` changes.
+- **One plate writer.** GrinderUpgradesClient no longer touches the Pill.
+  KgSignClient writes Price (`$10`, green / red by your money, SOON, MAX,
+  `...`), Info (`NET 15 KG → 20 KG`) and the Border colour, with the same
+  look, per player.
+- **Conveyor / blades** keep the same prices and effects:
+  - **no memory store in a live server**: if its DataStore is unavailable
+    outside Studio, nothing is loaded or bought;
+  - a record it can't read is **never overwritten** (buying is off for that
+    player);
+  - the player's **final Money save waits** for the store write
+    (`EconomyService.holdSave`, at most `Config.SaveHoldSeconds` = 20 s);
+  - a failed write is refunded **even if the player left** meanwhile
+    (`refundHeld`), so the saved balance is the one from before the
+    purchase;
+  - a successful write while leaving keeps both the debit and the upgrade.
+- **Blade × Meat Price**, each exactly once:
+  - Meat Price is in the piece's value, fixed when the grinder cuts the
+    fish.
+  - The blade multiplier is applied at each sale by the unchanged live
+    code.
+  - The "+$" popup shows what was actually credited; each piece still
+    pays once.
+
+**The board's cards use the board's own art.**
+
+- Each card is a copy of the board's first card that has the card
+  structure: a "Buy" button with its Price, gradient, stroke and corner, an
+  "Icons" image, and title / value labels told apart by height.
+- The copy is recoloured pink / lime / cyan / amber and relabelled.
+- **Icons:** set `Workspace.Board` attributes `IconNetStrength`,
+  `IconRodLuck`, `IconMeatPrice` and `IconFasterReels` to `rbxassetid://…`
+  images you have. A card without one shows its emoji over a hidden image.
+
+**Install:** the prerequisite is `EconomyRodsBackup`. The installer refuses
+if any backup of the superseded per-milestone installers exists.
+
+- Changes: EconomyService, Config, MoneyStore, Pricing, Ledger, Sales,
+  RodFishingSystem, GrinderUpgradesServer and GrinderUpgradesClient.
+- Checks unchanged: Rods, Offers, PieceTags, GrinderUpgradesConfig and
+  RodShopServer.
+- Adds: `EconomyService.NetKg`, `EconomyService.BoardUpgrades`,
+  NetCapacityServer, UpgradeBoardServer, KgSignClient and
+  UpgradeBoardClient.
+- Backup: `EconomyBoardUpgradesBackup`. Every earlier backup, including
+  `GrinderUpgradesBackup` and `BillboardLockBackup`, is untouched.
+- Paid upgrades stay **closed**: `NetKgOpen` for the net, `UpgradesOpen`
+  for the other three.
+
+**Rollback:** `RollbackBoardUpgrades.lua` restores exactly the live
+baseline: the blade EconomyService, the live GrinderUpgrades scripts, and
+the added scripts removed. It refuses over any edited script. What happens
+to the data:
+
+- **Old KG buys are safe both ways.** The `kg` count in
+  `GrinderUpgrades_v1` is never changed, so after a rollback the old system
+  sells from exactly where it was.
+- **Steps bought while installed** live only in the Money record (`netKg`,
+  `upgrades`). The old system doesn't read them, so after a rollback those
+  players are back to their old kg count; the Money they spent stays spent.
+  Re-installing brings those steps back: the records are kept, and v2 keeps
+  unknown fields.
+- While paid upgrades are closed, no real purchases happen, so a rollback
+  during validation loses nothing.
+
+### Live-baseline checklist (Studio, API access ON)
+
+| # | Do | Expect |
+|---|---|---|
+| G1 | Run `InstallBoardUpgrades.lua` (Edit mode) | "Installed"; if it refuses, send the named script's current source |
+| G2 | Play with a player whose `GrinderUpgrades_v1` record has `kg = 3` | Their net shows 30 kg (plates `NET 30 KG → 35 KG`, card `30kg > 35kg`); `NetMaxWeight` 30 |
+| G3 | Change `Workspace.NetLift.MaxWeight` by hand | That player's `NetMaxWeight` stays 30 |
+| G4 | `NetKgOpen = true`; click a post, then its price plate | Two separate purchases (−$100, then −$150); one toast each; `GrinderUpgrades_v1` kg still 3 |
+| G5 | Watch the plates for a few seconds | They keep YOUR values (no flicker back to $100 / old text) |
+| G6 | Blade pad / conveyor pad | Work as before (same prices, blade shows, sales pay × blade) |
+| G7 | Leave and rejoin | Still 40 kg (not 55): the old count isn't added again |
+| G8 | Meat Price 2x + an Uncommon blade, sell a fish | Pays 2 × value × 1.25 (each once); the popups add up to it |
+| G9 | Board | Four cards in the board's card style; icons from the attributes you set |
+| G10 | `RollbackBoardUpgrades.lua` | The live GrinderUpgrades scripts and EconomyService come back exactly |
+
+## +5 KG signs: net capacity (part of `InstallBoardUpgrades.lua`)
 
 Each player **owns** a net capacity, saved with their Money. Everyone starts
 at 15 kg.
@@ -599,7 +717,7 @@ at 15 kg.
 
 **Pricing (`Config.NetKg`, initial tuning, not measured pacing).** As
 released in `187fe39` the steps were 25, 50, 100, ... (3,315 in total).
-The upgrade board (row 17, `InstallUpgradeBoard.lua`) makes the first step
+The upgrade board makes the first step
 $10 like every board upgrade:
 
 | From → to (kg) | 15→20 | 20→25 | 25→30 | 30→35 | 35→40 | 40→45 | 45→50 | 50→55 | 55→60 |
@@ -658,13 +776,7 @@ any step above `UpgradeCostCap` (5,000). To tune:
 is validated. For a Studio validation **with API access**, set the
 `NetKgOpen` attribute on `ReplicatedStorage.Economy`.
 
-**Install:** `InstallNetKg.lua` (v2 guarded template). It needs
-`EconomyRodsBackup` and the rods sources exactly as installed (`61a7bd4`).
-It changes EconomyService, Config and MoneyStore, and adds
-`EconomyService.NetKg`, `ServerScriptService.NetCapacityServer` and
-`StarterPlayerScripts.KgSignClient`. Backup: `EconomyNetKgBackup`; every
-earlier backup is untouched. **Rollback:** `RollbackNetKg.lua`. Saved
-`netKg` values stay in the records; v2 code keeps unknown fields.
+**Install:** part of [`InstallBoardUpgrades.lua`](#upgrade-board-on-the-live-baseline-installboardupgradeslua) (the per-milestone installer this section was written for was never installed and is superseded).
 
 ### Net capacity checklist (Studio, API access ON)
 
@@ -682,7 +794,7 @@ earlier backup is untouched. **Rollback:** `RollbackNetKg.lua`. Saved
 (With row 17 installed the prices in K3/K4 are $10 and $25, and the posts'
 own plates show them instead of the floating panel.)
 
-## Upgrade board, milestone 1: Net Strength (`InstallUpgradeBoard.lua`)
+## Upgrade board, milestone 1: Net Strength (part of `InstallBoardUpgrades.lua`)
 
 The board at `Workspace.Board` (its `Main` part, `SurfaceGui.bord3`) becomes
 four upgrade cards, drawn **for each player**:
@@ -690,12 +802,14 @@ four upgrade cards, drawn **for each player**:
 | Card | Colour | Shows | Sells (this milestone) |
 |---|---|---|---|
 | Net Strength | pink | your net, e.g. `15kg > 20kg` | the next +5 kg: **$10** first |
-| Rod Luck | lime | `1x > 2x` | nothing yet: SOON |
-| Meat Price | cyan | `1x > 2x` (a value multiplier: fish values differ) | nothing yet: SOON |
-| Faster Reels | amber | `1x > 1.2x` | nothing yet: SOON |
+| Rod Luck | lime | `1x > 2x` | milestone 2 |
+| Meat Price | cyan | `1x > 2x` (a value multiplier: fish values differ) | milestone 3 |
+| Faster Reels | amber | `1x > 1.2x` | milestone 4 |
 
-2 × 2 grid in a wooden frame; white outlined text, a themed icon (emoji
-text, no image assets) and a green Buy button on each card.
+2 × 2 grid in a wooden frame. Each card is made from the board's own card
+art (see [the live-baseline install](#upgrade-board-on-the-live-baseline-installboardupgradeslua)):
+its Buy button, gradient and icon frame; icons from Board attributes, the
+themed emoji only where none is supplied.
 
 **The board in the place is never changed.** `UpgradeBoardClient` copies
 `Main.SurfaceGui` into the player's PlayerGui (adorned to `Main`), removes
@@ -746,17 +860,7 @@ and the plates. For a Studio validation **with API access**, set the
 `NetKgOpen` attribute on `ReplicatedStorage.Economy`. Studio's memory
 fallback is **not** proof of persistence.
 
-**Install:** `InstallUpgradeBoard.lua` (v2 guarded template). Needs
-`EconomyNetKgBackup` and the net kg sources exactly as released (`187fe39`:
-EconomyService, MoneyStore, NetKg, NetCapacityServer, the other core
-modules). Changes `Config` (net costs, board settings) and `KgSignClient`
-(the plates); adds `ServerScriptService.UpgradeBoardServer` and
-`StarterPlayerScripts.UpgradeBoardClient`. Backup:
-`EconomyUpgradeBoardBackup`; every earlier backup is untouched. It checks
-scripts only: `Workspace.Board.Main.SurfaceGui.bord3` is checked at run
-time (N1: UpgradeBoardServer warns in Output if it is missing or doubled). **Rollback:**
-`RollbackUpgradeBoard.lua` (before `RollbackNetKg.lua`, which refuses while
-the board is in). Saved capacities stay.
+**Install:** part of [`InstallBoardUpgrades.lua`](#upgrade-board-on-the-live-baseline-installboardupgradeslua) (the per-milestone installer this section was written for was never installed and is superseded).
 
 ### Upgrade board checklist (Studio, API access ON)
 
@@ -774,7 +878,7 @@ the board is in). Saved capacities stay.
 | N10 | Second client with little money | Their own values on the card and plates; red price; NEED $ when pressed |
 | N11 | Stop, Play again (real DataStore) | Your capacity is back on the card, plates and posts |
 
-## Upgrade board, milestone 2: Rod Luck (`InstallRodLuck.lua`)
+## Upgrade board, milestone 2: Rod Luck (part of `InstallBoardUpgrades.lua`)
 
 The Rod Luck card (lime) now sells a saved **level**:
 
@@ -836,16 +940,7 @@ separately from Net Strength (`NetKgOpen`). For a Studio validation **with
 API access**, set the `UpgradesOpen` attribute on
 `ReplicatedStorage.Economy`.
 
-**Install:** `InstallRodLuck.lua` (v2 guarded template). It needs
-`EconomyUpgradeBoardBackup` and every source exactly as installed (board
-`af6a79a`, net kg `187fe39`, rods `61a7bd4`).
-
-- Changes: EconomyService, Config, MoneyStore, UpgradeBoardServer,
-  UpgradeBoardClient and RodFishingSystem.
-- Adds: `EconomyService.BoardUpgrades`.
-- Backup: `EconomyRodLuckBackup`.
-- **Rollback:** `RollbackRodLuck.lua`, before `RollbackUpgradeBoard.lua`.
-  Saved levels stay in the records.
+**Install:** part of [`InstallBoardUpgrades.lua`](#upgrade-board-on-the-live-baseline-installboardupgradeslua) (the per-milestone installer this section was written for was never installed and is superseded).
 
 ### Rod Luck checklist (Studio, API access ON)
 
@@ -860,7 +955,7 @@ API access**, set the `UpgradesOpen` attribute on
 | L7 | Buy up to 3x | `3x MAX`, MAX; pressing again: "Rod Luck is at the maximum (3x)" |
 | L8 | Stop, Play again (real DataStore) | Your level is back on the card |
 
-## Upgrade board, milestone 3: Meat Price (`InstallMeatPrice.lua`)
+## Upgrade board, milestone 3: Meat Price (part of `InstallBoardUpgrades.lua`)
 
 The Meat Price card (cyan) sells a saved **value multiplier** on your own
 fish:
@@ -897,15 +992,7 @@ looks up the fish's **owner** (the same owner the sale pays).
 (`upgrades.MeatPrice`, money + level in one write, `upgradeAction`'s
 checks, `UpgradesOpen` for a Studio validation).
 
-**Install:** `InstallMeatPrice.lua` (v2 guarded template). It needs
-`EconomyRodLuckBackup` and every source exactly as installed (Rod Luck
-`7584f1e`).
-
-- Changes: EconomyService, Config, Pricing, Ledger, Sales,
-  UpgradeBoardServer and UpgradeBoardClient.
-- Backup: `EconomyMeatPriceBackup`.
-- **Rollback:** `RollbackMeatPrice.lua`, before `RollbackRodLuck.lua`.
-  Pieces already cut keep the values they were cut with until sold.
+**Install:** part of [`InstallBoardUpgrades.lua`](#upgrade-board-on-the-live-baseline-installboardupgradeslua) (the per-milestone installer this section was written for was never installed and is superseded).
 
 ### Meat Price checklist (Studio, API access ON)
 
@@ -919,7 +1006,7 @@ checks, `UpgradesOpen` for a Studio validation).
 | P6 | Meat already on the stack when you buy | Sells at the old value |
 | P7 | Stop, Play again (real DataStore) | Your level is back |
 
-## Upgrade board, milestone 4: Faster Reels (`InstallFasterReels.lua`)
+## Upgrade board, milestone 4: Faster Reels (part of `InstallBoardUpgrades.lua`)
 
 The Faster Reels card (amber) sells a saved **reel speed** for your own
 casts:
@@ -948,14 +1035,7 @@ Initial tuning in `Config.BoardUpgrades.FasterReels`, never above 2x
 **Saving, checks and closing:** the same as Rod Luck
 (`upgrades.FasterReels`, `UpgradesOpen`).
 
-**Install:** `InstallFasterReels.lua` (v2 guarded template). It needs
-`EconomyMeatPriceBackup` and every source exactly as installed (Meat Price
-`7141af5`, RodFishingSystem as Rod Luck `7584f1e` left it).
-
-- Changes: Config, UpgradeBoardServer, UpgradeBoardClient and
-  RodFishingSystem.
-- Backup: `EconomyFasterReelsBackup`.
-- **Rollback:** `RollbackFasterReels.lua`, before `RollbackMeatPrice.lua`.
+**Install:** part of [`InstallBoardUpgrades.lua`](#upgrade-board-on-the-live-baseline-installboardupgradeslua) (the per-milestone installer this section was written for was never installed and is superseded).
 
 ### Faster Reels checklist (Studio, API access ON)
 
@@ -1075,9 +1155,9 @@ changes; the rest re-check behaviour that already worked.
 ## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau          # 451 checks (rods 80, net kg 42, board upgrades 67)
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 48 + 6, luck 30, meat 14, reels 15 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 389 checks
+python3 tools/economy/tests/run_tests.py path/to/luau          # 461 checks (rods 80, net kg 52, board upgrades 67)
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 49 + 6, luck 30, meat 17, reels 15, grinder 27 + 7 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 336 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

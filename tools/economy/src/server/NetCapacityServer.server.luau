@@ -1,10 +1,14 @@
--- NetCapacityServer (Script in ServerScriptService). [Economy net capacity v1]
+-- NetCapacityServer (Script in ServerScriptService). [Economy net capacity v2]
 --
--- The +5 KG signs: EVERY Workspace child named KGsign (the place has two with
--- the same name) whose "Board Part" holds a ClickDetector. A click buys the
--- clicking player's next +5 kg through EconomyService.netKgAction: alive,
--- money loaded, in reach of that sign, one purchase at a time, and saved
--- (money + capacity in one write) before it counts. The result is a toast.
+-- The +5 KG signs: every sign tagged KgSign (CollectionService, as the place
+-- has them) and every Workspace child named KGsign - the same two posts,
+-- each bound once. Every ClickDetector in a sign counts (its board), and its
+-- PricePlate gets one if it has none (as GrinderUpgradesServer used to do);
+-- MaxActivationDistance 24. A click buys the clicking player's next +5 kg
+-- through EconomyService.netKgAction: alive, money loaded, earlier KG-sign
+-- buys adopted, in reach of the clicked part, one purchase at a time, and
+-- saved (money + capacity in one write) before it counts. The result is a
+-- toast. This is the ONLY KG-sign seller (GrinderUpgradesServer no longer is).
 --
 -- The net lift is shared: Workspace.NetLift's MaxWeight attribute (read by
 -- NetLiftScript's weight gate, the gauge and the net themes) is the highest
@@ -14,6 +18,7 @@
 --
 -- Without a running EconomyService: the signs do nothing and MaxWeight stays
 -- the place's value (fail closed).
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ServerScriptService = game:GetService("ServerScriptService")
 
@@ -44,6 +49,7 @@ if type(FLOOR) ~= "number" then
 	FLOOR = 15
 end
 local REACH_SLACK = 8 -- studs beyond the ClickDetector's own distance (server check)
+local CLICK_DISTANCE = 24 -- as GrinderUpgradesServer set it
 
 ------------------------------------------------------------ the shared net
 
@@ -72,17 +78,7 @@ end
 ------------------------------------------------------------ the signs
 
 local bound = {}
-local function bind(sign: Instance)
-	if bound[sign] or sign.Name ~= "KGsign" then
-		return
-	end
-	local board = sign:FindFirstChild("Board Part")
-	local detector = board and board:FindFirstChildOfClass("ClickDetector")
-	if not (board and board:IsA("BasePart") and detector) then
-		warn("[NetCapacity] " .. sign:GetFullName() .. " has no Board Part with a ClickDetector; not bound")
-		return
-	end
-	bound[sign] = true
+local function click(detector: ClickDetector, part: BasePart)
 	detector.MouseClick:Connect(function(player: Player)
 		if not Economy then
 			return
@@ -90,8 +86,9 @@ local function bind(sign: Instance)
 		local ok, message = Economy.netKgAction(player, function()
 			local character = player.Character
 			local hrp = character and character:FindFirstChild("HumanoidRootPart")
-			local reach = detector.MaxActivationDistance + REACH_SLACK + board.Size.Magnitude / 2
-			if not (hrp and hrp:IsA("BasePart")) or (hrp.Position - board.Position).Magnitude > reach then
+			local reach = detector.MaxActivationDistance + REACH_SLACK + part.Size.Magnitude / 2
+			if not (hrp and hrp:IsA("BasePart")) or not part:IsDescendantOf(workspace)
+				or (hrp.Position - part.Position).Magnitude > reach then
 				return false, "Walk up to the sign"
 			end
 			return true, nil
@@ -102,11 +99,44 @@ local function bind(sign: Instance)
 		end
 	end)
 end
-
-for _, child in ipairs(workspace:GetChildren()) do
-	bind(child)
+local function bind(sign: Instance)
+	if bound[sign] then
+		return
+	end
+	local plate = sign:FindFirstChild("PricePlate")
+	if plate and plate:IsA("BasePart") and not plate:FindFirstChildOfClass("ClickDetector") then
+		local cd = Instance.new("ClickDetector")
+		cd.Parent = plate
+	end
+	local count = 0
+	for _, d in ipairs(sign:GetDescendants()) do
+		if d:IsA("ClickDetector") and d.Parent and d.Parent:IsA("BasePart") then
+			d.MaxActivationDistance = CLICK_DISTANCE
+			click(d, d.Parent)
+			count += 1
+		end
+	end
+	if count == 0 then
+		warn("[NetCapacity] " .. sign:GetFullName() .. " has no ClickDetector on a part; not bound")
+		return
+	end
+	bound[sign] = true
 end
-workspace.ChildAdded:Connect(bind)
+
+for _, sign in ipairs(CollectionService:GetTagged("KgSign")) do
+	bind(sign)
+end
+CollectionService:GetInstanceAddedSignal("KgSign"):Connect(bind)
+for _, child in ipairs(workspace:GetChildren()) do
+	if child.Name == "KGsign" then
+		bind(child)
+	end
+end
+workspace.ChildAdded:Connect(function(child)
+	if child.Name == "KGsign" then
+		bind(child)
+	end
+end)
 
 ------------------------------------------------------------ players
 

@@ -230,4 +230,38 @@ local st = Economy.stats()
 check("every issued piece sold exactly once; nothing left live, carried or held", st.totals.settled == st.totals.issued
 	and st.live == 0 and st.carried == 0 and st.held == 0)
 
+------------------------------------------------------------ with the live blade bonus (GrinderUpgrades)
+
+-- the live EconomyService multiplies each sale by the owner's blade tier
+-- (GrinderUpgradesConfig.mult); Meat Price is in the piece's value, cut
+-- earlier: both apply, each exactly once
+current = "server"
+script("ModuleScript", "GrinderUpgradesConfig", SOURCES.Grinder_Config, RS)
+A:SetAttribute("BladeTier", 2) -- Uncommon: x1.25
+current = nil
+local popups = {}
+runAs(A, function()
+	root.Earned.OnClientEvent:Connect(function(added, route, fishName, variant, kind, value)
+		table.insert(popups, { added = added, kind = kind, value = value })
+	end)
+end)
+catch(A, "Salmon", 10, { Source = "Net" })
+local g5 = sellAll(yield(10))
+local want, pieceSum = 0, 0
+for _, v in ipairs(Pricing.pieceValues(10, nil, 2)) do
+	want += math.max(1, math.floor(v * 1.25 + 0.5))
+	pieceSum += v
+end
+check("Meat Price 2x (in the piece values) x blade 1.25 (at the sale): " .. want .. " for a " .. value(10) .. " fish", g5.A == want
+	and pieceSum == 2 * value(10))
+local addedSum, valueSum = 0, 0
+for _, pp in ipairs(popups) do
+	addedSum += pp.added
+	valueSum += pp.value
+end
+check("the popups show what was really credited (with the blade), one per piece", #popups == yield(10) and addedSum == want
+	and valueSum == pieceSum)
+local st2 = Economy.stats()
+check("still each piece sold once", st2.totals.settled == st2.totals.issued and st2.live == 0)
+
 finish("meat sim")

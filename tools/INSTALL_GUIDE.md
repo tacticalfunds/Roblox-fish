@@ -34,9 +34,12 @@ As reported by Astra, 2026-09-29 (user authorised the remaining installs):
   (jump rate, rods, rod shop UI) were installed **pending validation**: Play
   couldn't be run yet, so runtime, visuals and persistence are unverified.
   The paid shop is still closed.
-- **next:** row 16, the +5 KG signs (paid signs closed), then row 17, the
-  upgrade board (Net Strength), then rows 18-20, Rod Luck, Meat Price and
-  Faster Reels (paid board upgrades closed)
+- **installed by Astra since** (not from this repo): the GrinderUpgrades
+  system (`GrinderUpgradesBackup`: conveyor, blades, the KG signs with their
+  own store, the blade multiplier in EconomyService) and `BillboardLockBackup`
+- **next:** row 16, `InstallBoardUpgrades.lua`, built on exactly that live
+  state (the earlier per-milestone installers NetKg / UpgradeBoard / RodLuck /
+  MeatPrice / FasterReels were never installed and are superseded)
 
 **Not production-ready as a whole:** paid upgrades (row 3) and the live Car
 Sales upgrades reset every server while the Money spent stays saved. See
@@ -66,11 +69,7 @@ rollback.
 | 13 | [`fish-jump/InstallJumpRate.lua`](fish-jump/README.md#jump-more-often-installjumpratelua) | Fish jump about twice as often (periods 16–28 s → 8–14 s) | 6 | `FishJumpRateBackup` |
 | 14 | [`economy/InstallRods.lua`](economy/README.md#rods-milestone-1-installrodslua) | Rods owned for good (saved with Money), equipped, faster bites; paid shop stays closed | 4 and 9 | `EconomyRodsBackup` |
 | 15 | [`economy/InstallRodShopUI.lua`](economy/README.md#rod-shop-ui-installrodshopuilua) | Shop cards show price / OWNED / benefit / EQUIPPED and the server's real answers | 14 | `EconomyRodShopUIBackup` |
-| 16 | [`economy/InstallNetKg.lua`](economy/README.md#5-kg-signs-net-capacity-installnetkglua) | +5 KG signs: saved per-player net capacity; shared NetLift.MaxWeight = highest present player; paid signs closed | 14 | `EconomyNetKgBackup` |
-| 17 | [`economy/InstallUpgradeBoard.lua`](economy/README.md#upgrade-board-milestone-1-net-strength-installupgradeboardlua) | Four-card upgrade board on Workspace.Board; Net Strength sells the posts' saved net ($10 first step); the posts' plates show each player's price; Rod Luck / Meat Price / Faster Reels say SOON; paid upgrades closed | 16 | `EconomyUpgradeBoardBackup` |
-| 18 | [`economy/InstallRodLuck.lua`](economy/README.md#upgrade-board-milestone-2-rod-luck-installrodlucklua) | Rod Luck card: saved level (1x → 2x for $10, up to 3x); the caster's own casts weight rarer fish up (renormalised; Silver/Gold unchanged); paid board upgrades closed | 17 | `EconomyRodLuckBackup` |
-| 19 | [`economy/InstallMeatPrice.lua`](economy/README.md#upgrade-board-milestone-3-meat-price-installmeatpricelua) | Meat Price card: saved value multiplier (1x → 2x for $10, up to 3x) on the owner's whole fish, once, when the grinder cuts it; tier / Silver / Gold values and pay-once unchanged; paid board upgrades closed | 18 | `EconomyMeatPriceBackup` |
-| 20 | [`economy/InstallFasterReels.lua`](economy/README.md#upgrade-board-milestone-4-faster-reels-installfasterreelslua) | Faster Reels card: saved reel speed (1x → 1.2x for $10, up to 1.5x); the caster's reel-in takes 3.4 s / speed on the server and in the clients' animation; the rod's bite wait untouched; paid board upgrades closed | 19 | `EconomyFasterReelsBackup` |
+| 16 | [`economy/InstallBoardUpgrades.lua`](economy/README.md#upgrade-board-on-the-live-baseline-installboardupgradeslua) | The four-card upgrade board (Net Strength, Rod Luck, Meat Price, Faster Reels) and ONE saved net capacity sold by the KG posts and the board; earlier GrinderUpgrades KG buys adopted (idempotent); GrinderUpgrades conveyor / blades kept, hardened; paid upgrades closed | 14 and the GrinderUpgrades system (exact live sources) | `EconomyBoardUpgradesBackup` |
 
 "After X" matters because both change the same script. The later installer
 knows X's version; the earlier one doesn't, so running them the other way
@@ -78,17 +77,13 @@ round is refused, with nothing changed.
 
 ## Rollback order
 
-Exactly the reverse: **20 → 1**, then, if you ever need to go further,
+Exactly the reverse: **16 → 1**, then, if you ever need to go further,
 `economy/RollbackAquariumV12.lua` and `economy/UninstallRodOffers.lua`.
 Row 2 (Money HUD) touches nothing else, so its rollback works at any time.
 
 | # | Rollback file |
 |---|---|
-| 20 | `economy/RollbackFasterReels.lua` (before 19) |
-| 19 | `economy/RollbackMeatPrice.lua` (before 18) |
-| 18 | `economy/RollbackRodLuck.lua` (before 17) |
-| 17 | `economy/RollbackUpgradeBoard.lua` (before 16) |
-| 16 | `economy/RollbackNetKg.lua` (before 14) |
+| 16 | `economy/RollbackBoardUpgrades.lua` (before 14; restores the live GrinderUpgrades scripts) |
 | 15 | `economy/RollbackRodShopUI.lua` (before 14) |
 | 14 | `economy/RollbackRods.lua` (before 4 and 9) |
 | 13 | `fish-jump/RollbackJumpRate.lua` (before 6) |
@@ -114,7 +109,7 @@ carries a later install.
 Each README has a short table for its install: aquarium panel `A#`, sales `S#`, Money HUD `M#`,
 upgrades `U#`, earnings `E#`, bot recovery `B#`, variants `V#`, meat glow
 `G#`, harpoon blend `H#`, rods `R#`, net capacity `K#`, upgrade board `N#`,
-Rod Luck `L#`, Meat Price `P#`, Faster Reels `F#`.
+Rod Luck `L#`, Meat Price `P#`, Faster Reels `F#`, live-baseline integration `G#`.
 Fish jumps, rod cast and dwell have theirs in their READMEs.
 
 ## Client input audit (2026-09-29)
@@ -128,8 +123,9 @@ Every way a client can reach the server, in the scripts in this repo:
 | Aquarium Release / upgrade prompts | the server checks alive and in range (prompt distance + slack) before acting or charging. With the panel (row 12) they are Custom-style prompts; upgrade prompts exist only with a currency binding |
 | `RodShopServer` buy | charged through EconomyService only (row 14: fail closed, alive, loaded, near the shop, in stock, one at a time, saved before it counts); paid shop closed until validated |
 | Net pad (`Touched`) | one shared lift cycle (~2.6 s), weight limit, refuses while the grinder is backed up |
-| +5 KG sign clicks (row 16) | ClickDetector on the server: alive, loaded, near that sign, one purchase at a time, cooldown, re-checked before the debit, saved before it counts; paid signs closed until validated |
-| `Economy.UpgradeAction` (row 17, the upgrade board) | known card ids only (strings), 0.25 s between presses; Net Strength goes through the same net purchase as the posts with "near the board" as the place check; Rod Luck (row 18), Meat Price (row 19) and Faster Reels (row 20) through `upgradeAction` with the same checks (alive, loaded, near the board, one at a time, cooldown, re-checked before the debit, saved before it counts) |
+| +5 KG sign clicks (row 16) | NetCapacityServer only (board and price plate ClickDetectors; GrinderUpgradesServer no longer sells KG): alive, loaded, earlier buys adopted, near the clicked part, one purchase at a time, cooldown, re-checked before the debit, saved with the money in one write; paid signs closed until validated |
+| GrinderUpgrades pads (conveyor, blades) | touch on the server, alive, 1.5 s per pad; charged through EconomyService, saved in its own store; a failed write is refunded (even after leaving: the final Money save waits for it); no memory store outside Studio; unreadable records never overwritten |
+| `Economy.UpgradeAction` (row 16, the upgrade board) | known card ids only (strings), 0.25 s between presses; Net Strength goes through the same net purchase as the posts with "near the board" as the place check; Rod Luck, Meat Price and Faster Reels through `upgradeAction` with the same checks (alive, loaded, near the board, one at a time, cooldown, re-checked before the debit, saved before it counts) |
 | Truck carry / delivery | server-side, from the player's position; carriers are never paid, and each piece pays its owner once |
 | `Economy.Notice`, `Economy.Earned` | server → client only; the client ignores malformed values |
 | Money HUD | reads `leaderstats.Money` only; sends nothing |

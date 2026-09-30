@@ -54,17 +54,13 @@ LATER_THAN_BOT = ["EconomyMeatGlowBackup"]
 LATER_THAN_RODS = ["EconomyRodShopUIBackup"]  # the shop UI reads what InstallRods publishes
 # InstallRods + InstallRodShopUI as installed by Astra (pending validation)
 RODS_RELEASE = "61a7bd4"  # tools/fish-variants InstallMeatGlow patches BotSystem too
-# InstallNetKg as released for Astra (187fe39): frozen; the upgrade board
-# builds on the sources it writes, read from that commit.
-NETKG_RELEASE = "187fe39"
-# InstallUpgradeBoard (board milestone 1, Net Strength) as released (af6a79a):
-# frozen; later board milestones read its sources from that commit.
-BOARD_RELEASE = "af6a79a"
-# InstallRodLuck (board milestone 2) as released (7584f1e): frozen.
-LUCK_RELEASE = "7584f1e"
-# InstallMeatPrice (board milestone 3) as released (7141af5): frozen.
-MEAT_RELEASE = "7141af5"
-
+# The upgrade board is installed on Astra's LIVE baseline (2026-09-30): the
+# rods release plus the GrinderUpgrades system Astra installed, whose exact
+# sources are in studio/live (EconomyService.grinder.lua = the rods
+# EconomyService with the blade multiplier in the sale callback;
+# GrinderUpgrades{Server,Client,Config}.lua). The per-milestone installers
+# (InstallNetKg ... InstallFasterReels) were never installed and assumed a
+# baseline Studio doesn't have: they are superseded by InstallBoardUpgrades.
 
 def git_show(commit: str, path: str) -> str:
     return subprocess.run(["git", "show", f"{commit}:{path}"], cwd=REPO, capture_output=True, text=True, check=True).stdout
@@ -601,387 +597,113 @@ Requires: rods (InstallRods.lua, EconomyRodsBackup).
     return keys
 
 
-def net_kg() -> list[str]:
-    """+5 KG signs: per-player net capacity saved with the Money, shared
-    NetLift.MaxWeight = the highest loaded player's. On top of the rods
-    release as installed (61a7bd4, pending validation)."""
-    core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
-    changes = [
-        (
-            {"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
-            [("rods", git_show(RODS_RELEASE, "tools/economy/src/server/EconomyService.luau"), (ROOT / "src/server/EconomyService.luau").read_text())],
-        ),
-        (
-            {"key": "Config", "where": "ServerScriptService/EconomyService/Config", "class": "ModuleScript", "tag": "EconomyOwned"},
-            [("rods", git_show(RODS_RELEASE, core("Config")), (ROOT / "src/core/Config.luau").read_text())],
-        ),
-        (
-            {"key": "MoneyStore", "where": "ServerScriptService/EconomyService/MoneyStore", "class": "ModuleScript", "tag": "EconomyOwned"},
-            [("rods", git_show(RODS_RELEASE, core("MoneyStore")), (ROOT / "src/core/MoneyStore.luau").read_text())],
-        ),
-    ]
-    unchanged = []
-    for name in ("Rods", "Pricing", "Ledger", "Offers", "PieceTags", "Sales"):
-        src = git_show(RODS_RELEASE, core(name))
-        assert src == (ROOT / "src" / "core" / f"{name}.luau").read_text(), name
-        unchanged.append(({"key": name, "where": f"ServerScriptService/EconomyService/{name}", "class": "ModuleScript", "tag": "EconomyOwned"}, src))
-    adds = [
-        {"where": "ServerScriptService/EconomyService", "name": "NetKg", "class": "ModuleScript", "source": (ROOT / "src/core/NetKg.luau").read_text()},
-        {"where": "ServerScriptService", "name": "NetCapacityServer", "class": "Script", "source": (ROOT / "src/server/NetCapacityServer.server.luau").read_text()},
-        {"where": "StarterPlayer/StarterPlayerScripts", "name": "KgSignClient", "class": "LocalScript", "source": (ROOT / "src/client/KgSignClient.client.luau").read_text()},
-    ]
-    keys = write_pair_v2(
-        "InstallNetKg.lua",
-        "RollbackNetKg.lua",
-        """
-+5 KG signs: each player OWNS a net capacity (15 kg to start), saved with
-their Money. Clicking either Workspace.KGsign (both same-named signs are
-bound) buys the clicker's next +5 kg: 25, 50, 100, then x1.5 rounded to 5,
-up to 60 kg (initial tuning). The purchase saves the new balance AND the
-new capacity in ONE write before it counts; if the write fails nothing is
-charged. Checks: alive, money loaded, near the clicked sign, one purchase
-at a time, cooldown, re-checked right before the debit.
-The net lift is shared: Workspace.NetLift.MaxWeight (weight gate, gauge,
-themes) = the highest capacity among loaded players in the server, never
-below the place's own value; it follows joins, purchases and leaves. No
-fish are touched.
-A panel above each sign shows YOUR capacity -> next and the price (SOON
-while closed, MAX at the cap) and the shared net's capacity.
-PAID SIGNS STAY CLOSED (Config.NetKgOpen = false). For a Studio validation
-with real DataStore access, set the NetKgOpen attribute on
-ReplicatedStorage.Economy.
-Changes EconomyService, Config, MoneyStore (record field netKg); adds
-EconomyService.NetKg, ServerScriptService.NetCapacityServer and
-StarterPlayerScripts.KgSignClient.
-Requires: rods (EconomyRodsBackup; its sources exactly as installed).
-""",
-        "EconomyNetKgBackup",
-        [["EconomyRodsBackup"]],
-        ["EconomyNetKgBackup"],
-        [],
-        changes,
-        unchanged,
-        adds,
-        ROOT,
-    )
-    assert keys == ["EconomyService", "Config", "MoneyStore"], keys
-    return keys
-
-
-def upgrade_board() -> list[str]:
-    """Upgrade board milestone 1: the four-card board on Workspace.Board;
-    Net Strength sells the same saved net capacity as the KGsign posts
-    (first step now $10); the posts' PricePlate shows each player's own
-    values. On top of the net kg release (187fe39)."""
-    core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
-    at_netkg = lambda path: git_show(NETKG_RELEASE, f"tools/economy/{path}")  # noqa: E731
-    changes = [
-        (
-            {"key": "Config", "where": "ServerScriptService/EconomyService/Config", "class": "ModuleScript", "tag": "EconomyOwned"},
-            [("netkg", at_netkg("src/core/Config.luau"), (ROOT / "src/core/Config.luau").read_text())],
-        ),
-        (
-            {"key": "KgSignClient", "where": "StarterPlayer/StarterPlayerScripts/KgSignClient", "class": "LocalScript", "tag": "EconomyOwned"},
-            [("netkg", at_netkg("src/client/KgSignClient.client.luau"), (ROOT / "src/client/KgSignClient.client.luau").read_text())],
-        ),
-    ]
-    unchanged = []
-    svc = at_netkg("src/server/EconomyService.luau")
-    assert svc == (ROOT / "src/server/EconomyService.luau").read_text(), "EconomyService"
-    unchanged.append(({"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"}, svc))
-    for name in ("MoneyStore", "NetKg", "Rods", "Pricing", "Ledger", "Offers", "PieceTags", "Sales"):
-        src = git_show(NETKG_RELEASE, core(name))
-        assert src == (ROOT / "src" / "core" / f"{name}.luau").read_text(), name
-        unchanged.append(({"key": name, "where": f"ServerScriptService/EconomyService/{name}", "class": "ModuleScript", "tag": "EconomyOwned"}, src))
-    server = at_netkg("src/server/NetCapacityServer.server.luau")
-    assert server == (ROOT / "src/server/NetCapacityServer.server.luau").read_text(), "NetCapacityServer"
-    unchanged.append(({"key": "NetCapacityServer", "where": "ServerScriptService/NetCapacityServer", "class": "Script", "tag": "EconomyOwned"}, server))
-    adds = [
-        {"where": "ServerScriptService", "name": "UpgradeBoardServer", "class": "Script", "source": (ROOT / "src/server/UpgradeBoardServer.server.luau").read_text()},
-        {"where": "StarterPlayer/StarterPlayerScripts", "name": "UpgradeBoardClient", "class": "LocalScript", "source": (ROOT / "src/client/UpgradeBoardClient.client.luau").read_text()},
-    ]
-    keys = write_pair_v2(
-        "InstallUpgradeBoard.lua",
-        "RollbackUpgradeBoard.lua",
-        """
-Upgrade board, milestone 1 (Net Strength): the board on Workspace.Board
-(Main.SurfaceGui.bord3) shows four cards to each player - Net Strength
-(pink), Rod Luck (lime), Meat Price (cyan), Faster Reels (amber) - drawn
-on a per-player copy (the place's board is only hidden on each client,
-never changed). Found by exact path (one Board, one Main, one SurfaceGui,
-one bord3); the two old "Frame" cards are never looked up by name.
-  * Net Strength sells the SAME saved net capacity as both KGsign posts
-    (one progression): 15 -> 20 kg first, now $10 for everyone's first
-    step (10, 25, 50, 100, then x1.5 rounded to 5, up to 60 kg). Saved with
-    the money in one write before it counts; alive, loaded, near the board,
-    one purchase at a time, re-checked right before the debit.
-  * Rod Luck / Meat Price / Faster Reels show SOON and sell nothing yet.
-  * The posts' PricePlate.PriceGui ("$100", "NET15KG->20KG" in the place)
-    shows each player's own price and step (on that client only).
-  * PAID UPGRADES STAY CLOSED (Config.NetKgOpen = false): SOON on the card
-    and plates. For a Studio validation set the NetKgOpen attribute on
-    ReplicatedStorage.Economy.
-Changes Config and KgSignClient; adds ServerScriptService.UpgradeBoardServer
-and StarterPlayerScripts.UpgradeBoardClient.
-Requires: net kg (EconomyNetKgBackup; its sources exactly as installed).
-""",
-        "EconomyUpgradeBoardBackup",
-        [["EconomyNetKgBackup"]],
-        ["EconomyUpgradeBoardBackup"],
-        [],
-        changes,
-        unchanged,
-        adds,
-        ROOT,
-    )
-    assert keys == ["Config", "KgSignClient"], keys
-    return keys
-
-
-def rod_luck() -> list[str]:
-    """Upgrade board milestone 2 (Rod Luck): saved board-upgrade levels
-    (MoneyStore `upgrades`, EconomyService.BoardUpgrades), the Rod Luck
-    card, and RodFishingSystem weighting the caster's catches. On top of the
-    board release (af6a79a) over net kg (187fe39) over rods (61a7bd4)."""
+def board_upgrades() -> list[str]:
+    """The upgrade board (Net Strength, Rod Luck, Meat Price, Faster Reels)
+    and the ONE saved net capacity, on Astra's live baseline: rods 61a7bd4 +
+    the GrinderUpgrades system (blade multiplier kept in EconomyService's
+    sale callback; GrinderUpgradesServer no longer sells KG, reports its old
+    kg count for adoption; GrinderUpgradesClient no longer writes the plate)."""
     import make_board
+    import make_grinder
 
     make_board.main()
+    make_grinder.main()
     core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
-    at = lambda commit, path: git_show(commit, f"tools/economy/{path}")  # noqa: E731
     cur = lambda path: (ROOT / path).read_text()  # noqa: E731
-    changes = [
-        (
-            {"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
-            [("netkg", at(NETKG_RELEASE, "src/server/EconomyService.luau"), cur("src/server/EconomyService.luau"))],
-        ),
-        (
-            {"key": "Config", "where": "ServerScriptService/EconomyService/Config", "class": "ModuleScript", "tag": "EconomyOwned"},
-            [("board", at(BOARD_RELEASE, "src/core/Config.luau"), cur("src/core/Config.luau"))],
-        ),
-        (
-            {"key": "MoneyStore", "where": "ServerScriptService/EconomyService/MoneyStore", "class": "ModuleScript", "tag": "EconomyOwned"},
-            [("netkg", at(NETKG_RELEASE, "src/core/MoneyStore.luau"), cur("src/core/MoneyStore.luau"))],
-        ),
-        (
-            {"key": "UpgradeBoardServer", "where": "ServerScriptService/UpgradeBoardServer", "class": "Script", "tag": "EconomyOwned"},
-            [("board", at(BOARD_RELEASE, "src/server/UpgradeBoardServer.server.luau"), cur("src/server/UpgradeBoardServer.server.luau"))],
-        ),
-        (
-            {"key": "UpgradeBoardClient", "where": "StarterPlayer/StarterPlayerScripts/UpgradeBoardClient", "class": "LocalScript", "tag": "EconomyOwned"},
-            [("board", at(BOARD_RELEASE, "src/client/UpgradeBoardClient.client.luau"), cur("src/client/UpgradeBoardClient.client.luau"))],
-        ),
-        (
-            {"key": "RodFishingSystem", "where": "script:RodFishingSystem", "class": "Script"},
-            [("rods", at(RODS_RELEASE, "studio/rods/RodFishingSystem.lua"), make_board.OUT.read_text())],
-        ),
-    ]
-    unchanged = []
-    for name in ("NetKg", "Rods", "Pricing", "Ledger", "Offers", "PieceTags", "Sales"):
-        src = git_show(NETKG_RELEASE, core(name))
-        assert src == (ROOT / "src" / "core" / f"{name}.luau").read_text(), name
-        unchanged.append(({"key": name, "where": f"ServerScriptService/EconomyService/{name}", "class": "ModuleScript", "tag": "EconomyOwned"}, src))
-    for key, where, cls, commit, path in (
-        ("NetCapacityServer", "ServerScriptService/NetCapacityServer", "Script", NETKG_RELEASE, "src/server/NetCapacityServer.server.luau"),
-        ("KgSignClient", "StarterPlayer/StarterPlayerScripts/KgSignClient", "LocalScript", BOARD_RELEASE, "src/client/KgSignClient.client.luau"),
-    ):
-        src = at(commit, path)
-        assert src == cur(path), key
-        unchanged.append(({"key": key, "where": where, "class": cls, "tag": "EconomyOwned"}, src))
-    shop = at(RODS_RELEASE, "studio/rods/RodShopServer.lua")
-    assert shop == cur("studio/rods/RodShopServer.lua"), "RodShopServer"
-    unchanged.append(({"key": "RodShopServer", "where": "script:RodShopServer", "class": "Script"}, shop))
-    adds = [{"where": "ServerScriptService/EconomyService", "name": "BoardUpgrades", "class": "ModuleScript", "source": cur("src/core/BoardUpgrades.luau")}]
-    keys = write_pair_v2(
-        "InstallRodLuck.lua",
-        "RollbackRodLuck.lua",
-        """
-Upgrade board, milestone 2 (Rod Luck): the Rod Luck card sells a saved
-level. 1x -> 2x for $10 (the card), then 2.5x ($75), 3x ($300); initial
-tuning in Config.BoardUpgrades.
-  * saved in the player's Money record as `upgrades` ({ RodLuck = level }):
-    money + level in ONE write before it counts, staged until then;
-    unreadable data is never overwritten; other fields (and a newer build's
-    upgrades) are kept
-  * the board's checks: alive, loaded, near the board, one purchase at a
-    time (shared with rods / net), cooldown, re-checked right before the debit
-  * RodFishingSystem: each accepted press fixes the PRESSER's committed luck
-    for every rod it casts. Each fish's weight x luck^((tier - lowest) /
-    (highest - lowest)), renormalised: at 2x the rarest tier's weight is
-    doubled relative to the commonest - likelier, never certain. The offer's
-    chance label uses the same odds. Silver / Gold odds are unchanged. No
-    money service / luck 1: the old odds.
-  * PAID BOARD UPGRADES STAY CLOSED (Config.BoardUpgradesOpen = false): SOON
-    on the card. For a Studio validation set the UpgradesOpen attribute on
-    ReplicatedStorage.Economy.
-Changes EconomyService, Config, MoneyStore, UpgradeBoardServer,
-UpgradeBoardClient and RodFishingSystem; adds EconomyService.BoardUpgrades.
-Requires: the upgrade board (EconomyUpgradeBoardBackup; every source
-exactly as installed).
-""",
-        "EconomyRodLuckBackup",
-        [["EconomyUpgradeBoardBackup"]],
-        ["EconomyRodLuckBackup"],
-        [],
-        changes,
-        unchanged,
-        adds,
-        ROOT,
-    )
-    assert keys == ["EconomyService", "Config", "MoneyStore", "UpgradeBoardServer", "UpgradeBoardClient", "RodFishingSystem"], keys
-    return keys
-
-
-def meat_price() -> list[str]:
-    """Upgrade board milestone 3 (Meat Price): the owner's saved value
-    multiplier on the whole fish, once, when the grinder cuts it. On top of
-    the Rod Luck release (7584f1e)."""
-    core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
-    at = lambda commit, path: git_show(commit, f"tools/economy/{path}")  # noqa: E731
-    cur = lambda path: (ROOT / path).read_text()  # noqa: E731
+    live = lambda name: (ROOT / "studio" / "live" / name).read_text()  # noqa: E731
     mod = lambda key: {"key": key, "where": f"ServerScriptService/EconomyService/{key}", "class": "ModuleScript", "tag": "EconomyOwned"}  # noqa: E731
     changes = [
         (
             {"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
-            [("rodluck", at(LUCK_RELEASE, "src/server/EconomyService.luau"), cur("src/server/EconomyService.luau"))],
+            [("grinder", live("EconomyService.grinder.lua"), cur("src/server/EconomyService.luau"))],
         ),
-        (mod("Config"), [("rodluck", at(LUCK_RELEASE, "src/core/Config.luau"), cur("src/core/Config.luau"))]),
+        (mod("Config"), [("rods", git_show(RODS_RELEASE, core("Config")), cur("src/core/Config.luau"))]),
+        (mod("MoneyStore"), [("rods", git_show(RODS_RELEASE, core("MoneyStore")), cur("src/core/MoneyStore.luau"))]),
     ]
     for name in ("Pricing", "Ledger", "Sales"):
-        old = at(LUCK_RELEASE, f"src/core/{name}.luau")
-        assert old == git_show(SALES_RELEASE, core(name)), name  # as installed by sales (91121de)
+        old = git_show(RODS_RELEASE, core(name))
+        assert old == git_show(SALES_RELEASE, core(name)), name
         changes.append((mod(name), [("sales", old, cur(f"src/core/{name}.luau"))]))
     changes += [
         (
-            {"key": "UpgradeBoardServer", "where": "ServerScriptService/UpgradeBoardServer", "class": "Script", "tag": "EconomyOwned"},
-            [("rodluck", at(LUCK_RELEASE, "src/server/UpgradeBoardServer.server.luau"), cur("src/server/UpgradeBoardServer.server.luau"))],
-        ),
-        (
-            {"key": "UpgradeBoardClient", "where": "StarterPlayer/StarterPlayerScripts/UpgradeBoardClient", "class": "LocalScript", "tag": "EconomyOwned"},
-            [("rodluck", at(LUCK_RELEASE, "src/client/UpgradeBoardClient.client.luau"), cur("src/client/UpgradeBoardClient.client.luau"))],
-        ),
-    ]
-    unchanged = []
-    for name in ("MoneyStore", "BoardUpgrades", "NetKg", "Rods", "Offers", "PieceTags"):
-        src = at(LUCK_RELEASE, f"src/core/{name}.luau")
-        assert src == cur(f"src/core/{name}.luau"), name
-        unchanged.append((mod(name), src))
-    for key, where, cls, path in (
-        ("NetCapacityServer", "ServerScriptService/NetCapacityServer", "Script", "src/server/NetCapacityServer.server.luau"),
-        ("KgSignClient", "StarterPlayer/StarterPlayerScripts/KgSignClient", "LocalScript", "src/client/KgSignClient.client.luau"),
-    ):
-        src = at(LUCK_RELEASE, path)
-        assert src == cur(path), key
-        unchanged.append(({"key": key, "where": where, "class": cls, "tag": "EconomyOwned"}, src))
-    fishing = at(LUCK_RELEASE, "studio/board/RodFishingSystem.lua")
-    unchanged.append(({"key": "RodFishingSystem", "where": "script:RodFishingSystem", "class": "Script"}, fishing))
-    keys = write_pair_v2(
-        "InstallMeatPrice.lua",
-        "RollbackMeatPrice.lua",
-        """
-Upgrade board, milestone 3 (Meat Price): the Meat Price card sells a saved
-VALUE multiplier on the player's own fish. 1x -> 2x for $10 (the card),
-then 2.5x ($150), 3x ($600); initial tuning in Config.BoardUpgrades.
-  * when the grinder cuts a fish, its whole sale value (tier value x Silver
-    / Gold, unchanged) is multiplied ONCE by its OWNER's committed Meat
-    Price, rounded, then split into its usual meat pieces. The pieces'
-    values are fixed from then on; each piece still pays once.
-  * only the owner's multiplier counts: a fish netted for someone else pays
-    them at theirs; an unowned fish pays nobody; carriers are never paid.
-    An owner who isn't in the server (or whose money hasn't loaded) gets 1x.
-  * the card shows 1x > 2x (fish values differ, so not $); saved like Rod
-    Luck (`upgrades.MeatPrice`, money + level in one write).
-  * PAID BOARD UPGRADES STAY CLOSED (UpgradesOpen, as for Rod Luck).
-Changes EconomyService, Config, Pricing, Ledger, Sales, UpgradeBoardServer
-and UpgradeBoardClient.
-Requires: Rod Luck (EconomyRodLuckBackup; every source exactly as
-installed).
-""",
-        "EconomyMeatPriceBackup",
-        [["EconomyRodLuckBackup"]],
-        ["EconomyMeatPriceBackup"],
-        [],
-        changes,
-        unchanged,
-        [],
-        ROOT,
-    )
-    assert keys == ["EconomyService", "Config", "Pricing", "Ledger", "Sales", "UpgradeBoardServer", "UpgradeBoardClient"], keys
-    return keys
-
-
-def faster_reels() -> list[str]:
-    """Upgrade board milestone 4 (Faster Reels): the caster's saved reel
-    speed shortens the reel-in (server timing and the clients' animation,
-    which follows the server's Dur). On top of the Meat Price release
-    (7141af5); RodFishingSystem as Rod Luck (7584f1e) left it."""
-    import make_board
-
-    make_board.main()
-    at = lambda commit, path: git_show(commit, f"tools/economy/{path}")  # noqa: E731
-    cur = lambda path: (ROOT / path).read_text()  # noqa: E731
-    mod = lambda key: {"key": key, "where": f"ServerScriptService/EconomyService/{key}", "class": "ModuleScript", "tag": "EconomyOwned"}  # noqa: E731
-    changes = [
-        (mod("Config"), [("meatprice", at(MEAT_RELEASE, "src/core/Config.luau"), cur("src/core/Config.luau"))]),
-        (
-            {"key": "UpgradeBoardServer", "where": "ServerScriptService/UpgradeBoardServer", "class": "Script", "tag": "EconomyOwned"},
-            [("meatprice", at(MEAT_RELEASE, "src/server/UpgradeBoardServer.server.luau"), cur("src/server/UpgradeBoardServer.server.luau"))],
-        ),
-        (
-            {"key": "UpgradeBoardClient", "where": "StarterPlayer/StarterPlayerScripts/UpgradeBoardClient", "class": "LocalScript", "tag": "EconomyOwned"},
-            [("meatprice", at(MEAT_RELEASE, "src/client/UpgradeBoardClient.client.luau"), cur("src/client/UpgradeBoardClient.client.luau"))],
-        ),
-        (
             {"key": "RodFishingSystem", "where": "script:RodFishingSystem", "class": "Script"},
-            [("rodluck", at(LUCK_RELEASE, "studio/board/RodFishingSystem.lua"), make_board.OUT.read_text())],
+            [("rods", git_show(RODS_RELEASE, "tools/economy/studio/rods/RodFishingSystem.lua"), make_board.OUT.read_text())],
+        ),
+        (
+            {"key": "GrinderUpgradesServer", "where": "ServerScriptService/GrinderUpgradesServer", "class": "Script"},
+            [("live", make_grinder.SERVER_BASE.read_text(), make_grinder.SERVER_OUT.read_text())],
+        ),
+        (
+            {"key": "GrinderUpgradesClient", "where": "StarterPlayer/StarterPlayerScripts/GrinderUpgradesClient", "class": "LocalScript"},
+            [("live", make_grinder.CLIENT_BASE.read_text(), make_grinder.CLIENT_OUT.read_text())],
         ),
     ]
-    assert at(MEAT_RELEASE, "studio/board/RodFishingSystem.lua") == at(LUCK_RELEASE, "studio/board/RodFishingSystem.lua")
+    # the rods release's own EconomyService + the blade block = what Studio has
+    rods_svc = git_show(RODS_RELEASE, "tools/economy/src/server/EconomyService.luau")
+    assert "GrinderUpgrades: the owner's blade tier" in live("EconomyService.grinder.lua") and live("EconomyService.grinder.lua") != rods_svc
+    assert "GrinderUpgrades: the owner's blade tier" in cur("src/server/EconomyService.luau")  # carried
     unchanged = []
-    svc = at(MEAT_RELEASE, "src/server/EconomyService.luau")
-    assert svc == cur("src/server/EconomyService.luau"), "EconomyService"
-    unchanged.append(({"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"}, svc))
-    for name in ("MoneyStore", "BoardUpgrades", "Pricing", "Ledger", "Sales", "NetKg", "Rods", "Offers", "PieceTags"):
-        src = at(MEAT_RELEASE, f"src/core/{name}.luau")
+    for name in ("Rods", "Offers", "PieceTags"):
+        src = git_show(RODS_RELEASE, core(name))
         assert src == cur(f"src/core/{name}.luau"), name
         unchanged.append((mod(name), src))
-    for key, where, cls, path in (
-        ("NetCapacityServer", "ServerScriptService/NetCapacityServer", "Script", "src/server/NetCapacityServer.server.luau"),
-        ("KgSignClient", "StarterPlayer/StarterPlayerScripts/KgSignClient", "LocalScript", "src/client/KgSignClient.client.luau"),
-    ):
-        src = at(MEAT_RELEASE, path)
-        assert src == cur(path), key
-        unchanged.append(({"key": key, "where": where, "class": cls, "tag": "EconomyOwned"}, src))
+    unchanged.append(({"key": "GrinderUpgradesConfig", "where": "ReplicatedStorage/GrinderUpgradesConfig", "class": "ModuleScript"}, live("GrinderUpgradesConfig.lua")))
+    shop = git_show(RODS_RELEASE, "tools/economy/studio/rods/RodShopServer.lua")
+    assert shop == cur("studio/rods/RodShopServer.lua"), "RodShopServer"
+    unchanged.append(({"key": "RodShopServer", "where": "script:RodShopServer", "class": "Script"}, shop))
+    adds = [
+        {"where": "ServerScriptService/EconomyService", "name": "NetKg", "class": "ModuleScript", "source": cur("src/core/NetKg.luau")},
+        {"where": "ServerScriptService/EconomyService", "name": "BoardUpgrades", "class": "ModuleScript", "source": cur("src/core/BoardUpgrades.luau")},
+        {"where": "ServerScriptService", "name": "NetCapacityServer", "class": "Script", "source": cur("src/server/NetCapacityServer.server.luau")},
+        {"where": "ServerScriptService", "name": "UpgradeBoardServer", "class": "Script", "source": cur("src/server/UpgradeBoardServer.server.luau")},
+        {"where": "StarterPlayer/StarterPlayerScripts", "name": "KgSignClient", "class": "LocalScript", "source": cur("src/client/KgSignClient.client.luau")},
+        {"where": "StarterPlayer/StarterPlayerScripts", "name": "UpgradeBoardClient", "class": "LocalScript", "source": cur("src/client/UpgradeBoardClient.client.luau")},
+    ]
     keys = write_pair_v2(
-        "InstallFasterReels.lua",
-        "RollbackFasterReels.lua",
+        "InstallBoardUpgrades.lua",
+        "RollbackBoardUpgrades.lua",
         """
-Upgrade board, milestone 4 (Faster Reels): the Faster Reels card sells a
-saved reel speed. 1x -> 1.2x for $10 (the card), then 1.35x ($100), 1.5x
-($400); initial tuning in Config.BoardUpgrades (never above 2x).
-  * RodFishingSystem: each accepted press fixes the PRESSER's committed reel
-    speed for every rod it casts (next to their rod and luck). The reel-in
-    takes 3.4 / speed seconds (2.83 s at 1.2x); the silhouette flicks keep
-    pace. The clients' rising-fish animation already runs over the
-    server's Dur and the rod bends while the server says Pulling, so it
-    shortens with it - no client script changes.
-  * the bite wait is untouched: that stays the equipped rod's benefit.
-  * saved like Rod Luck (`upgrades.FasterReels`); PAID BOARD UPGRADES STAY
-    CLOSED (UpgradesOpen).
-Changes Config, UpgradeBoardServer, UpgradeBoardClient and
-RodFishingSystem.
-Requires: Meat Price (EconomyMeatPriceBackup; every source exactly as
-installed).
+The upgrade board and the ONE saved net capacity, on the live baseline
+(rods 61a7bd4 + the GrinderUpgrades system, exact sources checked).
+  * Workspace.Board: four cards made from the board's own card art -
+    Net Strength, Rod Luck, Meat Price, Faster Reels - with each player's
+    own values. Icons: Board attributes IconNetStrength / IconRodLuck /
+    IconMeatPrice / IconFasterReels (rbxassetid://...), else an emoji.
+  * Net capacity: ONE saved value (the Money record's netKg, money + kg in
+    one write), sold by both KG posts (NetCapacityServer, the only seller:
+    board and price plate, 24 studs) and the Net Strength card. First step
+    $10. Earlier GrinderUpgrades KG buys (its kg count) are ADOPTED at join:
+    netKg = max(netKg, 15 + 5 x kg) - idempotent, never compounded; the old
+    record is left as it is. Net purchases wait until that count is in.
+  * The posts' PricePlate.PriceGui.Pill shows each player's own price and
+    step (KgSignClient is its only writer now).
+  * Rod Luck / Meat Price / Faster Reels: saved levels (Money record
+    `upgrades`), caster's rare-fish weighting, owner's value multiplier on
+    the whole fish once at the cut (the blade bonus still applies at each
+    sale: both, once each), caster's reel speed (the bite wait stays the
+    rod's).
+  * GrinderUpgradesServer: conveyor / blades unchanged in price and effect;
+    no KG selling; no memory store outside Studio; unreadable records never
+    overwritten; the final Money save waits for its store write and a
+    failed write is refunded even if the player left.
+  * PAID UPGRADES STAY CLOSED: NetKgOpen (net) and UpgradesOpen (the other
+    three) attributes on ReplicatedStorage.Economy, for a Studio validation.
+Changes EconomyService, Config, MoneyStore, Pricing, Ledger, Sales,
+RodFishingSystem, GrinderUpgradesServer, GrinderUpgradesClient; adds
+EconomyService.NetKg / BoardUpgrades, NetCapacityServer, UpgradeBoardServer,
+KgSignClient, UpgradeBoardClient.
+Requires: rods (EconomyRodsBackup) with every source exactly as installed.
 """,
-        "EconomyFasterReelsBackup",
-        [["EconomyMeatPriceBackup"]],
-        ["EconomyFasterReelsBackup"],
+        "EconomyBoardUpgradesBackup",
+        [["EconomyRodsBackup"]],
+        ["EconomyBoardUpgradesBackup", "EconomyNetKgBackup", "EconomyUpgradeBoardBackup", "EconomyRodLuckBackup", "EconomyMeatPriceBackup", "EconomyFasterReelsBackup"],
         [],
         changes,
         unchanged,
-        [],
+        adds,
         ROOT,
     )
-    assert keys == ["Config", "UpgradeBoardServer", "UpgradeBoardClient", "RodFishingSystem"], keys
+    assert keys == ["EconomyService", "Config", "MoneyStore", "Pricing", "Ledger", "Sales", "RodFishingSystem", "GrinderUpgradesServer", "GrinderUpgradesClient"], keys
     return keys
 
 
@@ -997,11 +719,7 @@ def main() -> None:
     # InstallRods / InstallRodShopUI are FROZEN at the 61a7bd4 release Astra
     # installed (pending validation): rods() / rod_shop_ui() are not rerun;
     # later milestones read their sources from git at RODS_RELEASE.
-    # InstallNetKg is FROZEN at the 187fe39 release: net_kg() is not rerun;
-    # InstallUpgradeBoard is FROZEN at af6a79a: upgrade_board() is not rerun;
-    # InstallRodLuck is FROZEN at 7584f1e: rod_luck() is not rerun;
-    # InstallMeatPrice is FROZEN at 7141af5: meat_price() is not rerun.
-    faster_reels()
+    board_upgrades()
 
 
 if __name__ == "__main__":

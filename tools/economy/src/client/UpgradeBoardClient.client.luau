@@ -1,5 +1,5 @@
 -- UpgradeBoardClient (LocalScript in StarterPlayer.StarterPlayerScripts).
--- [Economy upgrade board v4: Faster Reels]
+-- [Economy upgrade board v5: the board's own card art]
 --
 -- Draws the four-upgrade board for THIS player on Workspace.Board.Main
 -- (a copy of its SurfaceGui in PlayerGui, adorned to Main; the original is
@@ -23,9 +23,17 @@
 --
 -- The board is found by its exact path: exactly one Workspace child named
 -- Board, one Main part in it, one SurfaceGui on Main, one bord3 in that.
--- The old cards (two Frames both named "Frame") are never looked up by
--- name: every Frame and the list layout are removed from the copy and the
--- four cards are built new. If the board isn't there (yet), nothing is
+-- The four cards are made FROM THE BOARD'S OWN CARD ART: the first card in
+-- bord3 with the board's card structure (a Frame with one "Buy" TextButton
+-- holding a "Price" label, one "Icons" ImageLabel and two "Text" labels -
+-- told apart by height: the upper is the title, the lower the value; never
+-- by name) is copied four times, recoloured and relabelled; its Buy button,
+-- gradient, strokes and icon frame stay as the board's artist made them.
+-- Icons: an image the place supplies as Board attributes IconNetStrength /
+-- IconRodLuck / IconMeatPrice / IconFasterReels (rbxassetid://...) is used;
+-- only without one does the card show the themed emoji instead. If no card
+-- has that structure, simple cards are drawn instead. The old cards and the
+-- list layout are removed from the copy. If the board isn't there (yet), nothing is
 -- drawn; it is looked for again every second (the board can stream in/out).
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -150,7 +158,86 @@ local function buildCard(parent: Instance, def, order: number)
 	price.Parent = button
 	button.Parent = card
 
-	cards[def.id] = { value = value, button = button, price = price, grad = grad, pending = false, flashUntil = 0 }
+	cards[def.id] = { value = value, button = button, price = price, grad = grad, baseColor = WHITE, pending = false, flashUntil = 0 }
+	card.Parent = parent
+end
+
+-- The board's card structure: (title, value, buy, price, icon) or nil.
+local function cardParts(card: Instance)
+	if not card:IsA("Frame") then
+		return nil
+	end
+	local buys, texts, icons = {}, {}, {}
+	for _, c in ipairs(card:GetChildren()) do
+		if c.Name == "Buy" and c:IsA("TextButton") then
+			table.insert(buys, c)
+		elseif c.Name == "Text" and c:IsA("TextLabel") then
+			table.insert(texts, c)
+		elseif c.Name == "Icons" and c:IsA("ImageLabel") then
+			table.insert(icons, c)
+		end
+	end
+	if #buys ~= 1 or #texts ~= 2 or #icons ~= 1 then
+		return nil
+	end
+	local price = buys[1]:FindFirstChild("Price")
+	if not (price and price:IsA("TextLabel")) then
+		return nil
+	end
+	local a, b = texts[1], texts[2]
+	if a.Position.Y.Scale == b.Position.Y.Scale then
+		return nil
+	end
+	if a.Position.Y.Scale > b.Position.Y.Scale then
+		a, b = b, a
+	end
+	return a, b, buys[1], price, icons[1]
+end
+
+-- One card from the board's own art (a copy of `template`).
+local function artCard(parent: Instance, template: Frame, def, order: number, board: Instance)
+	local card = template:Clone()
+	local title, value, button, price, image = cardParts(card)
+	card.Name = def.id
+	card.LayoutOrder = order
+	card.BackgroundColor3 = def.color
+	card.BackgroundTransparency = 0
+	if not card:FindFirstChildOfClass("UICorner") then
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0.08, 0)
+	end
+	if not card:FindFirstChildOfClass("UIStroke") then
+		local edge = Instance.new("UIStroke")
+		edge.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		edge.Color = WOOD_DARK
+		edge.Thickness = 5
+		edge.Parent = card
+	end
+	title.Name = "Title"
+	title.Text = def.title
+	title.TextColor3 = WHITE
+	value.Name = "Value"
+	value.Text = def.value or ""
+	value.TextColor3 = WHITE
+	local art = board:GetAttribute("Icon" .. def.id)
+	if type(art) == "string" and string.sub(art, 1, 13) == "rbxassetid://" then
+		image.Image = art -- the place's own icon
+		image.ImageTransparency = 0
+	else
+		-- no icon supplied for this card: the themed emoji where the icon goes
+		image.ImageTransparency = 1
+		local icon = label(card, "Icon", def.icon, image.Position, image.Size)
+		icon.AnchorPoint = image.AnchorPoint
+		icon.ZIndex = image.ZIndex
+	end
+	cards[def.id] = {
+		value = value,
+		button = button,
+		price = price,
+		grad = button:FindFirstChildOfClass("UIGradient"),
+		baseColor = button.BackgroundColor3,
+		pending = false,
+		flashUntil = 0,
+	}
 	card.Parent = parent
 end
 
@@ -172,8 +259,10 @@ end
 local function setButton(c, text: string, color: Color3, live: boolean)
 	c.price.Text = text
 	c.price.TextColor3 = color
-	c.grad.Enabled = live
-	c.button.BackgroundColor3 = if live then WHITE else Color3.fromRGB(120, 120, 125)
+	if c.grad then
+		c.grad.Enabled = live
+	end
+	c.button.BackgroundColor3 = if live then c.baseColor else Color3.fromRGB(120, 120, 125)
 end
 
 -- one card's button (the server's answer stays up while it flashes)
@@ -307,6 +396,13 @@ local function build(main: BasePart, original: SurfaceGui)
 		end
 	end
 	local frame = only(copy, "bord3", "Frame") :: Frame
+	-- the board's own card art (the first card with the board's structure)
+	local template: Frame? = nil
+	for _, child in ipairs(frame:GetChildren()) do
+		if not template and cardParts(child) then
+			template = (child :: Frame):Clone()
+		end
+	end
 	for _, child in ipairs(frame:GetChildren()) do
 		if child:IsA("Frame") or child:IsA("UIListLayout") then
 			child:Destroy() -- the old cards and their list layout
@@ -329,7 +425,11 @@ local function build(main: BasePart, original: SurfaceGui)
 	grid.Parent = frame
 	cards = {}
 	for i, def in ipairs(CARDS) do
-		buildCard(frame, def, i)
+		if template then
+			artCard(frame, template, def, i, main.Parent :: Instance)
+		else
+			buildCard(frame, def, i)
+		end
 		local id = def.id
 		cards[id].button.Activated:Connect(function()
 			press(id)

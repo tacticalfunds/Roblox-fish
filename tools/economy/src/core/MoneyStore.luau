@@ -463,6 +463,30 @@ function MoneyStore.netKg(self: MoneyStore, userId: number): number?
 	return s.netKg
 end
 
+-- Adopts net capacity bought before (the legacy GrinderUpgrades KG signs):
+-- raises the committed capacity to `kg` if that is higher, never lowers it,
+-- never adds (so reporting the same purchases again changes nothing). Saved
+-- with the next save. Returns "raised" | "kept" | "notLoaded" |
+-- "netUnavailable" | "invalid".
+function MoneyStore.adoptNetKg(self: MoneyStore, userId: number, kg: any): string
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return "notLoaded"
+	end
+	if not s.netWritable then
+		return "netUnavailable"
+	end
+	if not (type(kg) == "number" and kg == kg and kg == math.floor(kg) and kg >= NetKg.base() and kg <= 1e6) then
+		return "invalid"
+	end
+	if kg <= s.netKg then
+		return "kept"
+	end
+	s.netKg = kg
+	rodsChanged(s) -- saved with the next save
+	return "raised"
+end
+
 -- Buys the next step: takes its cost and WRITES the new balance and the new
 -- capacity together before it counts; the new capacity is staged (netKg()
 -- keeps the committed one) until that write succeeded. Same rules as

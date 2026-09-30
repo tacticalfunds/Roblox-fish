@@ -154,14 +154,7 @@ EARNINGS_RELEASE = "0829fc9"  # InstallEarnings as installed by Astra
 EARNINGS_FROZEN = ["InstallEarnings.lua", "RollbackEarnings.lua"]
 RODS_RELEASE = "61a7bd4"  # InstallRods + InstallRodShopUI as installed by Astra
 RODS_FROZEN = ["InstallRods.lua", "RollbackRods.lua", "InstallRodShopUI.lua", "RollbackRodShopUI.lua"]
-NETKG_RELEASE = "187fe39"  # InstallNetKg as released for Astra
-NETKG_FROZEN = ["InstallNetKg.lua", "RollbackNetKg.lua"]
-BOARD_RELEASE = "af6a79a"  # InstallUpgradeBoard (board milestone 1) as released
-BOARD_FROZEN = ["InstallUpgradeBoard.lua", "RollbackUpgradeBoard.lua"]
-LUCK_RELEASE = "7584f1e"  # InstallRodLuck (board milestone 2) as released
-LUCK_FROZEN = ["InstallRodLuck.lua", "RollbackRodLuck.lua"]
-MEAT_RELEASE = "7141af5"  # InstallMeatPrice (board milestone 3) as released
-MEAT_FROZEN = ["InstallMeatPrice.lua", "RollbackMeatPrice.lua"]
+# (InstallNetKg ... InstallFasterReels were never installed: superseded by InstallBoardUpgrades)
 SALES_FROZEN = ["UpgradeAquariumV12.lua", "RollbackAquariumV12.lua", "InstallSales.lua", "RollbackSales.lua", "InstallUpgrades.lua", "RollbackUpgrades.lua"]
 AQUARIUM_V1 = "2e320f9"
 AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
@@ -1383,9 +1376,12 @@ do
 		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
 end
 
--- +5 KG signs: on Astra's current state (panel, rods, shop UI, jump rate installed)
-local function netKg(g, s) warnings = {} runNetKg(g, s.Workspace) end
-local function netKgBack(g, s) warnings = {} runNetKgBack(g, s.Workspace) end
+-- the upgrade board + one net capacity: on Astra's LIVE state (2026-09-30):
+-- panel, rods, shop UI, jump rate, and the GrinderUpgrades system Astra
+-- installed (EconomyService with the blade multiplier, GrinderUpgradesServer /
+-- Client / Config, backups GrinderUpgradesBackup + BillboardLockBackup)
+local function suite(g, s) warnings = {} runSuite(g, s.Workspace) end
+local function suiteBack(g, s) warnings = {} runSuiteBack(g, s.Workspace) end
 local function astraCurrent()
 	local g, sv, history, sc = astraNow()
 	panel(g, sv)
@@ -1395,364 +1391,126 @@ local function astraCurrent()
 	assert(not refused(), "Astra's current state: " .. tostring(warnings[#warnings]))
 	return g, sv, history, sc
 end
-do
+local function astraLive()
 	local g, sv, history, sc = astraCurrent()
+	sv.ServerScriptService.EconomyService.Source = GLIVE.EconomyService -- the blade multiplier, as installed
+	local gs = new("Script", "GrinderUpgradesServer")
+	gs.Source = GLIVE.Server
+	gs.Parent = sv.ServerScriptService
+	local gc = new("LocalScript", "GrinderUpgradesClient")
+	gc.Source = GLIVE.Client
+	gc.Parent = sv.StarterPlayer.StarterPlayerScripts
+	local cfg = new("ModuleScript", "GrinderUpgradesConfig")
+	cfg.Source = GLIVE.Config
+	cfg.Parent = sv.ReplicatedStorage
+	for _, name in ipairs({ "GrinderUpgradesBackup", "BillboardLockBackup" }) do
+		local f = new("Folder", name)
+		f.Parent = sv.ServerStorage
+	end
+	return g, sv, history, sc
+end
+do
+	local g, sv, history, sc = astraLive()
 	local svc = sv.ServerScriptService.EconomyService
+	local sss = sv.ServerScriptService
+	local sps = sv.StarterPlayer.StarterPlayerScripts
 	local backups = {}
 	for _, bk in ipairs(sv.ServerStorage:GetChildren()) do
 		backups[bk.Name] = subtree(bk)
 	end
 	local before = snapshot(g)
 	sv.RunService.running = true
-	netKg(g, sv)
-	check("net kg in Play: refused", refused() and snapshot(g) == before)
+	suite(g, sv)
+	check("board upgrades in Play: refused", refused() and snapshot(g) == before)
 	sv.RunService.running = false
 	local commits = history.commits
-	netKg(g, sv)
-	check("net kg on Astra's current state: one undo step", not refused() and history.commits == commits + 1)
-	check("net kg: EconomyService / Config / MoneyStore updated", svc.Source == NETKG.EconomyService and svc.Config.Source == NETKG.Config
-		and svc.MoneyStore.Source == NETKG.MoneyStore)
-	check("net kg: NetKg module, NetCapacityServer, KgSignClient added, tagged",
-		svc:FindFirstChild("NetKg") and svc.NetKg.Source == NETKG.NetKg
-		and sv.ServerScriptService:FindFirstChild("NetCapacityServer") and sv.ServerScriptService.NetCapacityServer.ClassName == "Script"
-		and sv.ServerScriptService.NetCapacityServer.Source == NETKG.Server and sv.ServerScriptService.NetCapacityServer:GetAttribute("EconomyOwned") == true
-		and sv.StarterPlayer.StarterPlayerScripts:FindFirstChild("KgSignClient") and sv.StarterPlayer.StarterPlayerScripts.KgSignClient.Source == NETKG.Client)
-	check("net kg: Rods module and the rod scripts untouched", svc.Rods.Source == RODS.Rods and sc.RodShopServer.Source == RODS.Shop
-		and sc.RodFishingSystem.Source == RODS.Fishing)
-	check("net kg: backup = 3 changes + 3 adds", #sv.ServerStorage.EconomyNetKgBackup:GetChildren() == 6)
+	suite(g, sv)
+	check("board upgrades on Astra's live state: one undo step", not refused() and history.commits == commits + 1)
+	check("board upgrades: EconomyService (blade multiplier carried) and the core updated", svc.Source == SUITE.EconomyService
+		and svc.Source:find("GrinderUpgrades: the owner's blade tier", 1, true) ~= nil and svc.Config.Source == SUITE.Config
+		and svc.MoneyStore.Source == SUITE.MoneyStore and svc.Pricing.Source == SUITE.Pricing and svc.Ledger.Source == SUITE.Ledger
+		and svc.Sales.Source == SUITE.Sales)
+	check("board upgrades: RodFishingSystem, GrinderUpgradesServer / Client patched; GrinderUpgradesConfig untouched",
+		sc.RodFishingSystem.Source == SUITE.Fishing and sss.GrinderUpgradesServer.Source == SUITE.GServer
+		and sps.GrinderUpgradesClient.Source == SUITE.GClient and sv.ReplicatedStorage.GrinderUpgradesConfig.Source == GLIVE.Config)
+	local addsOk = true
+	for _, a in ipairs({
+		{ svc, "NetKg", "NetKg" }, { svc, "BoardUpgrades", "BoardUpgrades" }, { sss, "NetCapacityServer", "NetCapacityServer" },
+		{ sss, "UpgradeBoardServer", "UpgradeBoardServer" }, { sps, "KgSignClient", "KgSignClient" }, { sps, "UpgradeBoardClient", "UpgradeBoardClient" },
+	}) do
+		local inst = a[1]:FindFirstChild(a[2])
+		addsOk = addsOk and inst ~= nil and inst.Source == SUITE[a[3]] and inst:GetAttribute("EconomyOwned") == true
+	end
+	check("board upgrades: 6 scripts added, tagged EconomyOwned", addsOk)
+	check("board upgrades: Rods / shop / shop UI untouched", svc.Rods.Source == RODS.Rods and sc.RodShopServer.Source == RODS.Shop
+		and sc.RodShopController.Source == SHOPUI.New)
+	check("board upgrades: backup = 9 changes + 6 adds", #sv.ServerStorage.EconomyBoardUpgradesBackup:GetChildren() == 15)
 	local kept = true
 	for name, tree in pairs(backups) do
 		kept = kept and sv.ServerStorage:FindFirstChild(name) ~= nil and subtree(sv.ServerStorage[name]) == tree
 	end
-	check("net kg: every earlier backup untouched (rods, shop UI, jump rate, panel, ...)", kept)
+	check("board upgrades: every earlier backup untouched (GrinderUpgradesBackup, BillboardLockBackup, rods, ...)", kept)
 	local after = snapshot(g)
-	netKg(g, sv)
-	check("net kg twice: refused", refused() and snapshot(g) == after)
+	suite(g, sv)
+	check("board upgrades twice: refused", refused() and snapshot(g) == after)
 	rodsBack(g, sv)
-	check("rods rollback refused while net kg is in", refused() and snapshot(g) == after)
-	svc.MoneyStore.Source ..= "\n-- hand edit"
+	check("rods rollback refused while the board upgrades are in", refused() and snapshot(g) == after)
+	sss.GrinderUpgradesServer.Source ..= "\n-- hand edit"
 	local edited = snapshot(g)
-	netKgBack(g, sv)
-	check("net kg rollback over an edited MoneyStore: refused", refused() and snapshot(g) == edited)
-	svc.MoneyStore.Source = NETKG.MoneyStore
-	netKgBack(g, sv)
-	check("net kg rollback: exactly the state before (added scripts removed)", not refused() and snapshot(g) == before
-		and sv.ServerScriptService:FindFirstChild("NetCapacityServer") == nil and svc:FindFirstChild("NetKg") == nil)
+	suiteBack(g, sv)
+	check("board upgrades rollback over an edited GrinderUpgradesServer: refused", refused() and snapshot(g) == edited)
+	sss.GrinderUpgradesServer.Source = SUITE.GServer
+	suiteBack(g, sv)
+	check("board upgrades rollback: exactly Astra's live state (blade EconomyService, live grinder scripts; added scripts gone)",
+		not refused() and snapshot(g) == before and svc.Source == GLIVE.EconomyService and sss.GrinderUpgradesServer.Source == GLIVE.Server
+		and sps.GrinderUpgradesClient.Source == GLIVE.Client and sss:FindFirstChild("NetCapacityServer") == nil and svc:FindFirstChild("NetKg") == nil)
+	suite(g, sv)
+	check("and installs again after the rollback", not refused())
 end
 do
-	local g, sv = astraNow() -- no rods
+	local g, sv = astraLive()
+	sv.ServerScriptService.EconomyService.Source = RODS.EconomyService -- the rods release WITHOUT the blade multiplier
 	local before = snapshot(g)
-	netKg(g, sv)
-	check("net kg without rods: refused", refused() and snapshot(g) == before)
+	suite(g, sv)
+	check("board upgrades on an EconomyService without the blade multiplier: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
 end
 do
-	local g, sv = astraCurrent()
+	local g, sv = astraCurrent() -- no GrinderUpgrades at all
+	local before = snapshot(g)
+	suite(g, sv)
+	check("board upgrades without the GrinderUpgrades system: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraLive()
+	sv.ServerScriptService.GrinderUpgradesServer.Source = GLIVE.Server:gsub("d.MaxActivationDistance = 24", "d.MaxActivationDistance = 30", 1)
+	local before = snapshot(g)
+	suite(g, sv)
+	check("board upgrades over a different GrinderUpgradesServer: refused (not overwritten)", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraLive()
+	sv.ReplicatedStorage.GrinderUpgradesConfig.Source ..= "\n-- tuned"
+	local before = snapshot(g)
+	suite(g, sv)
+	check("board upgrades over a different GrinderUpgradesConfig: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraLive()
+	local f = new("Folder", "EconomyNetKgBackup") -- a superseded milestone somehow installed
+	f.Parent = sv.ServerStorage
+	local before = snapshot(g)
+	suite(g, sv)
+	check("board upgrades with a superseded milestone's backup present: refused", refused() and snapshot(g) == before)
+end
+do
+	local g, sv = astraLive()
 	local mine = new("Script", "NetCapacityServer")
 	mine.Source = "-- someone else's"
 	mine.Parent = sv.ServerScriptService
 	local before = snapshot(g)
-	netKg(g, sv)
-	check("net kg when a NetCapacityServer already exists: refused, kept", refused() and snapshot(g) == before and mine.Source == "-- someone else's")
-end
-do
-	local g, sv = astraCurrent()
-	sv.ServerScriptService.EconomyService.Rods.Source ..= "\n-- tuned"
-	local before = snapshot(g)
-	netKg(g, sv)
-	check("net kg over an edited Rods module: refused", refused() and snapshot(g) == before)
-end
-
--- upgrade board (Net Strength): on top of net kg
-local function board(g, s) warnings = {} runBoard(g, s.Workspace) end
-local function boardBack(g, s) warnings = {} runBoardBack(g, s.Workspace) end
-do
-	local g, sv, history, sc = astraCurrent()
-	netKg(g, sv)
-	assert(not refused(), "net kg: " .. tostring(warnings[#warnings]))
-	local svc = sv.ServerScriptService.EconomyService
-	local sps = sv.StarterPlayer.StarterPlayerScripts
-	local backups = {}
-	for _, bk in ipairs(sv.ServerStorage:GetChildren()) do
-		backups[bk.Name] = subtree(bk)
-	end
-	local before = snapshot(g)
-	sv.RunService.running = true
-	board(g, sv)
-	check("board in Play: refused", refused() and snapshot(g) == before)
-	sv.RunService.running = false
-	local commits = history.commits
-	board(g, sv)
-	check("board on net kg: one undo step", not refused() and history.commits == commits + 1)
-	check("board: Config and KgSignClient updated; EconomyService / MoneyStore / NetKg / NetCapacityServer as net kg left them",
-		svc.Config.Source == BOARD.Config and sps.KgSignClient.Source == BOARD.KgClient and svc.Source == NETKG.EconomyService
-		and svc.MoneyStore.Source == NETKG.MoneyStore and svc.NetKg.Source == NETKG.NetKg
-		and sv.ServerScriptService.NetCapacityServer.Source == NETKG.Server)
-	check("board: UpgradeBoardServer (Script) and UpgradeBoardClient (LocalScript) added, tagged",
-		sv.ServerScriptService:FindFirstChild("UpgradeBoardServer") and sv.ServerScriptService.UpgradeBoardServer.ClassName == "Script"
-		and sv.ServerScriptService.UpgradeBoardServer.Source == BOARD.Server and sv.ServerScriptService.UpgradeBoardServer:GetAttribute("EconomyOwned") == true
-		and sps:FindFirstChild("UpgradeBoardClient") and sps.UpgradeBoardClient.ClassName == "LocalScript" and sps.UpgradeBoardClient.Source == BOARD.Client
-		and sps.UpgradeBoardClient:GetAttribute("EconomyOwned") == true)
-	check("board: rods scripts untouched", svc.Rods.Source == RODS.Rods and sc.RodShopServer.Source == RODS.Shop and sc.RodFishingSystem.Source == RODS.Fishing)
-	check("board: backup = 2 changes + 2 adds", #sv.ServerStorage.EconomyUpgradeBoardBackup:GetChildren() == 4)
-	local kept = true
-	for name, tree in pairs(backups) do
-		kept = kept and sv.ServerStorage:FindFirstChild(name) ~= nil and subtree(sv.ServerStorage[name]) == tree
-	end
-	check("board: every earlier backup untouched (net kg, rods, shop UI, jump rate, panel, ...)", kept)
-	local after = snapshot(g)
-	board(g, sv)
-	check("board twice: refused", refused() and snapshot(g) == after)
-	netKgBack(g, sv)
-	check("net kg rollback refused while the board is in", refused() and snapshot(g) == after)
-	netKg(g, sv)
-	check("net kg again while the board is in: refused", refused() and snapshot(g) == after)
-	sps.UpgradeBoardClient.Source ..= "\n-- hand edit"
-	local edited = snapshot(g)
-	boardBack(g, sv)
-	check("board rollback over an edited UpgradeBoardClient: refused", refused() and snapshot(g) == edited)
-	sps.UpgradeBoardClient.Source = BOARD.Client
-	boardBack(g, sv)
-	check("board rollback: exactly the net kg state (added scripts removed)", not refused() and snapshot(g) == before
-		and sv.ServerScriptService:FindFirstChild("UpgradeBoardServer") == nil and sps:FindFirstChild("UpgradeBoardClient") == nil
-		and svc.Config.Source == NETKG.Config and sps.KgSignClient.Source == NETKG.Client)
-	netKgBack(g, sv)
-	check("then net kg rolls back too", not refused())
-end
-do
-	local g, sv = astraCurrent() -- no net kg
-	local before = snapshot(g)
-	board(g, sv)
-	check("board without net kg: refused", refused() and snapshot(g) == before)
-end
-do
-	local g, sv = astraCurrent()
-	netKg(g, sv)
-	local mine = new("Script", "UpgradeBoardServer")
-	mine.Source = "-- someone else's"
-	mine.Parent = sv.ServerScriptService
-	local before = snapshot(g)
-	board(g, sv)
-	check("board when an UpgradeBoardServer already exists: refused, kept", refused() and snapshot(g) == before and mine.Source == "-- someone else's")
-end
-do
-	local g, sv = astraCurrent()
-	netKg(g, sv)
-	sv.ServerScriptService.NetCapacityServer.Source ..= "\n-- tuned"
-	local before = snapshot(g)
-	board(g, sv)
-	check("board over an edited NetCapacityServer: refused", refused() and snapshot(g) == before)
-end
-
--- Rod Luck: on top of the board
-local function luck(g, s) warnings = {} runLuck(g, s.Workspace) end
-local function luckBack(g, s) warnings = {} runLuckBack(g, s.Workspace) end
-local function withBoard()
-	local g, sv, history, sc = astraCurrent()
-	netKg(g, sv)
-	board(g, sv)
-	assert(not refused(), "board: " .. tostring(warnings[#warnings]))
-	return g, sv, history, sc
-end
-do
-	local g, sv, history, sc = withBoard()
-	local svc = sv.ServerScriptService.EconomyService
-	local sps = sv.StarterPlayer.StarterPlayerScripts
-	local backups = {}
-	for _, bk in ipairs(sv.ServerStorage:GetChildren()) do
-		backups[bk.Name] = subtree(bk)
-	end
-	local before = snapshot(g)
-	sv.RunService.running = true
-	luck(g, sv)
-	check("rod luck in Play: refused", refused() and snapshot(g) == before)
-	sv.RunService.running = false
-	local commits = history.commits
-	luck(g, sv)
-	check("rod luck on the board: one undo step", not refused() and history.commits == commits + 1)
-	check("rod luck: EconomyService / Config / MoneyStore / board scripts / RodFishingSystem updated",
-		svc.Source == LUCK.EconomyService and svc.Config.Source == LUCK.Config and svc.MoneyStore.Source == LUCK.MoneyStore
-		and sv.ServerScriptService.UpgradeBoardServer.Source == LUCK.Server and sps.UpgradeBoardClient.Source == LUCK.Client
-		and sc.RodFishingSystem.Source == LUCK.Fishing)
-	check("rod luck: BoardUpgrades added, tagged", svc:FindFirstChild("BoardUpgrades") and svc.BoardUpgrades.Source == LUCK.BoardUpgrades
-		and svc.BoardUpgrades:GetAttribute("EconomyOwned") == true)
-	check("rod luck: the rest untouched (NetKg, Rods, shop, NetCapacityServer, KgSignClient)", svc.NetKg.Source == NETKG.NetKg
-		and svc.Rods.Source == RODS.Rods and sc.RodShopServer.Source == RODS.Shop and sv.ServerScriptService.NetCapacityServer.Source == NETKG.Server
-		and sps.KgSignClient.Source == BOARD.KgClient)
-	check("rod luck: backup = 6 changes + 1 add", #sv.ServerStorage.EconomyRodLuckBackup:GetChildren() == 7)
-	local kept = true
-	for name, tree in pairs(backups) do
-		kept = kept and sv.ServerStorage:FindFirstChild(name) ~= nil and subtree(sv.ServerStorage[name]) == tree
-	end
-	check("rod luck: every earlier backup untouched", kept)
-	local after = snapshot(g)
-	luck(g, sv)
-	check("rod luck twice: refused", refused() and snapshot(g) == after)
-	boardBack(g, sv)
-	check("board rollback refused while rod luck is in", refused() and snapshot(g) == after)
-	rodsBack(g, sv)
-	check("rods rollback refused while rod luck is in", refused() and snapshot(g) == after)
-	sc.RodFishingSystem.Source ..= "\n-- hand edit"
-	local edited = snapshot(g)
-	luckBack(g, sv)
-	check("rod luck rollback over an edited RodFishingSystem: refused", refused() and snapshot(g) == edited)
-	sc.RodFishingSystem.Source = LUCK.Fishing
-	luckBack(g, sv)
-	check("rod luck rollback: exactly the board state", not refused() and snapshot(g) == before
-		and svc:FindFirstChild("BoardUpgrades") == nil and sc.RodFishingSystem.Source == RODS.Fishing and svc.Config.Source == BOARD.Config)
-	boardBack(g, sv)
-	check("then the board rolls back too", not refused())
-end
-do
-	local g, sv = astraCurrent()
-	netKg(g, sv) -- no board
-	local before = snapshot(g)
-	luck(g, sv)
-	check("rod luck without the board: refused", refused() and snapshot(g) == before)
-end
-do
-	local g, sv, _, sc = withBoard()
-	sc.RodFishingSystem.Source ..= "\n-- tuned"
-	local before = snapshot(g)
-	luck(g, sv)
-	check("rod luck over an edited RodFishingSystem: refused", refused() and snapshot(g) == before)
-end
-do
-	local g, sv = withBoard()
-	local mine = new("ModuleScript", "BoardUpgrades")
-	mine.Source = "return {}"
-	mine.Parent = sv.ServerScriptService.EconomyService
-	local before = snapshot(g)
-	luck(g, sv)
-	check("rod luck when a BoardUpgrades module already exists: refused, kept", refused() and snapshot(g) == before and mine.Source == "return {}")
-end
-
--- Meat Price: on top of Rod Luck
-local function meat(g, s) warnings = {} runMeat(g, s.Workspace) end
-local function meatBack(g, s) warnings = {} runMeatBack(g, s.Workspace) end
-local function withLuck()
-	local g, sv, history, sc = withBoard()
-	luck(g, sv)
-	assert(not refused(), "rod luck: " .. tostring(warnings[#warnings]))
-	return g, sv, history, sc
-end
-do
-	local g, sv, history, sc = withLuck()
-	local svc = sv.ServerScriptService.EconomyService
-	local sps = sv.StarterPlayer.StarterPlayerScripts
-	local backups = {}
-	for _, bk in ipairs(sv.ServerStorage:GetChildren()) do
-		backups[bk.Name] = subtree(bk)
-	end
-	local before = snapshot(g)
-	sv.RunService.running = true
-	meat(g, sv)
-	check("meat price in Play: refused", refused() and snapshot(g) == before)
-	sv.RunService.running = false
-	local commits = history.commits
-	meat(g, sv)
-	check("meat price on rod luck: one undo step", not refused() and history.commits == commits + 1)
-	check("meat price: EconomyService / Config / Pricing / Ledger / Sales / board scripts updated", svc.Source == MEAT.EconomyService
-		and svc.Config.Source == MEAT.Config and svc.Pricing.Source == MEAT.Pricing and svc.Ledger.Source == MEAT.Ledger
-		and svc.Sales.Source == MEAT.Sales and sv.ServerScriptService.UpgradeBoardServer.Source == MEAT.Server
-		and sps.UpgradeBoardClient.Source == MEAT.Client)
-	check("meat price: MoneyStore, BoardUpgrades and RodFishingSystem as Rod Luck left them", svc.MoneyStore.Source == LUCK.MoneyStore
-		and svc.BoardUpgrades.Source == LUCK.BoardUpgrades and sc.RodFishingSystem.Source == LUCK.Fishing)
-	check("meat price: backup = 7 changes", #sv.ServerStorage.EconomyMeatPriceBackup:GetChildren() == 7)
-	local kept = true
-	for name, tree in pairs(backups) do
-		kept = kept and sv.ServerStorage:FindFirstChild(name) ~= nil and subtree(sv.ServerStorage[name]) == tree
-	end
-	check("meat price: every earlier backup untouched", kept)
-	local after = snapshot(g)
-	meat(g, sv)
-	check("meat price twice: refused", refused() and snapshot(g) == after)
-	luckBack(g, sv)
-	check("rod luck rollback refused while meat price is in", refused() and snapshot(g) == after)
-	svc.Ledger.Source ..= "\n-- hand edit"
-	local edited = snapshot(g)
-	meatBack(g, sv)
-	check("meat price rollback over an edited Ledger: refused", refused() and snapshot(g) == edited)
-	svc.Ledger.Source = MEAT.Ledger
-	meatBack(g, sv)
-	check("meat price rollback: exactly the rod luck state", not refused() and snapshot(g) == before and svc.Config.Source == LUCK.Config)
-	luckBack(g, sv)
-	check("then rod luck rolls back too", not refused())
-end
-do
-	local g, sv = withBoard() -- no rod luck
-	local before = snapshot(g)
-	meat(g, sv)
-	check("meat price without rod luck: refused", refused() and snapshot(g) == before)
-end
-do
-	local g, sv = withLuck()
-	sv.ServerScriptService.EconomyService.Pricing.Source ..= "\n-- tuned"
-	local before = snapshot(g)
-	meat(g, sv)
-	check("meat price over an edited Pricing: refused", refused() and snapshot(g) == before)
-end
-
--- Faster Reels: on top of Meat Price
-local function reelsUp(g, s) warnings = {} runReels(g, s.Workspace) end
-local function reelsBack(g, s) warnings = {} runReelsBack(g, s.Workspace) end
-local function withMeat()
-	local g, sv, history, sc = withLuck()
-	meat(g, sv)
-	assert(not refused(), "meat price: " .. tostring(warnings[#warnings]))
-	return g, sv, history, sc
-end
-do
-	local g, sv, history, sc = withMeat()
-	local svc = sv.ServerScriptService.EconomyService
-	local sps = sv.StarterPlayer.StarterPlayerScripts
-	local backups = {}
-	for _, bk in ipairs(sv.ServerStorage:GetChildren()) do
-		backups[bk.Name] = subtree(bk)
-	end
-	local before = snapshot(g)
-	sv.RunService.running = true
-	reelsUp(g, sv)
-	check("faster reels in Play: refused", refused() and snapshot(g) == before)
-	sv.RunService.running = false
-	local commits = history.commits
-	reelsUp(g, sv)
-	check("faster reels on meat price: one undo step", not refused() and history.commits == commits + 1)
-	check("faster reels: Config / board scripts / RodFishingSystem updated", svc.Config.Source == REELS.Config
-		and sv.ServerScriptService.UpgradeBoardServer.Source == REELS.Server and sps.UpgradeBoardClient.Source == REELS.Client
-		and sc.RodFishingSystem.Source == REELS.Fishing)
-	check("faster reels: EconomyService / Pricing / Ledger / MoneyStore as meat price left them", svc.Source == MEAT.EconomyService
-		and svc.Pricing.Source == MEAT.Pricing and svc.Ledger.Source == MEAT.Ledger and svc.MoneyStore.Source == LUCK.MoneyStore)
-	check("faster reels: backup = 4 changes", #sv.ServerStorage.EconomyFasterReelsBackup:GetChildren() == 4)
-	local kept = true
-	for name, tree in pairs(backups) do
-		kept = kept and sv.ServerStorage:FindFirstChild(name) ~= nil and subtree(sv.ServerStorage[name]) == tree
-	end
-	check("faster reels: every earlier backup untouched", kept)
-	local after = snapshot(g)
-	reelsUp(g, sv)
-	check("faster reels twice: refused", refused() and snapshot(g) == after)
-	meatBack(g, sv)
-	check("meat price rollback refused while faster reels is in", refused() and snapshot(g) == after)
-	luckBack(g, sv)
-	check("rod luck rollback refused while faster reels is in", refused() and snapshot(g) == after)
-	sc.RodFishingSystem.Source ..= "\n-- hand edit"
-	local edited = snapshot(g)
-	reelsBack(g, sv)
-	check("faster reels rollback over an edited RodFishingSystem: refused", refused() and snapshot(g) == edited)
-	sc.RodFishingSystem.Source = REELS.Fishing
-	reelsBack(g, sv)
-	check("faster reels rollback: exactly the meat price state", not refused() and snapshot(g) == before and sc.RodFishingSystem.Source == LUCK.Fishing)
-	meatBack(g, sv)
-	luckBack(g, sv)
-	boardBack(g, sv)
-	netKgBack(g, sv)
-	check("then meat price, rod luck, the board and net kg roll back in order", not refused())
-end
-do
-	local g, sv = withLuck() -- no meat price
-	local before = snapshot(g)
-	reelsUp(g, sv)
-	check("faster reels without meat price: refused", refused() and snapshot(g) == before)
+	suite(g, sv)
+	check("board upgrades when a NetCapacityServer already exists: refused, kept", refused() and snapshot(g) == before and mine.Source == "-- someone else's")
 end
 
 -- the old baseline (no HarpoonT in the despawn guard) is not what Studio has: refused
@@ -1858,22 +1616,6 @@ def main() -> int:
         if (ROOT.parent / "fish-jump" / frozen).read_text() != git_show(frozen, "1a19061", "tools/fish-jump/"):
             print(f"FAIL: fish-jump/{frozen} differs from the 1a19061 release")
             return 1
-    for frozen in MEAT_FROZEN:
-        if (ROOT / frozen).read_text() != git_show(frozen, MEAT_RELEASE):
-            print(f"FAIL: {frozen} differs from the {MEAT_RELEASE} Meat Price release")
-            return 1
-    for frozen in LUCK_FROZEN:
-        if (ROOT / frozen).read_text() != git_show(frozen, LUCK_RELEASE):
-            print(f"FAIL: {frozen} differs from the {LUCK_RELEASE} Rod Luck release")
-            return 1
-    for frozen in BOARD_FROZEN:
-        if (ROOT / frozen).read_text() != git_show(frozen, BOARD_RELEASE):
-            print(f"FAIL: {frozen} differs from the {BOARD_RELEASE} upgrade board release")
-            return 1
-    for frozen in NETKG_FROZEN:
-        if (ROOT / frozen).read_text() != git_show(frozen, NETKG_RELEASE):
-            print(f"FAIL: {frozen} differs from the {NETKG_RELEASE} net kg release")
-            return 1
     for frozen in EARNINGS_FROZEN:
         if (ROOT / frozen).read_text() != git_show(frozen, EARNINGS_RELEASE):
             print(f"FAIL: {frozen} differs from the {EARNINGS_RELEASE} earnings release")
@@ -1926,53 +1668,32 @@ def main() -> int:
     tables += "local SHOPUI = {\n" + "".join(
         f"\t{k} = {lua_string(git_show(v, RODS_RELEASE))},\n" for k, v in (("Live", "studio/live/RodShopController.lua"), ("New", "studio/rods/RodShopController.lua"))
     ) + "}\n"
-    # what InstallNetKg writes (the 187fe39 release)
-    netkg_files = {
-        "EconomyService": "src/server/EconomyService.luau",
-        "Config": "src/core/Config.luau",
-        "MoneyStore": "src/core/MoneyStore.luau",
-        "NetKg": "src/core/NetKg.luau",
-        "Server": "src/server/NetCapacityServer.server.luau",
-        "Client": "src/client/KgSignClient.client.luau",
-    }
-    tables += "local NETKG = {\n" + "".join(f"\t{k} = {lua_string(git_show(v, NETKG_RELEASE))},\n" for k, v in netkg_files.items()) + "}\n"
-    # what InstallUpgradeBoard writes (the af6a79a release)
-    board_files = {
-        "Config": "src/core/Config.luau",
-        "KgClient": "src/client/KgSignClient.client.luau",
-        "Server": "src/server/UpgradeBoardServer.server.luau",
-        "Client": "src/client/UpgradeBoardClient.client.luau",
-    }
-    tables += "local BOARD = {\n" + "".join(f"\t{k} = {lua_string(git_show(v, BOARD_RELEASE))},\n" for k, v in board_files.items()) + "}\n"
-    # what InstallRodLuck writes (the 7584f1e release)
-    luck_files = {
-        "EconomyService": "src/server/EconomyService.luau",
-        "Config": "src/core/Config.luau",
-        "MoneyStore": "src/core/MoneyStore.luau",
-        "BoardUpgrades": "src/core/BoardUpgrades.luau",
-        "Server": "src/server/UpgradeBoardServer.server.luau",
-        "Client": "src/client/UpgradeBoardClient.client.luau",
-        "Fishing": "studio/board/RodFishingSystem.lua",
-    }
-    tables += "local LUCK = {\n" + "".join(f"\t{k} = {lua_string(git_show(v, LUCK_RELEASE))},\n" for k, v in luck_files.items()) + "}\n"
-    # what InstallMeatPrice writes (the 7141af5 release)
-    meat_files = {
-        "EconomyService": "src/server/EconomyService.luau",
-        "Config": "src/core/Config.luau",
-        "Pricing": "src/core/Pricing.luau",
-        "Ledger": "src/core/Ledger.luau",
-        "Sales": "src/core/Sales.luau",
-        "Server": "src/server/UpgradeBoardServer.server.luau",
-        "Client": "src/client/UpgradeBoardClient.client.luau",
-    }
-    tables += "local MEAT = {\n" + "".join(f"\t{k} = {lua_string(git_show(v, MEAT_RELEASE))},\n" for k, v in meat_files.items()) + "}\n"
-    reels_files = {
-        "Config": ROOT / "src/core/Config.luau",
-        "Server": ROOT / "src/server/UpgradeBoardServer.server.luau",
-        "Client": ROOT / "src/client/UpgradeBoardClient.client.luau",
-        "Fishing": ROOT / "studio/board/RodFishingSystem.lua",
-    }
-    tables += "local REELS = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in reels_files.items()) + "}\n"
+    # the board upgrades on Astra's live baseline (GrinderUpgrades installed)
+    live = ROOT / "studio" / "live"
+    grinder = ROOT / "studio" / "grinder"
+    tables += "local GLIVE = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (
+        ("EconomyService", live / "EconomyService.grinder.lua"),
+        ("Server", live / "GrinderUpgradesServer.lua"),
+        ("Client", live / "GrinderUpgradesClient.lua"),
+        ("Config", live / "GrinderUpgradesConfig.lua"),
+    )) + "}\n"
+    tables += "local SUITE = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (
+        ("EconomyService", ROOT / "src/server/EconomyService.luau"),
+        ("Config", ROOT / "src/core/Config.luau"),
+        ("MoneyStore", ROOT / "src/core/MoneyStore.luau"),
+        ("Pricing", ROOT / "src/core/Pricing.luau"),
+        ("Ledger", ROOT / "src/core/Ledger.luau"),
+        ("Sales", ROOT / "src/core/Sales.luau"),
+        ("NetKg", ROOT / "src/core/NetKg.luau"),
+        ("BoardUpgrades", ROOT / "src/core/BoardUpgrades.luau"),
+        ("NetCapacityServer", ROOT / "src/server/NetCapacityServer.server.luau"),
+        ("UpgradeBoardServer", ROOT / "src/server/UpgradeBoardServer.server.luau"),
+        ("KgSignClient", ROOT / "src/client/KgSignClient.client.luau"),
+        ("UpgradeBoardClient", ROOT / "src/client/UpgradeBoardClient.client.luau"),
+        ("Fishing", ROOT / "studio/board/RodFishingSystem.lua"),
+        ("GServer", grinder / "GrinderUpgradesServer.lua"),
+        ("GClient", grinder / "GrinderUpgradesClient.lua"),
+    )) + "}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -2065,16 +1786,8 @@ def main() -> int:
         + wrap("runRodsBack", (ROOT / "RollbackRods.lua").read_text())
         + wrap("runShopUi", (ROOT / "InstallRodShopUI.lua").read_text())
         + wrap("runShopUiBack", (ROOT / "RollbackRodShopUI.lua").read_text())
-        + wrap("runNetKg", (ROOT / "InstallNetKg.lua").read_text())
-        + wrap("runNetKgBack", (ROOT / "RollbackNetKg.lua").read_text())
-        + wrap("runBoard", (ROOT / "InstallUpgradeBoard.lua").read_text())
-        + wrap("runBoardBack", (ROOT / "RollbackUpgradeBoard.lua").read_text())
-        + wrap("runLuck", (ROOT / "InstallRodLuck.lua").read_text())
-        + wrap("runLuckBack", (ROOT / "RollbackRodLuck.lua").read_text())
-        + wrap("runMeat", (ROOT / "InstallMeatPrice.lua").read_text())
-        + wrap("runMeatBack", (ROOT / "RollbackMeatPrice.lua").read_text())
-        + wrap("runReels", (ROOT / "InstallFasterReels.lua").read_text())
-        + wrap("runReelsBack", (ROOT / "RollbackFasterReels.lua").read_text())
+        + wrap("runSuite", (ROOT / "InstallBoardUpgrades.lua").read_text())
+        + wrap("runSuiteBack", (ROOT / "RollbackBoardUpgrades.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

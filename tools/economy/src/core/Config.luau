@@ -177,6 +177,14 @@ Config.NetKg = {
 -- attribute on ReplicatedStorage.Economy.
 Config.NetKgOpen = false
 Config.NetKgCooldown = 0.5 -- seconds between sign presses per player
+-- Before this, GrinderUpgradesServer sold the KG steps and kept a COUNT of
+-- buys in its own store (GrinderUpgrades_v1). true: a player's net counts
+-- (and can be bought) only after GrinderUpgradesServer has reported that
+-- count this session; it is adopted as max(netKg, Base + Step x buys).
+Config.NetKgLegacy = true
+-- Longest a leaving player's final Money save waits for another script's
+-- purchase that is still being written (EconomyService.holdSave).
+Config.SaveHoldSeconds = 20
 
 ------------------------------------------------------------ upgrade board (Workspace.Board)
 

@@ -12,6 +12,9 @@
 --   (no EconomyService: kgnoecon_sim)
 
 local Economy, root = installEconomy()
+-- this scene has no GrinderUpgradesServer to report earlier KG-sign buys
+-- (grinder_sim covers that): nothing to wait for
+Economy.Config.NetKgLegacy = false
 local SSS = services.ServerScriptService
 local ws = workspaceInst
 local KEY = Economy.Config.KeyPrefix
