@@ -1,4 +1,4 @@
--- UpgradeBoardServer (Script in ServerScriptService). [Economy upgrade board v1]
+-- UpgradeBoardServer (Script in ServerScriptService). [Economy upgrade board v2: Rod Luck]
 --
 -- The four-upgrade board (Workspace.Board: its Main part's SurfaceGui.bord3).
 -- UpgradeBoardClient draws the four cards for each player and asks here
@@ -11,7 +11,11 @@
 --     Here "in reach" means near the board. NetCapacityServer follows the
 --     player's NetKg attribute, so the shared NetLift.MaxWeight updates the
 --     same way as after a sign purchase.
---   * RodLuck, MeatPrice, FasterReels: not sold yet ("coming soon").
+--   * RodLuck: the player's saved Rod Luck level (EconomyService.upgradeAction:
+--     the same checks, money + level saved in one write; paid board upgrades
+--     open with UpgradesOpen). RodFishingSystem reads the committed value
+--     once per accepted press.
+--   * MeatPrice, FasterReels: not sold yet ("coming soon").
 --   * anything else: refused.
 -- The result is also a toast (EconomyService.notify).
 --
@@ -127,10 +131,20 @@ local SOLD: { [string]: (Player) -> (boolean, string) } = {
 	end,
 }
 local SOON: { [string]: string } = {
-	RodLuck = "Rod Luck upgrades are coming soon",
 	MeatPrice = "Meat Price upgrades are coming soon",
 	FasterReels = "Faster Reels upgrades are coming soon",
 }
+for _, id in ipairs({ "RodLuck" }) do
+	if type(Economy.upgradeAction) == "function" and Economy.BoardUpgrades and Economy.BoardUpgrades.known(id) then
+		SOLD[id] = function(player: Player): (boolean, string)
+			local ok, message = Economy.upgradeAction(player, id, nearBoard(player))
+			return ok, message
+		end
+	else
+		warn("[UpgradeBoard] EconomyService can't sell " .. id .. " (older version?): it shows as coming soon")
+		SOON[id] = id .. " upgrades are coming soon"
+	end
+end
 
 local lastPress: { [Player]: number } = {}
 Players.PlayerRemoving:Connect(function(player)

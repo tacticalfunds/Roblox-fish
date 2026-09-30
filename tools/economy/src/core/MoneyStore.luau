@@ -24,10 +24,13 @@
 --     at once: if that write fails, the rod and the money are both undone.
 --   * `netKg` (the +5 KG signs) works the same way: loaded and saved with the
 --     money, bought with one staged write, invalid data never overwritten.
+--   * `upgrades` (the upgrade board's levels, see BoardUpgrades): the same
+--     again; entries this build doesn't know are kept.
 
 local Config = require(script.Parent.Config)
 local Rods = require(script.Parent.Rods)
 local NetKg = require(script.Parent.NetKg)
+local BoardUpgrades = require(script.Parent.BoardUpgrades)
 
 export type Store = {
 	update: (key: string, transform: (old: any) -> any) -> any,
@@ -52,6 +55,9 @@ type Session = {
 	netKg: number, -- owned net capacity (Base until loaded)
 	netWritable: boolean, -- false: not loaded, or the saved field isn't valid (left untouched)
 	pendingNetKg: number?, -- a net purchase being written, not yet committed
+	upgrades: BoardUpgrades.Levels, -- the board's levels (all 0 until loaded)
+	upgradesWritable: boolean, -- false: not loaded, or the saved field isn't valid (left untouched)
+	pendingUpgrades: BoardUpgrades.Levels?, -- an upgrade purchase being written, not yet committed
 }
 
 local MoneyStore = {}
@@ -125,6 +131,8 @@ function MoneyStore.begin(self: MoneyStore, userId: number)
 			buying = false,
 			netKg = NetKg.base(),
 			netWritable = false,
+			upgrades = {},
+			upgradesWritable = false,
 		}
 	end
 end
@@ -156,6 +164,7 @@ function MoneyStore.attemptLoad(self: MoneyStore, userId: number): (string, stri
 				lock = { job = self.jobId, t = now },
 				rods = Rods.save(Rods.fresh(), nil),
 				netKg = NetKg.base(),
+				upgrades = {},
 			}
 			return loaded
 		end
@@ -209,6 +218,7 @@ function MoneyStore.attemptLoad(self: MoneyStore, userId: number): (string, stri
 		s.granted = decision == "new"
 		s.rods, s.rodsWritable = Rods.load(loaded.rods)
 		s.netKg, s.netWritable = NetKg.load(loaded.netKg)
+		s.upgrades, s.upgradesWritable = BoardUpgrades.load(loaded.upgrades)
 		s.state = "Ready"
 		if s.pending > 0 then
 			s.balance = math.min(Config.MaxBalance, s.balance + s.pending)
@@ -313,6 +323,10 @@ function MoneyStore.save(self: MoneyStore, userId: number, release: boolean): (b
 		end
 		if s.netWritable then
 			out.netKg = s.pendingNetKg or s.netKg -- a net purchase in flight writes its staged value
+		end
+		if s.upgradesWritable then
+			-- an upgrade purchase in flight writes its staged levels
+			out.upgrades = BoardUpgrades.copy(s.pendingUpgrades or s.upgrades)
 		end
 		out.lock = if release then nil else { job = self.jobId, t = self.now() }
 		written = s.balance
@@ -481,6 +495,63 @@ function MoneyStore.buyNetKg(self: MoneyStore, userId: number): (boolean, string
 	if saved then
 		s.netKg = nextKg -- committed: exactly what was written
 		return true, nil, nextKg, cost
+	end
+	if s.state == "Ready" then
+		s.balance = math.min(Config.MaxBalance, s.balance + cost)
+		s.dirty = true
+	end
+	return false, "notSaved: " .. tostring(reason), nil, nil
+end
+
+------------------------------------------------------------ board upgrades
+
+-- The player's (committed) level of a board upgrade, or nil while not loaded.
+function MoneyStore.upgradeLevel(self: MoneyStore, userId: number, id: string): number?
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return nil
+	end
+	return BoardUpgrades.level(s.upgrades, id)
+end
+
+-- Buys the next level of a board upgrade: takes its cost and WRITES the new
+-- balance and the new level together before it counts; the new level is
+-- staged (upgradeLevel() keeps the committed one) until that write
+-- succeeded. Same rules as buyNetKg. Returns (ok, reason, newLevel, cost):
+-- reason "notLoaded" | "unknown" | "upgradesUnavailable" | "busy" | "max" |
+-- "funds" | "notSaved: ..." .
+function MoneyStore.buyUpgrade(self: MoneyStore, userId: number, id: any): (boolean, string?, number?, number?)
+	local s = self.sessions[userId]
+	if not s or s.state ~= "Ready" then
+		return false, "notLoaded", nil, nil
+	end
+	if not BoardUpgrades.known(id) then
+		return false, "unknown", nil, nil
+	end
+	if not s.upgradesWritable then
+		return false, "upgradesUnavailable", nil, nil
+	end
+	if s.buying or s.saving then
+		return false, "busy", nil, nil
+	end
+	local nextLevel, cost = BoardUpgrades.nextStep(id, BoardUpgrades.level(s.upgrades, id))
+	if not nextLevel or not cost then
+		return false, "max", nil, nil
+	end
+	local paid, why = self:tryDebit(userId, cost)
+	if not paid then
+		return false, why, nil, nil
+	end
+	local pending = BoardUpgrades.copy(s.upgrades)
+	pending[id] = nextLevel
+	s.pendingUpgrades = pending
+	s.buying = true
+	local saved, reason = self:save(userId, false)
+	s.buying = false
+	s.pendingUpgrades = nil
+	if saved then
+		s.upgrades = pending -- committed: exactly what was written
+		return true, nil, nextLevel, cost
 	end
 	if s.state == "Ready" then
 		s.balance = math.min(Config.MaxBalance, s.balance + cost)

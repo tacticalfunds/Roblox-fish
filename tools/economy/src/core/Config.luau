@@ -186,6 +186,29 @@ Config.UpgradeFirstCost = 10
 Config.UpgradeCostCap = 5000
 Config.UpgradeBoardReach = 20 -- studs from the board's face (server check, plus half the board)
 
+-- The board's other upgrades: each player owns a LEVEL per upgrade (0 = not
+-- bought), saved in their Money record's `upgrades` table. Values[level + 1]
+-- is the effect at that level; Costs[level + 1] is the price of the next
+-- level; nothing is sold past the last value. Checked by Config.check:
+-- Values[1] = 1 (no effect), Values[2] = FirstValue (what the card promises),
+-- increasing, <= MaxValue; Costs[1] = UpgradeFirstCost, increasing, <=
+-- UpgradeCostCap, one fewer than Values. INITIAL tuning, not measured pacing.
+Config.BoardUpgrades = {
+	-- Rod Luck: on the owner's own casts, rarer fish are weighted up relative
+	-- to common ones and the odds renormalised. Value = the factor on the
+	-- RAREST tier's weight relative to the commonest (tiers between scale
+	-- geometrically). 2x is not a guaranteed rare fish. Silver/Gold odds are
+	-- not touched.
+	RodLuck = { Name = "Rod Luck", Values = { 1, 2, 2.5, 3 }, Costs = { 10, 75, 300 }, FirstValue = 2, MaxValue = 5 },
+}
+Config.BoardUpgradeIds = { "RodLuck" } -- the order they are listed and checked
+-- PAID board upgrades (other than Net Strength, which is NetKgOpen) stay
+-- closed until the saved path is validated in Studio with real DataStore
+-- access: set true here, or (for a test) the UpgradesOpen attribute on
+-- ReplicatedStorage.Economy.
+Config.BoardUpgradesOpen = false
+Config.BoardUpgradeCooldown = 0.5 -- seconds between presses per player
+
 ------------------------------------------------------------ checks
 
 -- Design guard rails, asserted by the tests and by the installer.
@@ -240,6 +263,28 @@ function Config.check(firstTankUpgradeCost: number?): (boolean, string?)
 			return false, "NetKg: Costs must be increasing whole numbers"
 		end
 		last = c
+	end
+	for _, id in ipairs(Config.BoardUpgradeIds) do
+		local u = Config.BoardUpgrades[id]
+		if type(u) ~= "table" or type(u.Values) ~= "table" or type(u.Costs) ~= "table" then
+			return false, "BoardUpgrades." .. tostring(id) .. " missing"
+		end
+		if #u.Values < 2 or #u.Costs ~= #u.Values - 1 or u.Values[1] ~= 1 or u.Values[2] ~= u.FirstValue then
+			return false, "BoardUpgrades." .. id .. ": Values must start 1, FirstValue with one Cost per step"
+		end
+		for i = 2, #u.Values do
+			if not (type(u.Values[i]) == "number" and u.Values[i] > u.Values[i - 1] and u.Values[i] <= u.MaxValue) then
+				return false, "BoardUpgrades." .. id .. ": Values must increase, up to MaxValue"
+			end
+		end
+		if u.Costs[1] ~= Config.UpgradeFirstCost then
+			return false, "BoardUpgrades." .. id .. ": the first step must cost UpgradeFirstCost"
+		end
+		for i, c in ipairs(u.Costs) do
+			if not (type(c) == "number" and c == math.floor(c) and c > 0 and c <= Config.UpgradeCostCap and (i == 1 or c > u.Costs[i - 1])) then
+				return false, "BoardUpgrades." .. id .. ": Costs must be increasing whole numbers up to UpgradeCostCap"
+			end
+		end
 	end
 	if n.Costs[1] ~= Config.UpgradeFirstCost then
 		return false, "NetKg: the first step must cost UpgradeFirstCost"

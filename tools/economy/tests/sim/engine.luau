@@ -1258,7 +1258,7 @@ end
 ------------------------------------------------------------ economy (as InstallRodOffers creates it)
 
 local root, Economy
-local CORE = { "Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales", "Rods", "NetKg" }
+local CORE = { "Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales", "Rods", "NetKg", "BoardUpgrades" }
 local function installEconomy()
 	current = "server"
 	root = new("Folder", "Economy")

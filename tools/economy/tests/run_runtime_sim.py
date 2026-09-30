@@ -19,7 +19,7 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CORE = ["Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales", "Rods", "NetKg"]
+CORE = ["Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales", "Rods", "NetKg", "BoardUpgrades"]
 
 
 def long_string(text: str) -> str:
@@ -69,6 +69,7 @@ def sources() -> dict:
     out["Blend_Dwell"] = (blend / "FishSwimClient.patched.from-dwell-jump.lua").read_text()
     out["Rods_Shop"] = (ROOT / "studio" / "rods" / "RodShopServer.lua").read_text()
     out["Rods_Fishing"] = (ROOT / "studio" / "rods" / "RodFishingSystem.lua").read_text()
+    out["Board_Fishing"] = (ROOT / "studio" / "board" / "RodFishingSystem.lua").read_text()
     out["Kg_Server"] = (ROOT / "src" / "server" / "NetCapacityServer.server.luau").read_text()
     out["Kg_Client"] = (ROOT / "src" / "client" / "KgSignClient.client.luau").read_text()
     out["Board_Server"] = (ROOT / "src" / "server" / "UpgradeBoardServer.server.luau").read_text()
@@ -105,6 +106,7 @@ def run(luau: str, srcs: dict, only: str | None = None) -> int:
 # sims that load ReplicatedStorage.FishJump: also run with the JumpRate
 # version (tools/fish-jump InstallJumpRate), which only changes its periods
 JUMP_SIMS = ["jump_sim", "harpoonblend_sim", "dwell_sim"]
+BOARD_FISHING_SIMS = ["rods_sim"]
 
 
 def main() -> int:
@@ -117,6 +119,13 @@ def main() -> int:
         if only in (None, name):
             print("-- with the JumpRate FishJump module:")
             failed |= run(luau, rate, name)
+    # the rods sims again on the upgrade board's RodFishingSystem (Rod Luck
+    # 1x everywhere there): nothing about rods may change
+    board = dict(srcs, Rods_Fishing=srcs["Board_Fishing"])
+    for name in BOARD_FISHING_SIMS:
+        if only in (None, name):
+            print("-- with the upgrade board's RodFishingSystem:")
+            failed |= run(luau, board, name)
     return failed
 
 

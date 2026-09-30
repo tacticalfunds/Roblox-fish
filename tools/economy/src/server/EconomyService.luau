@@ -15,6 +15,9 @@
 --     counts; RodFishingSystem reads the presser's rod per cast (rodStats)
 --   * net capacity (child module NetKg): the +5 KG signs, saved the same way;
 --     NetCapacityServer sets the shared NetLift.MaxWeight from netKg()
+--   * board upgrades (child module BoardUpgrades): levels saved the same way,
+--     bought at the upgrade board (UpgradeBoardServer -> upgradeAction);
+--     gameplay reads the committed value (upgradeValue)
 --
 -- Every patched live script loads this with FindFirstChild + pcall(require)
 -- and calls start(); if it is missing or fails, those scripts behave
@@ -40,10 +43,12 @@ local Sales = require(script.Sales)
 local Offers = require(script.Offers)
 local Rods = require(script.Rods)
 local NetKg = require(script.NetKg)
+local BoardUpgrades = require(script.BoardUpgrades)
 
 local M = {}
 M.Config = Config
 M.Pricing = Pricing
+M.BoardUpgrades = BoardUpgrades
 
 local started = false
 local starting = false -- start() yields (Studio DataStore probe); other callers wait
@@ -171,6 +176,7 @@ local function showMoney(player: Player)
 	v.Parent = stats
 	M._publishRods(player) -- rods load with the money
 	M._publishNet(player)
+	M._publishUpgrades(player)
 end
 
 ------------------------------------------------------------ load / save
@@ -426,6 +432,10 @@ function M._start(): boolean
 	root:SetAttribute("NetKgPaidOpen", M.netKgOpen())
 	root:GetAttributeChangedSignal("NetKgOpen"):Connect(function()
 		root:SetAttribute("NetKgPaidOpen", M.netKgOpen())
+	end)
+	root:SetAttribute("UpgradesPaidOpen", M.upgradesOpen())
+	root:GetAttributeChangedSignal("UpgradesOpen"):Connect(function()
+		root:SetAttribute("UpgradesPaidOpen", M.upgradesOpen())
 	end)
 	root:SetAttribute("Running", true)
 	root:SetAttribute("Store", storeKind)
@@ -863,6 +873,146 @@ function M.netKgAction(player: Player, canBuy: (() -> (boolean, string?))?): (bo
 	M._publishNet(player)
 	log(string.format("%s net %d -> %d kg for %d", player.Name, before, newKg, cost))
 	return true, string.format("Net capacity %d → %d kg (-$%d)", before, newKg, cost), newKg
+end
+
+------------------------------------------------------------ board upgrades (Rod Luck, ...)
+
+local lastUpgradeAction: { [Player]: number } = {}
+M.onPlayerLeaving(function(player: Player)
+	lastUpgradeAction[player] = nil
+end)
+
+-- Paid board upgrades: Config.BoardUpgradesOpen, or (for a Studio
+-- validation) the UpgradesOpen attribute on ReplicatedStorage.Economy.
+function M.upgradesOpen(): boolean
+	return startOk and (Config.BoardUpgradesOpen == true or root:GetAttribute("UpgradesOpen") == true)
+end
+
+-- The effect a player's COMMITTED level gives (1 = none): what gameplay
+-- reads, e.g. RodFishingSystem once per accepted press. Not loaded, not
+-- running, or an unknown id -> 1.
+function M.upgradeValue(player: Player, id: string): number
+	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") or not BoardUpgrades.known(id) then
+		return 1
+	end
+	local level = money:upgradeLevel(player.UserId, id)
+	return if level then BoardUpgrades.value(id, level) else 1
+end
+
+-- Display only (the board reads these): Upg<Id> = current value,
+-- Upg<Id>Next / Upg<Id>Cost = the next level's value and price (nil at max).
+function M._publishUpgrades(player: Player)
+	if not player.Parent then
+		return
+	end
+	for _, id in ipairs(BoardUpgrades.ids()) do
+		local level = money:upgradeLevel(player.UserId, id)
+		if level then
+			local _, cost, nextValue = BoardUpgrades.nextStep(id, level)
+			player:SetAttribute("Upg" .. id, BoardUpgrades.value(id, level))
+			player:SetAttribute("Upg" .. id .. "Next", nextValue)
+			player:SetAttribute("Upg" .. id .. "Cost", cost)
+		end
+	end
+end
+
+local UPGRADE_REASONS = {
+	funds = "Not enough money",
+	notLoaded = "Your money is still loading - try again in a moment",
+	upgradesUnavailable = "Your saved upgrades couldn't be read, so board upgrades are off this session",
+	busy = "One moment - still saving",
+}
+local function formatValue(v: number): string
+	return (string.format("%.2f", v):gsub("0+$", ""):gsub("%.$", "")) .. "x"
+end
+M.formatUpgradeValue = formatValue
+
+-- One press of a board upgrade card: buys the next level for this player,
+-- saved (money + levels, one write) before it counts; nothing is charged if
+-- the write fails. `canBuy()` is the board's own check (in reach). Checked
+-- before any wait for a running save AND again right before the debit, with
+-- no yield in between. Returns (ok, message, newValue?).
+function M.upgradeAction(player: Player, id: any, canBuy: (() -> (boolean, string?))?): (boolean, string, number?)
+	if not startOk or typeof(player) ~= "Instance" or not player:IsA("Player") or player.Parent ~= Players then
+		return false, "Upgrades are unavailable right now", nil
+	end
+	if not BoardUpgrades.known(id) then
+		return false, "Unknown upgrade", nil
+	end
+	local name = Config.BoardUpgrades[id].Name or id
+	if rodBusy[player] then -- one purchase at a time per player (rods, net or board)
+		return false, UPGRADE_REASONS.busy, nil
+	end
+	local now = os.clock()
+	if lastUpgradeAction[player] and now - lastUpgradeAction[player] < Config.BoardUpgradeCooldown then
+		return false, "Slow down a little", nil
+	end
+	lastUpgradeAction[player] = now
+	local function buyable(): (boolean, string?)
+		if player.Parent ~= Players then
+			return false, "Upgrades are unavailable right now"
+		end
+		local ch = player.Character
+		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+		if not (hum and hum.Health > 0) then
+			return false, "You can't do that right now"
+		end
+		if not M.upgradesOpen() then
+			return false, name .. " upgrades open soon"
+		end
+		local level = money:upgradeLevel(player.UserId, id)
+		if not level then
+			return false, UPGRADE_REASONS.notLoaded
+		end
+		if not BoardUpgrades.nextStep(id, level) then
+			return false, string.format("%s is at the maximum (%s)", name, formatValue(BoardUpgrades.value(id, level)))
+		end
+		if canBuy then
+			local allowed, why = canBuy()
+			if not allowed then
+				return false, why or "You can't buy that here"
+			end
+		end
+		return true, nil
+	end
+	local allowed, refusal = buyable()
+	if not allowed then
+		return false, refusal :: string, nil
+	end
+	local before = money:upgradeLevel(player.UserId, id) :: number
+	rodBusy[player] = true
+	local ran, ok, why, newLevel, cost = pcall(function()
+		local t0 = os.clock()
+		while money:isSaving(player.UserId) and os.clock() - t0 < 10 do
+			task.wait(0.05)
+		end
+		local still, changed = buyable()
+		if not still then
+			return false, "refused:" .. tostring(changed), nil, nil
+		end
+		before = money:upgradeLevel(player.UserId, id) :: number
+		return money:buyUpgrade(player.UserId, id) -- saves money + levels in one write
+	end)
+	rodBusy[player] = nil
+	if not ran then
+		warn("[Economy] upgrade failed: " .. tostring(ok))
+		return false, "Couldn't save the upgrade - you were not charged. Try again.", nil
+	end
+	if not ok then
+		if type(why) == "string" and string.sub(why, 1, 8) == "refused:" then
+			return false, string.sub(why, 9), nil
+		end
+		if type(why) == "string" and string.sub(why, 1, 8) == "notSaved" then
+			warn(string.format("[Economy] %s's %s upgrade not saved (%s); not charged", player.Name, id, why))
+			return false, "Couldn't save the upgrade - you were not charged. Try again.", nil
+		end
+		return false, UPGRADE_REASONS[why or ""] or "Couldn't do that right now", nil
+	end
+	sync(player)
+	M._publishUpgrades(player)
+	local fromValue, toValue = BoardUpgrades.value(id, before), BoardUpgrades.value(id, newLevel)
+	log(string.format("%s %s %s -> %s for %d", player.Name, id, formatValue(fromValue), formatValue(toValue), cost))
+	return true, string.format("%s %s → %s (-$%d)", name, formatValue(fromValue), formatValue(toValue), cost), toValue
 end
 
 -- The object for a piece is gone without a sale: keep the piece as data.

@@ -198,8 +198,8 @@ advance(2)
 
 root:SetAttribute("NetKgOpen", true)
 advance(0.1)
-check("open: Net Strength $10 (first step); the other three still SOON", price(A, "NetStrength") == "$10"
-	and price(A, "RodLuck") == "SOON" and seen(A, plates[1][1], "Text") == "$10")
+check("net open: Net Strength $10 (first step); the other three still SOON", price(A, "NetStrength") == "$10"
+	and price(A, "RodLuck") == "SOON" and price(A, "MeatPrice") == "SOON" and seen(A, plates[1][1], "Text") == "$10")
 
 ------------------------------------------------------------ buying at the board
 
@@ -310,7 +310,12 @@ advance(2)
 local before = Economy.balance(A)
 press(A, "RodLuck")
 advance(0.3)
-check("Rod Luck: coming soon, sells nothing", lastNotice(A) == "Rod Luck upgrades are coming soon" and price(A, "RodLuck") == "SOON"
+check("Rod Luck: its paid upgrades are closed by default (UpgradesOpen), not charged", lastNotice(A) == "Rod Luck upgrades open soon"
+	and price(A, "RodLuck") == "SOON" and Economy.balance(A) == before)
+advance(0.5)
+press(A, "MeatPrice")
+advance(0.3)
+check("Meat Price: coming soon, sells nothing", lastNotice(A) == "Meat Price upgrades are coming soon" and price(A, "MeatPrice") == "SOON"
 	and Economy.balance(A) == before)
 advance(0.5)
 press(A, "FasterReels")

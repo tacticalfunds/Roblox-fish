@@ -774,6 +774,92 @@ the board is in). Saved capacities stay.
 | N10 | Second client with little money | Their own values on the card and plates; red price; NEED $ when pressed |
 | N11 | Stop, Play again (real DataStore) | Your capacity is back on the card, plates and posts |
 
+## Upgrade board, milestone 2: Rod Luck (`InstallRodLuck.lua`)
+
+The Rod Luck card (lime) now sells a saved **level**:
+
+| Level | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| Rod Luck | 1x | **2x** | 2.5x | 3x |
+| Price of this level | - | **$10** | $75 | $300 |
+
+Initial tuning in `Config.BoardUpgrades.RodLuck`. `Config.check` enforces:
+Values start at 1 then the card's `FirstValue` (2), increase, and stay at or
+under `MaxValue` (5); the first cost is `UpgradeFirstCost` ($10); costs
+increase and stay at or under `UpgradeCostCap`.
+
+**What 2x means.** Rod Luck changes only the **fish species roll on your own
+casts**:
+
+- Each fish's rod weight is multiplied by `luck ^ ((tier − lowest tier) /
+  (highest tier − lowest tier))`: the commonest tier ×1, the rarest ×luck,
+  tiers between scale geometrically.
+- The odds are then renormalised over all fish. At 2x the rarest fish's
+  weight is **doubled relative to the commonest**. That makes it likelier,
+  never certain.
+- Example with two fish (spawn weights 50 and 20, which rods flatten to
+  weight^0.85): the rare one goes from 31% to 48% at 2x.
+- The **Silver / Gold roll is unchanged**.
+- The rod-fish offer's chance label uses the same odds, so it shows the
+  chance that catch really had.
+
+**Whose luck, and when.** Each accepted press of the fish button fixes the
+**presser's committed** luck for every rod that press casts, next to their
+equipped rod.
+
+- Buying more luck during a cast changes nothing for that cast.
+- A purchase that is still being saved doesn't count yet.
+- Another player's luck never affects your cast.
+- Without the money service, on any error, or for a value outside 1..5: 1x
+  (the old odds).
+
+**Saving:**
+
+- Record field `upgrades` (`{ RodLuck = level }`, whole numbers).
+- A purchase writes the new balance **and** the new level in one write
+  before it counts. The level is staged until then. If the write fails,
+  nothing is charged.
+- An unreadable `upgrades` field is never overwritten: that player has 1x
+  and can't buy this session.
+- Entries a newer build added are kept. A level above this build's last one
+  is kept; its effect is this build's last value.
+
+**The board.** Pressing the card goes through
+`EconomyService.upgradeAction`. It has the same checks as Net Strength:
+alive, loaded, near the board, one purchase at a time (shared with rods and
+the net), a 0.5 s cooldown, and everything re-checked right before the
+debit. Toasts read like "Rod Luck 1x → 2x (-$10)". The card shows **your**
+`2x > 2.5x` and the price, `3x MAX`, SOON while closed, and so on.
+
+**Paid board upgrades stay CLOSED** (`Config.BoardUpgradesOpen = false`),
+separately from Net Strength (`NetKgOpen`). For a Studio validation **with
+API access**, set the `UpgradesOpen` attribute on
+`ReplicatedStorage.Economy`.
+
+**Install:** `InstallRodLuck.lua` (v2 guarded template). It needs
+`EconomyUpgradeBoardBackup` and every source exactly as installed (board
+`af6a79a`, net kg `187fe39`, rods `61a7bd4`).
+
+- Changes: EconomyService, Config, MoneyStore, UpgradeBoardServer,
+  UpgradeBoardClient and RodFishingSystem.
+- Adds: `EconomyService.BoardUpgrades`.
+- Backup: `EconomyRodLuckBackup`.
+- **Rollback:** `RollbackRodLuck.lua`, before `RollbackUpgradeBoard.lua`.
+  Saved levels stay in the records.
+
+### Rod Luck checklist (Studio, API access ON)
+
+| # | Do | Expect |
+|---|---|---|
+| L1 | Play, look at the board | Rod Luck: `1x > 2x`, SOON |
+| L2 | Press Rod Luck (closed) | Toast "Rod Luck upgrades open soon"; nothing charged |
+| L3 | Set `ReplicatedStorage.Economy.UpgradesOpen = true`; press | −10; toast "Rod Luck 1x → 2x (-$10)"; card `2x > 2.5x` `$75` |
+| L4 | Press the fish button, catch fish | Rod-fish offers show chances with 2x (rarer fish's % higher than before); Silver/Gold as before |
+| L5 | A second player without luck fishes | Their offers show the old chances |
+| L6 | Buy 2.5x while your rods are out | That catch keeps 2x; the next press uses 2.5x |
+| L7 | Buy up to 3x | `3x MAX`, MAX; pressing again: "Rod Luck is at the maximum (3x)" |
+| L8 | Stop, Play again (real DataStore) | Your level is back on the card |
+
 ## Blender Bot recovery (`InstallBotRecovery.lua`)
 
 **The bug:** the Blender Bot's loop had no error handling. If anything
@@ -881,9 +967,9 @@ changes; the rest re-check behaviour that already worked.
 ## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau          # 384 checks (rods 80, net kg 42)
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67, shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 47 + 6 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 347 checks
+python3 tools/economy/tests/run_tests.py path/to/luau          # 435 checks (rods 80, net kg 42, board upgrades 51)
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the Rod Luck RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 48 + 6, luck 30 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 363 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

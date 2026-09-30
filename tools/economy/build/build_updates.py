@@ -57,6 +57,9 @@ RODS_RELEASE = "61a7bd4"  # tools/fish-variants InstallMeatGlow patches BotSyste
 # InstallNetKg as released for Astra (187fe39): frozen; the upgrade board
 # builds on the sources it writes, read from that commit.
 NETKG_RELEASE = "187fe39"
+# InstallUpgradeBoard (board milestone 1, Net Strength) as released (af6a79a):
+# frozen; later board milestones read its sources from that commit.
+BOARD_RELEASE = "af6a79a"
 
 
 def git_show(commit: str, path: str) -> str:
@@ -730,6 +733,99 @@ Requires: net kg (EconomyNetKgBackup; its sources exactly as installed).
     return keys
 
 
+def rod_luck() -> list[str]:
+    """Upgrade board milestone 2 (Rod Luck): saved board-upgrade levels
+    (MoneyStore `upgrades`, EconomyService.BoardUpgrades), the Rod Luck
+    card, and RodFishingSystem weighting the caster's catches. On top of the
+    board release (af6a79a) over net kg (187fe39) over rods (61a7bd4)."""
+    import make_board
+
+    make_board.main()
+    core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
+    at = lambda commit, path: git_show(commit, f"tools/economy/{path}")  # noqa: E731
+    cur = lambda path: (ROOT / path).read_text()  # noqa: E731
+    changes = [
+        (
+            {"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("netkg", at(NETKG_RELEASE, "src/server/EconomyService.luau"), cur("src/server/EconomyService.luau"))],
+        ),
+        (
+            {"key": "Config", "where": "ServerScriptService/EconomyService/Config", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("board", at(BOARD_RELEASE, "src/core/Config.luau"), cur("src/core/Config.luau"))],
+        ),
+        (
+            {"key": "MoneyStore", "where": "ServerScriptService/EconomyService/MoneyStore", "class": "ModuleScript", "tag": "EconomyOwned"},
+            [("netkg", at(NETKG_RELEASE, "src/core/MoneyStore.luau"), cur("src/core/MoneyStore.luau"))],
+        ),
+        (
+            {"key": "UpgradeBoardServer", "where": "ServerScriptService/UpgradeBoardServer", "class": "Script", "tag": "EconomyOwned"},
+            [("board", at(BOARD_RELEASE, "src/server/UpgradeBoardServer.server.luau"), cur("src/server/UpgradeBoardServer.server.luau"))],
+        ),
+        (
+            {"key": "UpgradeBoardClient", "where": "StarterPlayer/StarterPlayerScripts/UpgradeBoardClient", "class": "LocalScript", "tag": "EconomyOwned"},
+            [("board", at(BOARD_RELEASE, "src/client/UpgradeBoardClient.client.luau"), cur("src/client/UpgradeBoardClient.client.luau"))],
+        ),
+        (
+            {"key": "RodFishingSystem", "where": "script:RodFishingSystem", "class": "Script"},
+            [("rods", at(RODS_RELEASE, "studio/rods/RodFishingSystem.lua"), make_board.OUT.read_text())],
+        ),
+    ]
+    unchanged = []
+    for name in ("NetKg", "Rods", "Pricing", "Ledger", "Offers", "PieceTags", "Sales"):
+        src = git_show(NETKG_RELEASE, core(name))
+        assert src == (ROOT / "src" / "core" / f"{name}.luau").read_text(), name
+        unchanged.append(({"key": name, "where": f"ServerScriptService/EconomyService/{name}", "class": "ModuleScript", "tag": "EconomyOwned"}, src))
+    for key, where, cls, commit, path in (
+        ("NetCapacityServer", "ServerScriptService/NetCapacityServer", "Script", NETKG_RELEASE, "src/server/NetCapacityServer.server.luau"),
+        ("KgSignClient", "StarterPlayer/StarterPlayerScripts/KgSignClient", "LocalScript", BOARD_RELEASE, "src/client/KgSignClient.client.luau"),
+    ):
+        src = at(commit, path)
+        assert src == cur(path), key
+        unchanged.append(({"key": key, "where": where, "class": cls, "tag": "EconomyOwned"}, src))
+    shop = at(RODS_RELEASE, "studio/rods/RodShopServer.lua")
+    assert shop == cur("studio/rods/RodShopServer.lua"), "RodShopServer"
+    unchanged.append(({"key": "RodShopServer", "where": "script:RodShopServer", "class": "Script"}, shop))
+    adds = [{"where": "ServerScriptService/EconomyService", "name": "BoardUpgrades", "class": "ModuleScript", "source": cur("src/core/BoardUpgrades.luau")}]
+    keys = write_pair_v2(
+        "InstallRodLuck.lua",
+        "RollbackRodLuck.lua",
+        """
+Upgrade board, milestone 2 (Rod Luck): the Rod Luck card sells a saved
+level. 1x -> 2x for $10 (the card), then 2.5x ($75), 3x ($300); initial
+tuning in Config.BoardUpgrades.
+  * saved in the player's Money record as `upgrades` ({ RodLuck = level }):
+    money + level in ONE write before it counts, staged until then;
+    unreadable data is never overwritten; other fields (and a newer build's
+    upgrades) are kept
+  * the board's checks: alive, loaded, near the board, one purchase at a
+    time (shared with rods / net), cooldown, re-checked right before the debit
+  * RodFishingSystem: each accepted press fixes the PRESSER's committed luck
+    for every rod it casts. Each fish's weight x luck^((tier - lowest) /
+    (highest - lowest)), renormalised: at 2x the rarest tier's weight is
+    doubled relative to the commonest - likelier, never certain. The offer's
+    chance label uses the same odds. Silver / Gold odds are unchanged. No
+    money service / luck 1: the old odds.
+  * PAID BOARD UPGRADES STAY CLOSED (Config.BoardUpgradesOpen = false): SOON
+    on the card. For a Studio validation set the UpgradesOpen attribute on
+    ReplicatedStorage.Economy.
+Changes EconomyService, Config, MoneyStore, UpgradeBoardServer,
+UpgradeBoardClient and RodFishingSystem; adds EconomyService.BoardUpgrades.
+Requires: the upgrade board (EconomyUpgradeBoardBackup; every source
+exactly as installed).
+""",
+        "EconomyRodLuckBackup",
+        [["EconomyUpgradeBoardBackup"]],
+        ["EconomyRodLuckBackup"],
+        [],
+        changes,
+        unchanged,
+        adds,
+        ROOT,
+    )
+    assert keys == ["EconomyService", "Config", "MoneyStore", "UpgradeBoardServer", "UpgradeBoardClient", "RodFishingSystem"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -742,8 +838,9 @@ def main() -> None:
     # InstallRods / InstallRodShopUI are FROZEN at the 61a7bd4 release Astra
     # installed (pending validation): rods() / rod_shop_ui() are not rerun;
     # later milestones read their sources from git at RODS_RELEASE.
-    # InstallNetKg is FROZEN at the 187fe39 release: net_kg() is not rerun.
-    upgrade_board()
+    # InstallNetKg is FROZEN at the 187fe39 release: net_kg() is not rerun;
+    # InstallUpgradeBoard is FROZEN at af6a79a: upgrade_board() is not rerun.
+    rod_luck()
 
 
 if __name__ == "__main__":

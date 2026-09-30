@@ -1,5 +1,5 @@
 -- UpgradeBoardClient (LocalScript in StarterPlayer.StarterPlayerScripts).
--- [Economy upgrade board v1]
+-- [Economy upgrade board v2: Rod Luck]
 --
 -- Draws the four-upgrade board for THIS player on Workspace.Board.Main
 -- (a copy of its SurfaceGui in PlayerGui, adorned to Main; the original is
@@ -7,13 +7,13 @@
 --   2 x 2 cards in a wooden frame, white outlined text, a themed icon and a
 --   green Buy button on each:
 --     Net Strength (pink)   15kg > 20kg    $10
---     Rod Luck (lime)       1x > 2x        SOON
+--     Rod Luck (lime)       1x > 2x        $10
 --     Meat Price (cyan)     1x > 2x        SOON
 --     Faster Reels (amber)  1x > 1.2x      SOON
--- Net Strength shows YOUR saved net (the same one the KGsign posts sell):
--- current > next and its price, MAX at the cap, SOON while paid upgrades
--- aren't open, "..." while your money loads, the price in red when you
--- can't afford it. Pressing (mouse, touch or gamepad) shows SAVING... while
+-- Net Strength shows YOUR saved net (the same one the KGsign posts sell);
+-- Rod Luck YOUR saved luck level. Each: current > next and its price, MAX
+-- at the last level, SOON while those paid upgrades aren't open, "..."
+-- while your money loads, the price in red when you can't afford it. Pressing (mouse, touch or gamepad) shows SAVING... while
 -- the server checks, charges and saves, then its real answer for a moment
 -- (BOUGHT! / NEED $ / TOO FAR / NOT SAVED / ...); the full message is the
 -- server's toast. The client decides nothing.
@@ -43,7 +43,7 @@ local FLASH_SECONDS = 1.6
 
 local CARDS = {
 	{ id = "NetStrength", title = "Net Strength", icon = "🥅", color = Color3.fromRGB(255, 120, 190) },
-	{ id = "RodLuck", title = "Rod Luck", icon = "🍀", color = Color3.fromRGB(150, 225, 45), value = "1x > 2x" },
+	{ id = "RodLuck", title = "Rod Luck", icon = "🍀", color = Color3.fromRGB(150, 225, 45), value = "1x > 2x", upgrade = true },
 	{ id = "MeatPrice", title = "Meat Price", icon = "🥩", color = Color3.fromRGB(45, 205, 235), value = "1x > 2x" },
 	{ id = "FasterReels", title = "Faster Reels", icon = "⚡", color = Color3.fromRGB(255, 180, 35), value = "1x > 1.2x" },
 }
@@ -173,8 +173,31 @@ local function setButton(c, text: string, color: Color3, live: boolean)
 	c.button.BackgroundColor3 = if live then WHITE else Color3.fromRGB(120, 120, 125)
 end
 
+-- one card's button (the server's answer stays up while it flashes)
+local function showState(c, remote: Instance?, loaded: boolean, maxed: boolean, open: boolean, cost: number?)
+	if c.pending then
+		setButton(c, "SAVING...", WHITE, true)
+	elseif os.clock() < c.flashUntil then
+		-- the server's answer stays up for a moment
+	elseif not remote then
+		setButton(c, "OFF", GREY, false)
+	elseif not loaded then
+		setButton(c, "...", GREY, false)
+	elseif maxed or not cost then
+		setButton(c, "MAX", GREY, false)
+	elseif not open then
+		setButton(c, "SOON", GREY, false)
+	else
+		local have = money()
+		setButton(c, "$" .. tostring(cost), if have and have < cost then SHORT else WHITE, true)
+	end
+end
+
+local function times(v: number): string
+	return (string.format("%.2f", v):gsub("0+$", ""):gsub("%.$", "")) .. "x"
+end
+
 local function render()
-	local now = os.clock()
 	local econ = economy()
 	local remote = econ and econ:FindFirstChild("UpgradeAction")
 	-- Net Strength: the saved net capacity
@@ -183,36 +206,36 @@ local function render()
 		local kg = player:GetAttribute("NetKg")
 		local nextKg = player:GetAttribute("NetKgNext")
 		local cost = player:GetAttribute("NetKgCost")
-		local open = econ ~= nil and econ:GetAttribute("NetKgPaidOpen") == true
+		local maxed = type(nextKg) ~= "number" or type(cost) ~= "number"
 		if type(kg) ~= "number" then
 			net.value.Text = "Net"
-		elseif type(nextKg) ~= "number" or type(cost) ~= "number" then
+		elseif maxed then
 			net.value.Text = string.format("%dkg MAX", kg)
 		else
 			net.value.Text = string.format("%dkg > %dkg", kg, nextKg)
 		end
-		if net.pending then
-			setButton(net, "SAVING...", WHITE, true)
-		elseif now < net.flashUntil then
-			-- the server's answer stays up for a moment
-		elseif not remote then
-			setButton(net, "OFF", GREY, false)
-		elseif type(kg) ~= "number" then
-			setButton(net, "...", GREY, false)
-		elseif type(nextKg) ~= "number" or type(cost) ~= "number" then
-			setButton(net, "MAX", GREY, false)
-		elseif not open then
-			setButton(net, "SOON", GREY, false)
-		else
-			local have = money()
-			setButton(net, "$" .. tostring(cost), if have and have < cost then SHORT else WHITE, true)
-		end
+		showState(net, remote, type(kg) == "number", maxed, econ ~= nil and econ:GetAttribute("NetKgPaidOpen") == true,
+			if type(cost) == "number" then cost else nil)
 	end
-	-- not sold yet
+	local upgradesOpen = econ ~= nil and econ:GetAttribute("UpgradesPaidOpen") == true
 	for _, def in ipairs(CARDS) do
 		local c = cards[def.id]
-		if c and def.id ~= "NetStrength" and not c.pending and now >= c.flashUntil then
-			setButton(c, "SOON", GREY, false)
+		if c and def.upgrade then
+			-- a board upgrade: the saved level's value (Upg<Id>, Upg<Id>Next, Upg<Id>Cost)
+			local v = player:GetAttribute("Upg" .. def.id)
+			local nextV = player:GetAttribute("Upg" .. def.id .. "Next")
+			local cost = player:GetAttribute("Upg" .. def.id .. "Cost")
+			local maxed = type(nextV) ~= "number" or type(cost) ~= "number"
+			if type(v) ~= "number" then
+				c.value.Text = def.value
+			elseif maxed then
+				c.value.Text = times(v) .. " MAX"
+			else
+				c.value.Text = times(v) .. " > " .. times(nextV)
+			end
+			showState(c, remote, type(v) == "number", maxed, upgradesOpen, if type(cost) == "number" then cost else nil)
+		elseif c and def.id ~= "NetStrength" and not c.pending and os.clock() >= c.flashUntil then
+			setButton(c, "SOON", GREY, false) -- not sold yet
 		end
 	end
 end
@@ -341,7 +364,7 @@ end)
 ------------------------------------------------------------ updates
 
 player.AttributeChanged:Connect(function(name)
-	if name == "NetKg" or name == "NetKgNext" or name == "NetKgCost" then
+	if name == "NetKg" or name == "NetKgNext" or name == "NetKgCost" or string.sub(name, 1, 3) == "Upg" then
 		render()
 	end
 end)
@@ -369,6 +392,7 @@ if stats then
 end
 local function watchEconomy(econ: Instance)
 	econ:GetAttributeChangedSignal("NetKgPaidOpen"):Connect(render)
+	econ:GetAttributeChangedSignal("UpgradesPaidOpen"):Connect(render)
 	econ.ChildAdded:Connect(render) -- UpgradeAction appears
 	render()
 end

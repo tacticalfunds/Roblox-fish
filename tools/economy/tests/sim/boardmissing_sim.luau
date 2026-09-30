@@ -60,7 +60,7 @@ advance(1.5)
 local g = A.PlayerGui:FindFirstChild("UpgradeBoard")
 local price = g and g.bord3.NetStrength.Buy.Price
 check("one Board left: drawn, but without the server's remote every card says OFF / SOON", price ~= nil and price.Text == "OFF"
-	and g.bord3.RodLuck.Buy.Price.Text == "SOON")
+	and g.bord3.RodLuck.Buy.Price.Text == "OFF" and g.bord3.MeatPrice.Buy.Price.Text == "SOON")
 click(A, g.bord3.NetStrength.Buy)
 advance(0.5)
 check("pressing sends nothing, charges nothing", price.Text == "OFF" and Economy.balance(A) == 2000 and lastNotice(A) == nil)
