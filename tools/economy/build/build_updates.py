@@ -62,6 +62,8 @@ NETKG_RELEASE = "187fe39"
 BOARD_RELEASE = "af6a79a"
 # InstallRodLuck (board milestone 2) as released (7584f1e): frozen.
 LUCK_RELEASE = "7584f1e"
+# InstallMeatPrice (board milestone 3) as released (7141af5): frozen.
+MEAT_RELEASE = "7141af5"
 
 
 def git_show(commit: str, path: str) -> str:
@@ -907,6 +909,82 @@ installed).
     return keys
 
 
+def faster_reels() -> list[str]:
+    """Upgrade board milestone 4 (Faster Reels): the caster's saved reel
+    speed shortens the reel-in (server timing and the clients' animation,
+    which follows the server's Dur). On top of the Meat Price release
+    (7141af5); RodFishingSystem as Rod Luck (7584f1e) left it."""
+    import make_board
+
+    make_board.main()
+    at = lambda commit, path: git_show(commit, f"tools/economy/{path}")  # noqa: E731
+    cur = lambda path: (ROOT / path).read_text()  # noqa: E731
+    mod = lambda key: {"key": key, "where": f"ServerScriptService/EconomyService/{key}", "class": "ModuleScript", "tag": "EconomyOwned"}  # noqa: E731
+    changes = [
+        (mod("Config"), [("meatprice", at(MEAT_RELEASE, "src/core/Config.luau"), cur("src/core/Config.luau"))]),
+        (
+            {"key": "UpgradeBoardServer", "where": "ServerScriptService/UpgradeBoardServer", "class": "Script", "tag": "EconomyOwned"},
+            [("meatprice", at(MEAT_RELEASE, "src/server/UpgradeBoardServer.server.luau"), cur("src/server/UpgradeBoardServer.server.luau"))],
+        ),
+        (
+            {"key": "UpgradeBoardClient", "where": "StarterPlayer/StarterPlayerScripts/UpgradeBoardClient", "class": "LocalScript", "tag": "EconomyOwned"},
+            [("meatprice", at(MEAT_RELEASE, "src/client/UpgradeBoardClient.client.luau"), cur("src/client/UpgradeBoardClient.client.luau"))],
+        ),
+        (
+            {"key": "RodFishingSystem", "where": "script:RodFishingSystem", "class": "Script"},
+            [("rodluck", at(LUCK_RELEASE, "studio/board/RodFishingSystem.lua"), make_board.OUT.read_text())],
+        ),
+    ]
+    assert at(MEAT_RELEASE, "studio/board/RodFishingSystem.lua") == at(LUCK_RELEASE, "studio/board/RodFishingSystem.lua")
+    unchanged = []
+    svc = at(MEAT_RELEASE, "src/server/EconomyService.luau")
+    assert svc == cur("src/server/EconomyService.luau"), "EconomyService"
+    unchanged.append(({"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"}, svc))
+    for name in ("MoneyStore", "BoardUpgrades", "Pricing", "Ledger", "Sales", "NetKg", "Rods", "Offers", "PieceTags"):
+        src = at(MEAT_RELEASE, f"src/core/{name}.luau")
+        assert src == cur(f"src/core/{name}.luau"), name
+        unchanged.append((mod(name), src))
+    for key, where, cls, path in (
+        ("NetCapacityServer", "ServerScriptService/NetCapacityServer", "Script", "src/server/NetCapacityServer.server.luau"),
+        ("KgSignClient", "StarterPlayer/StarterPlayerScripts/KgSignClient", "LocalScript", "src/client/KgSignClient.client.luau"),
+    ):
+        src = at(MEAT_RELEASE, path)
+        assert src == cur(path), key
+        unchanged.append(({"key": key, "where": where, "class": cls, "tag": "EconomyOwned"}, src))
+    keys = write_pair_v2(
+        "InstallFasterReels.lua",
+        "RollbackFasterReels.lua",
+        """
+Upgrade board, milestone 4 (Faster Reels): the Faster Reels card sells a
+saved reel speed. 1x -> 1.2x for $10 (the card), then 1.35x ($100), 1.5x
+($400); initial tuning in Config.BoardUpgrades (never above 2x).
+  * RodFishingSystem: each accepted press fixes the PRESSER's committed reel
+    speed for every rod it casts (next to their rod and luck). The reel-in
+    takes 3.4 / speed seconds (2.83 s at 1.2x); the silhouette flicks keep
+    pace. The clients' rising-fish animation already runs over the
+    server's Dur and the rod bends while the server says Pulling, so it
+    shortens with it - no client script changes.
+  * the bite wait is untouched: that stays the equipped rod's benefit.
+  * saved like Rod Luck (`upgrades.FasterReels`); PAID BOARD UPGRADES STAY
+    CLOSED (UpgradesOpen).
+Changes Config, UpgradeBoardServer, UpgradeBoardClient and
+RodFishingSystem.
+Requires: Meat Price (EconomyMeatPriceBackup; every source exactly as
+installed).
+""",
+        "EconomyFasterReelsBackup",
+        [["EconomyMeatPriceBackup"]],
+        ["EconomyFasterReelsBackup"],
+        [],
+        changes,
+        unchanged,
+        [],
+        ROOT,
+    )
+    assert keys == ["Config", "UpgradeBoardServer", "UpgradeBoardClient", "RodFishingSystem"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -921,8 +999,9 @@ def main() -> None:
     # later milestones read their sources from git at RODS_RELEASE.
     # InstallNetKg is FROZEN at the 187fe39 release: net_kg() is not rerun;
     # InstallUpgradeBoard is FROZEN at af6a79a: upgrade_board() is not rerun;
-    # InstallRodLuck is FROZEN at 7584f1e: rod_luck() is not rerun.
-    meat_price()
+    # InstallRodLuck is FROZEN at 7584f1e: rod_luck() is not rerun;
+    # InstallMeatPrice is FROZEN at 7141af5: meat_price() is not rerun.
+    faster_reels()
 
 
 if __name__ == "__main__":

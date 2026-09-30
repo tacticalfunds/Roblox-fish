@@ -358,7 +358,7 @@ local function runRod(rod, player)
 		})
 		if not toTank then Aquarium.abort(rod.key) end
 	end
-	local REEL = 3.4
+	local REEL = 3.4 / (rod.reelSpeed or 1) -- FasterReels: the caster's reel speed, fixed at the press (clients follow Dur)
 	local t0 = workspace:GetServerTimeNow()
 	rod.model:SetAttribute("CastT0", nil) -- RodCast: the reel animation takes over
 	rod.model:SetAttribute("PullT0", t0)
@@ -386,7 +386,7 @@ local function runRod(rod, player)
 	bob.Red.Transparency = 1 bob.White.Transparency = 1
 	-- flick through every fish in order (worst -> best, looping), slowing down
 	local idx = math.random(1, #pool)
-	local delay = 0.05
+	local delay = 0.05 / (rod.reelSpeed or 1) -- FasterReels: the silhouette flicks keep pace
 	for i = 1, #pool do
 		show(pool[idx].name, true)
 		idx = idx % #pool + 1
@@ -533,6 +533,7 @@ local function safeRunRod(rod, player)
 	rod.model:SetAttribute("CastRod", nil) -- Rods
 	rod.biteWait, rod.castRodId = nil, nil
 	rod.luck = nil -- RodLuck
+	rod.reelSpeed = nil -- FasterReels
 	rod.temp = nil
 	if Aquarium then Aquarium.abort(rod.key) end -- no-op after a normal landing
 	rod.state = "idle"
@@ -558,6 +559,17 @@ local function luckFor(player)
 	if Economy and type(Economy.upgradeValue) == "function" then
 		local ok, v = pcall(Economy.upgradeValue, player, "RodLuck")
 		if ok and type(v) == "number" and v >= 1 and v <= 5 then
+			return v
+		end
+	end
+	return 1
+end
+-- FasterReels: the presser's committed reel speed, read once per accepted
+-- press (1 without the money service, on any error, or outside 1..2).
+local function reelFor(player)
+	if Economy and type(Economy.upgradeValue) == "function" then
+		local ok, v = pcall(Economy.upgradeValue, player, "FasterReels")
+		if ok and type(v) == "number" and v >= 1 and v <= 2 then
 			return v
 		end
 	end
@@ -599,6 +611,9 @@ local function press(player)
 	-- RodLuck: the presser's luck, fixed for this cast (buying later changes nothing)
 	local luck = luckFor(player)
 	for _, rod in ipairs(toCast) do rod.luck = luck end
+	-- FasterReels: the presser's reel speed, fixed for this cast (the bite wait stays the rod's)
+	local reelSpeed = reelFor(player)
+	for _, rod in ipairs(toCast) do rod.reelSpeed = reelSpeed end
 	local pending = 0
 	for _, rod in ipairs(toCast) do
 		pending += 1

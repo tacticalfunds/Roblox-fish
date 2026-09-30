@@ -919,6 +919,55 @@ checks, `UpgradesOpen` for a Studio validation).
 | P6 | Meat already on the stack when you buy | Sells at the old value |
 | P7 | Stop, Play again (real DataStore) | Your level is back |
 
+## Upgrade board, milestone 4: Faster Reels (`InstallFasterReels.lua`)
+
+The Faster Reels card (amber) sells a saved **reel speed** for your own
+casts:
+
+| Level | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| Faster Reels | 1x | **1.2x** | 1.35x | 1.5x |
+| Reel-in | 3.4 s | 2.83 s | 2.52 s | 2.27 s |
+| Price of this level | - | **$10** | $100 | $400 |
+
+Initial tuning in `Config.BoardUpgrades.FasterReels`, never above 2x
+(`MaxValue`).
+
+**What it changes:**
+
+- Each accepted press of the fish button fixes the **presser's committed**
+  reel speed for every rod it casts, next to their rod and luck.
+- The reel-in (fish rising on the line) takes `3.4 / speed` seconds on the
+  server, and the silhouette flicks speed up by the same factor.
+- The clients need no change. Their rising-fish animation already runs over
+  the server's `Dur` attribute, and the rod bends while the server says
+  `Pulling`, so both shorten with the server's timing.
+- **The bite wait is not touched.** That stays the equipped rod's benefit
+  (`BiteWait`). A purchase during a cast applies from the next press.
+
+**Saving, checks and closing:** the same as Rod Luck
+(`upgrades.FasterReels`, `UpgradesOpen`).
+
+**Install:** `InstallFasterReels.lua` (v2 guarded template). It needs
+`EconomyMeatPriceBackup` and every source exactly as installed (Meat Price
+`7141af5`, RodFishingSystem as Rod Luck `7584f1e` left it).
+
+- Changes: Config, UpgradeBoardServer, UpgradeBoardClient and
+  RodFishingSystem.
+- Backup: `EconomyFasterReelsBackup`.
+- **Rollback:** `RollbackFasterReels.lua`, before `RollbackMeatPrice.lua`.
+
+### Faster Reels checklist (Studio, API access ON)
+
+| # | Do | Expect |
+|---|---|---|
+| F1 | Play, look at the board | Faster Reels: `1x > 1.2x`, SOON |
+| F2 | Set `UpgradesOpen = true`; press Faster Reels | −10; toast "Faster Reels 1x → 1.2x (-$10)"; card `1.2x > 1.35x` `$100` |
+| F3 | Press the fish button | The fish rise on the line in about 2.8 s instead of 3.4 s, smoothly (no jump at the end); the rod bends for the same time |
+| F4 | Compare the wait for a bite | Unchanged (only your rod changes that) |
+| F5 | A second player without it fishes | Their reel stays 3.4 s |
+| F6 | Stop, Play again (real DataStore) | Your level is back |
+
 ## Blender Bot recovery (`InstallBotRecovery.lua`)
 
 **The bug:** the Blender Bot's loop had no error handling. If anything
@@ -1026,9 +1075,9 @@ changes; the rest re-check behaviour that already worked.
 ## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau          # 449 checks (rods 80, net kg 42, board upgrades 65)
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the Rod Luck RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 48 + 6, luck 30, meat 14 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 376 checks
+python3 tools/economy/tests/run_tests.py path/to/luau          # 451 checks (rods 80, net kg 42, board upgrades 67)
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 48 + 6, luck 30, meat 14, reels 15 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 389 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

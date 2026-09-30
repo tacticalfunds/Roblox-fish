@@ -261,6 +261,15 @@ do
 	check("next price continues from level 1 (75)", select(4, m2:buyUpgrade(9, "RodLuck")) == 75)
 end
 
+------------------------------------------------------------ Faster Reels (tuning; the reel itself: reels_sim)
+
+check("Faster Reels is a board upgrade: 1x > 1.2x for $10, then 1.35x $100, 1.5x $400, capped at 2", BoardUpgrades.known("FasterReels")
+	and select(3, BoardUpgrades.nextStep("FasterReels", 0)) == 1.2 and select(2, BoardUpgrades.nextStep("FasterReels", 0)) == 10
+	and select(2, BoardUpgrades.nextStep("FasterReels", 1)) == 100 and select(2, BoardUpgrades.nextStep("FasterReels", 2)) == 400
+	and BoardUpgrades.value("FasterReels", 3) == 1.5 and BoardUpgrades.nextStep("FasterReels", 3) == nil
+	and Config.BoardUpgrades.FasterReels.MaxValue == 2)
+check("every board card is a board upgrade except Net Strength (NetKg)", table.concat(BoardUpgrades.ids(), ",") == "RodLuck,MeatPrice,FasterReels")
+
 ------------------------------------------------------------ Meat Price
 
 check("Meat Price is a board upgrade: 1x > 2x for $10, then 2.5x $150, 3x $600", BoardUpgrades.known("MeatPrice")

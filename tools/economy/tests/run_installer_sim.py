@@ -160,6 +160,8 @@ BOARD_RELEASE = "af6a79a"  # InstallUpgradeBoard (board milestone 1) as released
 BOARD_FROZEN = ["InstallUpgradeBoard.lua", "RollbackUpgradeBoard.lua"]
 LUCK_RELEASE = "7584f1e"  # InstallRodLuck (board milestone 2) as released
 LUCK_FROZEN = ["InstallRodLuck.lua", "RollbackRodLuck.lua"]
+MEAT_RELEASE = "7141af5"  # InstallMeatPrice (board milestone 3) as released
+MEAT_FROZEN = ["InstallMeatPrice.lua", "RollbackMeatPrice.lua"]
 SALES_FROZEN = ["UpgradeAquariumV12.lua", "RollbackAquariumV12.lua", "InstallSales.lua", "RollbackSales.lua", "InstallUpgrades.lua", "RollbackUpgrades.lua"]
 AQUARIUM_V1 = "2e320f9"
 AQ_SHARED = ["Adapters", "Config", "CycleState", "Messages", "RiverRelease", "SharedTank", "TankPath", "Upgrades"]
@@ -1690,6 +1692,69 @@ do
 	check("meat price over an edited Pricing: refused", refused() and snapshot(g) == before)
 end
 
+-- Faster Reels: on top of Meat Price
+local function reelsUp(g, s) warnings = {} runReels(g, s.Workspace) end
+local function reelsBack(g, s) warnings = {} runReelsBack(g, s.Workspace) end
+local function withMeat()
+	local g, sv, history, sc = withLuck()
+	meat(g, sv)
+	assert(not refused(), "meat price: " .. tostring(warnings[#warnings]))
+	return g, sv, history, sc
+end
+do
+	local g, sv, history, sc = withMeat()
+	local svc = sv.ServerScriptService.EconomyService
+	local sps = sv.StarterPlayer.StarterPlayerScripts
+	local backups = {}
+	for _, bk in ipairs(sv.ServerStorage:GetChildren()) do
+		backups[bk.Name] = subtree(bk)
+	end
+	local before = snapshot(g)
+	sv.RunService.running = true
+	reelsUp(g, sv)
+	check("faster reels in Play: refused", refused() and snapshot(g) == before)
+	sv.RunService.running = false
+	local commits = history.commits
+	reelsUp(g, sv)
+	check("faster reels on meat price: one undo step", not refused() and history.commits == commits + 1)
+	check("faster reels: Config / board scripts / RodFishingSystem updated", svc.Config.Source == REELS.Config
+		and sv.ServerScriptService.UpgradeBoardServer.Source == REELS.Server and sps.UpgradeBoardClient.Source == REELS.Client
+		and sc.RodFishingSystem.Source == REELS.Fishing)
+	check("faster reels: EconomyService / Pricing / Ledger / MoneyStore as meat price left them", svc.Source == MEAT.EconomyService
+		and svc.Pricing.Source == MEAT.Pricing and svc.Ledger.Source == MEAT.Ledger and svc.MoneyStore.Source == LUCK.MoneyStore)
+	check("faster reels: backup = 4 changes", #sv.ServerStorage.EconomyFasterReelsBackup:GetChildren() == 4)
+	local kept = true
+	for name, tree in pairs(backups) do
+		kept = kept and sv.ServerStorage:FindFirstChild(name) ~= nil and subtree(sv.ServerStorage[name]) == tree
+	end
+	check("faster reels: every earlier backup untouched", kept)
+	local after = snapshot(g)
+	reelsUp(g, sv)
+	check("faster reels twice: refused", refused() and snapshot(g) == after)
+	meatBack(g, sv)
+	check("meat price rollback refused while faster reels is in", refused() and snapshot(g) == after)
+	luckBack(g, sv)
+	check("rod luck rollback refused while faster reels is in", refused() and snapshot(g) == after)
+	sc.RodFishingSystem.Source ..= "\n-- hand edit"
+	local edited = snapshot(g)
+	reelsBack(g, sv)
+	check("faster reels rollback over an edited RodFishingSystem: refused", refused() and snapshot(g) == edited)
+	sc.RodFishingSystem.Source = REELS.Fishing
+	reelsBack(g, sv)
+	check("faster reels rollback: exactly the meat price state", not refused() and snapshot(g) == before and sc.RodFishingSystem.Source == LUCK.Fishing)
+	meatBack(g, sv)
+	luckBack(g, sv)
+	boardBack(g, sv)
+	netKgBack(g, sv)
+	check("then meat price, rod luck, the board and net kg roll back in order", not refused())
+end
+do
+	local g, sv = withLuck() -- no meat price
+	local before = snapshot(g)
+	reelsUp(g, sv)
+	check("faster reels without meat price: refused", refused() and snapshot(g) == before)
+end
+
 -- the old baseline (no HarpoonT in the despawn guard) is not what Studio has: refused
 do
 	local g, sv, _, sc = astraPlace()
@@ -1793,6 +1858,10 @@ def main() -> int:
         if (ROOT.parent / "fish-jump" / frozen).read_text() != git_show(frozen, "1a19061", "tools/fish-jump/"):
             print(f"FAIL: fish-jump/{frozen} differs from the 1a19061 release")
             return 1
+    for frozen in MEAT_FROZEN:
+        if (ROOT / frozen).read_text() != git_show(frozen, MEAT_RELEASE):
+            print(f"FAIL: {frozen} differs from the {MEAT_RELEASE} Meat Price release")
+            return 1
     for frozen in LUCK_FROZEN:
         if (ROOT / frozen).read_text() != git_show(frozen, LUCK_RELEASE):
             print(f"FAIL: {frozen} differs from the {LUCK_RELEASE} Rod Luck release")
@@ -1886,16 +1955,24 @@ def main() -> int:
         "Fishing": "studio/board/RodFishingSystem.lua",
     }
     tables += "local LUCK = {\n" + "".join(f"\t{k} = {lua_string(git_show(v, LUCK_RELEASE))},\n" for k, v in luck_files.items()) + "}\n"
+    # what InstallMeatPrice writes (the 7141af5 release)
     meat_files = {
-        "EconomyService": ROOT / "src/server/EconomyService.luau",
+        "EconomyService": "src/server/EconomyService.luau",
+        "Config": "src/core/Config.luau",
+        "Pricing": "src/core/Pricing.luau",
+        "Ledger": "src/core/Ledger.luau",
+        "Sales": "src/core/Sales.luau",
+        "Server": "src/server/UpgradeBoardServer.server.luau",
+        "Client": "src/client/UpgradeBoardClient.client.luau",
+    }
+    tables += "local MEAT = {\n" + "".join(f"\t{k} = {lua_string(git_show(v, MEAT_RELEASE))},\n" for k, v in meat_files.items()) + "}\n"
+    reels_files = {
         "Config": ROOT / "src/core/Config.luau",
-        "Pricing": ROOT / "src/core/Pricing.luau",
-        "Ledger": ROOT / "src/core/Ledger.luau",
-        "Sales": ROOT / "src/core/Sales.luau",
         "Server": ROOT / "src/server/UpgradeBoardServer.server.luau",
         "Client": ROOT / "src/client/UpgradeBoardClient.client.luau",
+        "Fishing": ROOT / "studio/board/RodFishingSystem.lua",
     }
-    tables += "local MEAT = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in meat_files.items()) + "}\n"
+    tables += "local REELS = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in reels_files.items()) + "}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1996,6 +2073,8 @@ def main() -> int:
         + wrap("runLuckBack", (ROOT / "RollbackRodLuck.lua").read_text())
         + wrap("runMeat", (ROOT / "InstallMeatPrice.lua").read_text())
         + wrap("runMeatBack", (ROOT / "RollbackMeatPrice.lua").read_text())
+        + wrap("runReels", (ROOT / "InstallFasterReels.lua").read_text())
+        + wrap("runReelsBack", (ROOT / "RollbackFasterReels.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

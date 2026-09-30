@@ -205,8 +205,12 @@ Config.BoardUpgrades = {
 	-- multiplied by the owner's value once, rounded, then split into meat
 	-- pieces as before. Fish values differ, so the card shows 1x > 2x, not $.
 	MeatPrice = { Name = "Meat Price", Values = { 1, 2, 2.5, 3 }, Costs = { 10, 150, 600 }, FirstValue = 2, MaxValue = 5 },
+	-- Faster Reels: the owner's reel-in speed on their own casts. The reel
+	-- (3.4 s at 1x) takes 3.4 / Value seconds, server and client animation
+	-- alike. Separate from the equipped rod, which shortens the bite wait.
+	FasterReels = { Name = "Faster Reels", Values = { 1, 1.2, 1.35, 1.5 }, Costs = { 10, 100, 400 }, FirstValue = 1.2, MaxValue = 2 },
 }
-Config.BoardUpgradeIds = { "RodLuck", "MeatPrice" } -- the order they are listed and checked
+Config.BoardUpgradeIds = { "RodLuck", "MeatPrice", "FasterReels" } -- the order they are listed and checked
 -- PAID board upgrades (other than Net Strength, which is NetKgOpen) stay
 -- closed until the saved path is validated in Studio with real DataStore
 -- access: set true here, or (for a test) the UpgradesOpen attribute on

@@ -17,6 +17,17 @@ studio/board/RodFishingSystem.lua. Changes, marked "RodLuck":
     roll, as before)
   * the Silver / Gold roll (Variants.roll) is untouched
 
+and (Faster Reels, board milestone 4), marked "FasterReels":
+
+  * each accepted press also snapshots the PRESSER's committed reel speed
+    (EconomyService.upgradeValue(player, "FasterReels"); 1 without the
+    money service, on any error or outside 1..2)
+  * the reel-in takes REEL / speed (3.4 s at 1x, ~2.83 s at 1.2x). The
+    clients' fish-rising animation already follows the server's Dur
+    attribute and the rod's Pulling flag, so it shortens with it; the
+    silhouette flicks speed up by the same factor
+  * the bite wait is untouched: that stays the equipped rod's benefit
+
 Usage:  python3 tools/economy/build/make_board.py
 """
 import pathlib
@@ -141,6 +152,55 @@ def build() -> str:
     assert src.index("local LuckMath = nil") < src.index("LuckMath = if type(api.BoardUpgrades)")
     assert src.index("local function luckFor") < src.index("local luck = luckFor(player)")
     assert "Variants.roll(math.random())" in src  # the Silver / Gold roll is untouched
+    return reels(Patch(src))
+
+
+def reels(p: Patch) -> str:
+    p.rep(
+        "\tlocal REEL = 3.4\n",
+        "\tlocal REEL = 3.4 / (rod.reelSpeed or 1) -- FasterReels: the caster's reel speed, fixed at the press (clients follow Dur)\n",
+    )
+    p.rep(
+        "\tlocal delay = 0.05\n",
+        "\tlocal delay = 0.05 / (rod.reelSpeed or 1) -- FasterReels: the silhouette flicks keep pace\n",
+    )
+    p.rep(
+        "\trod.luck = nil -- RodLuck\n",
+        "\trod.luck = nil -- RodLuck\n"
+        "\trod.reelSpeed = nil -- FasterReels\n",
+    )
+    p.rep(
+        "\treturn 1\n"
+        "end\n"
+        "\n"
+        "------------------------------------------------------------ pressing the button\n",
+        "\treturn 1\n"
+        "end\n"
+        "-- FasterReels: the presser's committed reel speed, read once per accepted\n"
+        "-- press (1 without the money service, on any error, or outside 1..2).\n"
+        "local function reelFor(player)\n"
+        "\tif Economy and type(Economy.upgradeValue) == \"function\" then\n"
+        "\t\tlocal ok, v = pcall(Economy.upgradeValue, player, \"FasterReels\")\n"
+        "\t\tif ok and type(v) == \"number\" and v >= 1 and v <= 2 then\n"
+        "\t\t\treturn v\n"
+        "\t\tend\n"
+        "\tend\n"
+        "\treturn 1\n"
+        "end\n"
+        "\n"
+        "------------------------------------------------------------ pressing the button\n",
+    )
+    p.rep(
+        "\tfor _, rod in ipairs(toCast) do rod.luck = luck end\n",
+        "\tfor _, rod in ipairs(toCast) do rod.luck = luck end\n"
+        "\t-- FasterReels: the presser's reel speed, fixed for this cast (the bite wait stays the rod's)\n"
+        "\tlocal reelSpeed = reelFor(player)\n"
+        "\tfor _, rod in ipairs(toCast) do rod.reelSpeed = reelSpeed end\n",
+    )
+    src = p.src
+    assert src.index("local function reelFor") < src.index("local reelSpeed = reelFor(player)")
+    # the bite wait is the rod's alone
+    assert "(rod.biteWait or 1)))" in src and "reelSpeed" not in src[src.index("-- 2) wait for a bite"):src.index("-- 3) reel it up")]
     return src
 
 

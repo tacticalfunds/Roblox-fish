@@ -1,5 +1,5 @@
 -- UpgradeBoardClient (LocalScript in StarterPlayer.StarterPlayerScripts).
--- [Economy upgrade board v3: Meat Price]
+-- [Economy upgrade board v4: Faster Reels]
 --
 -- Draws the four-upgrade board for THIS player on Workspace.Board.Main
 -- (a copy of its SurfaceGui in PlayerGui, adorned to Main; the original is
@@ -9,10 +9,11 @@
 --     Net Strength (pink)   15kg > 20kg    $10
 --     Rod Luck (lime)       1x > 2x        $10
 --     Meat Price (cyan)     1x > 2x        $10
---     Faster Reels (amber)  1x > 1.2x      SOON
+--     Faster Reels (amber)  1x > 1.2x      $10
 -- Net Strength shows YOUR saved net (the same one the KGsign posts sell);
--- Rod Luck and Meat Price YOUR saved levels (Meat Price is a value
--- multiplier on your own fish - fish values differ, so it isn't shown in $).
+-- Rod Luck, Meat Price and Faster Reels YOUR saved levels (Meat Price is a
+-- value multiplier on your own fish - fish values differ, so it isn't shown
+-- in $).
 -- Each: current > next and its price, MAX at the last level, SOON while
 -- those paid upgrades aren't open, "..." while your money loads, the price
 -- in red when you can't afford it. Pressing (mouse, touch or gamepad) shows
@@ -47,7 +48,7 @@ local CARDS = {
 	{ id = "NetStrength", title = "Net Strength", icon = "🥅", color = Color3.fromRGB(255, 120, 190) },
 	{ id = "RodLuck", title = "Rod Luck", icon = "🍀", color = Color3.fromRGB(150, 225, 45), value = "1x > 2x", upgrade = true },
 	{ id = "MeatPrice", title = "Meat Price", icon = "🥩", color = Color3.fromRGB(45, 205, 235), value = "1x > 2x", upgrade = true },
-	{ id = "FasterReels", title = "Faster Reels", icon = "⚡", color = Color3.fromRGB(255, 180, 35), value = "1x > 1.2x" },
+	{ id = "FasterReels", title = "Faster Reels", icon = "⚡", color = Color3.fromRGB(255, 180, 35), value = "1x > 1.2x", upgrade = true },
 }
 
 ------------------------------------------------------------ finding the board

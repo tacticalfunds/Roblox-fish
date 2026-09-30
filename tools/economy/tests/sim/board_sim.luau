@@ -15,7 +15,8 @@
 --   * SOON while closed; SAVING... while saving; server answers shown
 --     (BOUGHT! / TOO FAR / NEED $ / NOT SAVED / MAX); the price red when short
 --   * far / dead / loading / spam / funds / failed save / max refused, never
---     charged; unknown / bad ids refused; the other three cards sell nothing
+--     charged; unknown / bad ids refused; the other three cards stay closed
+--     by default (bought and used in luck_sim, meat_sim, reels_sim)
 --   * shared NetLift.MaxWeight follows board purchases
 --   (board missing / duplicated: boardmissing_sim)
 
@@ -320,7 +321,7 @@ check("Meat Price: closed by default too (UpgradesOpen), not charged", lastNotic
 advance(0.5)
 press(A, "FasterReels")
 advance(0.3)
-check("Faster Reels: coming soon", lastNotice(A) == "Faster Reels upgrades are coming soon" and Economy.balance(A) == before)
+check("Faster Reels: closed by default too", lastNotice(A) == "Faster Reels upgrades open soon" and Economy.balance(A) == before)
 advance(0.5)
 local answers = {}
 runAs(A, function()
