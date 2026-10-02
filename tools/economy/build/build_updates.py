@@ -704,8 +704,10 @@ The upgrade board and the ONE saved net capacity, on the live baseline
     no KG selling; no memory store outside Studio; unreadable records never
     overwritten; purchases JOURNALED in the Money record (debit + open entry
     in one write before its own store is touched; the upgrade written with
-    the purchase token; settled at once, or - after a shutdown, a slow
-    write or a crash - at the player's next load from those tokens).
+    the purchase token as a compare-and-set on the stored record; settled at
+    once, or - after a shutdown, a slow write or a crash - at the player's
+    next load from those tokens, read authoritatively (UseCache = false),
+    after its own copy is refreshed from that record).
   * Fast start: customers come for EACH player in the server
     (Config.Customers: 6 a minute per player, up to 18; never below the Car
     Sales upgrades' published values) - CustomerSystem asks

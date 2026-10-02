@@ -528,8 +528,13 @@ end
 ------------------------------------------------------------ journaled purchases (delivered by another store)
 
 -- source name -> reader(userId): the set of purchase tokens that source's
--- own store holds ({ [token] = true }), or nil if it can't be read now. YIELDS.
-local purchaseSources: { [string]: (number) -> { [string]: boolean }? } = {}
+-- own store holds ({ [token] = true }), or nil if it can't be read now; a
+-- second value (the record it read) goes to the source's refresh. YIELDS.
+local purchaseSources: { [string]: (number) -> ({ [string]: boolean }?, any) } = {}
+-- source name -> refresh(player, record): brings the source's own copy of the
+-- player's state up to the record just read, BEFORE an open purchase is
+-- closed (closing unblocks buying); false / an error = try again later.
+local purchaseRefresh: { [string]: (Player, any) -> boolean } = {}
 local liveTokens: { [string]: boolean } = {} -- begun in this server (settled by finishPurchase)
 local settlingTokens: { [string]: boolean } = {} -- being settled from their source's store
 
@@ -567,8 +572,19 @@ function M._settleOpen(player: Player)
 					table.insert(rest, p)
 					wait = math.min(wait or math.huge, Config.PurchaseSettleSeconds - age + 1)
 				else
-					local ok, applied = pcall(reader, player.UserId)
-					if ok and type(applied) == "table" then
+					local ok, applied, record = pcall(reader, player.UserId)
+					local refresh = purchaseRefresh[p.entry.source]
+					local refreshed = true
+					if ok and type(applied) == "table" and refresh then
+						-- the source's copy first: a purchase delivered later is owned there
+						-- before buying is unblocked (never sold twice from a stale copy)
+						local rok, rres = pcall(refresh, player, record)
+						refreshed = rok and rres ~= false
+						if not rok then
+							warn("[Economy] refreshing " .. p.entry.source .. " for " .. player.Name .. " failed: " .. tostring(rres))
+						end
+					end
+					if ok and type(applied) == "table" and refreshed then
 						settlingTokens[p.token] = nil
 						local delivered = applied[p.token] == true
 						if money:settlePurchase(player.UserId, p.token, delivered) == "settled" then
@@ -598,9 +614,17 @@ function M._settleOpen(player: Player)
 end
 
 -- A script that delivers purchases into its own store registers how to read
--- the tokens that store holds. Settles open entries of players already here.
-function M.registerPurchaseSource(name: string, reader: (number) -> { [string]: boolean }?)
+-- the tokens that store holds (authoritatively: not a cached read), and
+-- optionally how to refresh its own copy of a player's state from the record
+-- read, before an open purchase is closed. Settles open entries of players
+-- already here.
+function M.registerPurchaseSource(
+	name: string,
+	reader: (number) -> ({ [string]: boolean }?, any),
+	refresh: ((Player, any) -> boolean)?
+)
 	purchaseSources[name] = reader
+	purchaseRefresh[name] = refresh
 	if startOk then
 		for _, p in ipairs(Players:GetPlayers()) do
 			M._settleOpen(p)

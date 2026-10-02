@@ -31,6 +31,20 @@ GrinderUpgradesServer
         leaves open is settled at the player's next load by reading this
         store's tokens (the registered reader): delivered -> kept, else
         refunded. No purchase is paid-for-and-lost or delivered-for-free.
+      - every read it decides with (load, the read-back after an errored
+        write, the settling reader) is AUTHORITATIVE: GetAsync with
+        DataStoreGetOptions.UseCache = false (a cached read can return the
+        record from before a write that landed); unavailable -> the read
+        fails and the purchase stays open
+      - the write is a compare-and-set on the STORED record: applied only if
+        its conveyor / blade are what the purchase was priced from;
+        otherwise nothing is written, the purchase is refunded and this
+        server's copy follows the store. kg and unknown fields are always
+        the store's own (never a stale copy written back)
+      - this server's copy follows the stored record BEFORE a purchase is
+        closed: at once, and for a deferred one through the refresh callback
+        EconomyService calls before settling it (so a purchase delivered
+        later is owned here, never sold twice)
 GrinderUpgradesClient
   * no longer writes the KG signs' PricePlate.PriceGui.Pill (KgSignClient
     is its only writer); conveyor / blade labels, ghost and blades are
@@ -89,6 +103,33 @@ def server() -> str:
     )
     p.rep("local ds\n", "local ds\nlocal storeOff = false -- Economy board: live server without its DataStore\n")
     p.rep(
+        "local function key(p) return \"player_\" .. p.UserId end\n",
+        "local function key(p) return \"player_\" .. p.UserId end\n"
+        "\n"
+        "-- Economy board: AUTHORITATIVE reads. GetAsync is cached per server for a\n"
+        "-- few seconds, so after a write that errored (it may have landed) a plain\n"
+        "-- read can return the record from before it. Every read this script decides\n"
+        "-- with (load, delivery read-back, settling an open purchase) bypasses the\n"
+        "-- cache (DataStoreGetOptions.UseCache = false); if that isn't possible the\n"
+        "-- read fails, and the purchase stays open rather than guessed.\n"
+        "local FRESH = nil\n"
+        "do\n"
+        "\tlocal ok, opts = pcall(function()\n"
+        "\t\tlocal o = Instance.new(\"DataStoreGetOptions\")\n"
+        "\t\to.UseCache = false\n"
+        "\t\treturn o\n"
+        "\tend)\n"
+        "\tif ok then FRESH = opts end\n"
+        "end\n"
+        "local function readRecord(k, userId)\n"
+        "\tif ds and userId > 0 then\n"
+        "\t\tassert(FRESH, \"DataStoreGetOptions unavailable - can't read authoritatively\")\n"
+        "\t\treturn ds:GetAsync(k, FRESH)\n"
+        "\tend\n"
+        "\treturn mem[k]\n"
+        "end\n",
+    )
+    p.rep(
         "local netLift = workspace:WaitForChild(\"NetLift\")\n"
         "local function baseKg()\n"
         "\treturn tonumber(netLift:GetAttribute(\"MaxWeight\")) or 15\n"
@@ -123,6 +164,15 @@ def server() -> str:
         "\tfor attempt = 1, 4 do\n",
     )
     p.rep(
+        "\t\tlocal ok, res = pcall(function()\n"
+        "\t\t\tif ds and p.UserId > 0 then return ds:GetAsync(key(p)) end\n"
+        "\t\t\treturn mem[key(p)]\n"
+        "\t\tend)\n"
+        "\t\tif not p.Parent then return end\n",
+        "\t\tlocal ok, res = pcall(readRecord, key(p), p.UserId) -- Economy board: authoritative\n"
+        "\t\tif not p.Parent then return end\n",
+    )
+    p.rep(
         "\t\tif ok then\n"
         "\t\t\tdata[p] = clean(res)\n"
         "\t\t\tpublish(p)\n"
@@ -151,26 +201,63 @@ def server() -> str:
         "\t\tout.blade = newState.blade\n"
         "\t\tout.kg = newState.kg\n"
         "\t\treturn out\n"
-        "\tend)\n",
-        "-- Writes the new state; returns true only if it was saved.\n"
-        "-- Economy board: with `token`, the purchase token is written in the SAME\n"
-        "-- update (the last APPLIED_KEEP of them, in `applied`): proof of delivery\n"
-        "-- for a purchase whose Money entry is settled later.\n"
+        "\tend)\n"
+        "\tif not ok then warn(\"[GrinderUpgrades] save failed for \" .. p.Name .. \": \" .. tostring(err)) end\n"
+        "\treturn ok\n"
+        "end\n",
+        "-- Economy board: delivers one purchase. A compare-and-set on the STORED\n"
+        "-- record: only if its conveyor / blade are still what the purchase was\n"
+        "-- priced from (`base`), `apply` is applied to the stored state and written\n"
+        "-- together with the purchase token (the last APPLIED_KEEP, in `applied`:\n"
+        "-- proof of delivery for a Money entry settled later). Everything else in\n"
+        "-- the record (kg, unknown fields) is the store's own, never this server's\n"
+        "-- copy. Returns \"saved\", state | \"stale\", state (the store moved on:\n"
+        "-- nothing written) | \"unreadable\" (nothing written) | \"error\".\n"
         "local APPLIED_KEEP = 20\n"
-        "local function save(p, newState, token)\n"
+        "local function deliver(p, base, apply, token)\n"
+        "\tlocal outcome, state = nil, nil\n"
         "\tlocal ok, err = pcall(update, p, function(old)\n"
-        "\t\tlocal out = type(old) == \"table\" and table.clone(old) or {}\n"
-        "\t\tout.conveyor = newState.conveyor\n"
-        "\t\tout.blade = newState.blade\n"
-        "\t\tout.kg = newState.kg\n"
-        "\t\tif token then\n"
-        "\t\t\tlocal applied = type(out.applied) == \"table\" and table.clone(out.applied) or {}\n"
-        "\t\t\ttable.insert(applied, token)\n"
-        "\t\t\twhile #applied > APPLIED_KEEP do table.remove(applied, 1) end\n"
-        "\t\t\tout.applied = applied\n"
+        "\t\toutcome, state = nil, nil\n"
+        "\t\tif not readable(old) then\n"
+        "\t\t\toutcome = \"unreadable\"\n"
+        "\t\t\treturn nil\n"
         "\t\tend\n"
+        "\t\tlocal cur = clean(old)\n"
+        "\t\tif cur.conveyor ~= base.conveyor or cur.blade ~= base.blade then\n"
+        "\t\t\toutcome, state = \"stale\", cur\n"
+        "\t\t\treturn nil\n"
+        "\t\tend\n"
+        "\t\tapply(cur)\n"
+        "\t\tlocal out = type(old) == \"table\" and table.clone(old) or {}\n"
+        "\t\tout.conveyor = cur.conveyor\n"
+        "\t\tout.blade = cur.blade\n"
+        "\t\tout.kg = cur.kg\n"
+        "\t\tlocal applied = type(out.applied) == \"table\" and table.clone(out.applied) or {}\n"
+        "\t\ttable.insert(applied, token)\n"
+        "\t\twhile #applied > APPLIED_KEEP do table.remove(applied, 1) end\n"
+        "\t\tout.applied = applied\n"
+        "\t\toutcome, state = \"saved\", cur\n"
         "\t\treturn out\n"
-        "\tend)\n",
+        "\tend)\n"
+        "\tif not ok then\n"
+        "\t\twarn(\"[GrinderUpgrades] save failed for \" .. p.Name .. \": \" .. tostring(err))\n"
+        "\t\treturn \"error\"\n"
+        "\tend\n"
+        "\treturn outcome or \"error\", state\n"
+        "end\n"
+        "\n"
+        "-- Economy board: the purchase tokens a record holds\n"
+        "local function hasToken(rec, token)\n"
+        "\treturn type(rec) == \"table\" and type(rec.applied) == \"table\" and table.find(rec.applied, token) ~= nil\n"
+        "end\n"
+        "\n"
+        "-- Economy board: this server's copy follows the STORED record (validated)\n"
+        "local function adopt(p, rec)\n"
+        "\tif not p.Parent then return end\n"
+        "\tdata[p] = clean(rec)\n"
+        "\tif not readable(rec) then data[p].readOnly = true end\n"
+        "\tpublish(p)\n"
+        "end\n",
     )
     p.rep(
         "local function buy(p, price, what, apply)\n"
@@ -208,31 +295,37 @@ def server() -> str:
         "\t\tEconomy.notify(p, REASON[why] or \"Couldn't buy that right now - you were not charged\", \"error\")\n"
         "\t\treturn\n"
         "\tend\n"
-        "\tlocal nextState = table.clone(d)\n"
-        "\tapply(nextState)\n"
-        "\tlocal delivered = save(p, nextState, token) -- the upgrade and its token, one write\n"
-        "\tif not delivered then\n"
-        "\t\t-- a write can error after it landed: read back whether the token is here\n"
-        "\t\tlocal ok, rec = pcall(function()\n"
-        "\t\t\tif ds and p.UserId > 0 then return ds:GetAsync(key(p)) end\n"
-        "\t\t\treturn mem[key(p)]\n"
-        "\t\tend)\n"
+        "\tlocal outcome, state = deliver(p, d, apply, token) -- the upgrade and its token, one write\n"
+        "\tlocal delivered\n"
+        "\tif outcome == \"saved\" then\n"
+        "\t\tdelivered = true\n"
+        "\telseif outcome == \"stale\" or outcome == \"unreadable\" then\n"
+        "\t\tdelivered = false -- nothing was written\n"
+        "\telse\n"
+        "\t\t-- a write can error after it landed: read back (authoritatively) whether the token is here\n"
+        "\t\tlocal ok, rec = pcall(readRecord, key(p), p.UserId)\n"
         "\t\tif ok then\n"
-        "\t\t\tdelivered = type(rec) == \"table\" and type(rec.applied) == \"table\" and table.find(rec.applied, token) ~= nil\n"
+        "\t\t\tdelivered = hasToken(rec, token)\n"
+        "\t\t\tif readable(rec) then state = clean(rec) else outcome = \"unreadable\" end\n"
         "\t\telse\n"
         "\t\t\tdelivered = nil -- can't tell: the open entry is settled from this store later\n"
         "\t\tend\n"
         "\tend\n"
+        "\t-- this server's copy follows the store BEFORE the purchase is closed (and buying unblocked)\n"
+        "\tif outcome == \"unreadable\" then\n"
+        "\t\tif p.Parent and data[p] then data[p].readOnly = true end\n"
+        "\telseif state then\n"
+        "\t\tadopt(p, state)\n"
+        "\tend\n"
         "\tEconomy.finishPurchase(p, token, delivered) -- kept / refunded / settled later\n"
+        "\tif not p.Parent then return end\n"
         "\tif delivered == true then\n"
-        "\t\tif p.Parent then\n"
-        "\t\t\tdata[p] = nextState\n"
-        "\t\t\tpublish(p)\n"
-        "\t\t\tEconomy.notify(p, \"Bought \" .. what .. \"!\", \"success\")\n"
-        "\t\tend\n"
+        "\t\tEconomy.notify(p, \"Bought \" .. what .. \"!\", \"success\")\n"
+        "\telseif outcome == \"stale\" then\n"
+        "\t\tEconomy.notify(p, \"Your upgrades had already changed - refreshed, you were refunded\", \"info\")\n"
         "\telseif delivered == false then\n"
-        "\t\tif p.Parent then Economy.notify(p, \"Purchase failed, refunded\", \"error\") end\n"
-        "\telseif p.Parent then\n"
+        "\t\tEconomy.notify(p, \"Purchase failed, refunded\", \"error\")\n"
+        "\telse\n"
         "\t\tEconomy.notify(p, \"Checking your purchase - it will be kept or refunded shortly\", \"info\")\n"
         "\tend\n"
         "end\n",
@@ -288,10 +381,7 @@ def server() -> str:
         "-- (to settle a Money entry left open by a shutdown / slow write / crash)\n"
         "if Economy and type(Economy.registerPurchaseSource) == \"function\" and not storeOff then\n"
         "\tEconomy.registerPurchaseSource(SOURCE, function(userId)\n"
-        "\t\tlocal ok, rec = pcall(function()\n"
-        "\t\t\tif ds and userId > 0 then return ds:GetAsync(\"player_\" .. userId) end\n"
-        "\t\t\treturn mem[\"player_\" .. userId]\n"
-        "\t\tend)\n"
+        "\t\tlocal ok, rec = pcall(readRecord, \"player_\" .. userId, userId) -- authoritative\n"
         "\t\tif not ok then return nil end\n"
         "\t\tlocal set = {}\n"
         "\t\tif type(rec) == \"table\" and type(rec.applied) == \"table\" then\n"
@@ -299,7 +389,12 @@ def server() -> str:
         "\t\t\t\tif type(t) == \"string\" then set[t] = true end\n"
         "\t\t\tend\n"
         "\t\tend\n"
-        "\t\treturn set\n"
+        "\t\treturn set, rec\n"
+        "\tend, function(p, rec)\n"
+        "\t\t-- before an open purchase is closed: this server's copy follows the record\n"
+        "\t\t-- just read (a purchase delivered later is owned here at once, never sold twice)\n"
+        "\t\tif data[p] then adopt(p, rec) end -- not loaded yet: load() reads the store itself\n"
+        "\t\treturn true\n"
         "\tend)\n"
         "end\n"
         "\n"
@@ -319,8 +414,12 @@ def server() -> str:
     for gone in ("onKgSign", "kgClicked", "kgPrice", "baseKg", "NetMaxWeight\", Cfg", "netLift", "MouseClick"):
         assert gone not in src, gone
     # the conveyor / blade paths are still there
-    for kept in ("onConveyorPad", "onBladePad", "hookPad(pad, onConveyorPad)", "hookPad(pad, onBladePad)", "out.kg = newState.kg"):
+    for kept in ("onConveyorPad", "onBladePad", "hookPad(pad, onConveyorPad)", "hookPad(pad, onBladePad)", "out.kg = cur.kg"):
         assert kept in src, kept
+    # every read it decides with is authoritative (no cached GetAsync left)
+    assert src.count("ds:GetAsync(") == 1 and "ds:GetAsync(k, FRESH)" in src and 'store:GetAsync("__probe")' in src, "GetAsync"
+    # the old overwrite-from-local-copy save is gone; purchases are compare-and-set
+    assert "local function save(" not in src and "deliver(p, d, apply, token)" in src
     # every purchase goes through the journal; no direct debit / refund is left
     assert "Economy.tryDebit" not in src and "Economy.refund" not in src and "holdSave" not in src
     assert src.index("local SOURCE = ") < src.index("local function buy(") < src.index("registerPurchaseSource")

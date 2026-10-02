@@ -27,8 +27,10 @@
 	    no KG selling; no memory store outside Studio; unreadable records never
 	    overwritten; purchases JOURNALED in the Money record (debit + open entry
 	    in one write before its own store is touched; the upgrade written with
-	    the purchase token; settled at once, or - after a shutdown, a slow
-	    write or a crash - at the player's next load from those tokens).
+	    the purchase token as a compare-and-set on the stored record; settled at
+	    once, or - after a shutdown, a slow write or a crash - at the player's
+	    next load from those tokens, read authoritatively (UseCache = false),
+	    after its own copy is refreshed from that record).
 	  * Fast start: customers come for EACH player in the server
 	    (Config.Customers: 6 a minute per player, up to 18; never below the Car
 	    Sales upgrades' published values) - CustomerSystem asks
@@ -1667,8 +1669,13 @@ end
 ------------------------------------------------------------ journaled purchases (delivered by another store)
 
 -- source name -> reader(userId): the set of purchase tokens that source's
--- own store holds ({ [token] = true }), or nil if it can't be read now. YIELDS.
-local purchaseSources: { [string]: (number) -> { [string]: boolean }? } = {}
+-- own store holds ({ [token] = true }), or nil if it can't be read now; a
+-- second value (the record it read) goes to the source's refresh. YIELDS.
+local purchaseSources: { [string]: (number) -> ({ [string]: boolean }?, any) } = {}
+-- source name -> refresh(player, record): brings the source's own copy of the
+-- player's state up to the record just read, BEFORE an open purchase is
+-- closed (closing unblocks buying); false / an error = try again later.
+local purchaseRefresh: { [string]: (Player, any) -> boolean } = {}
 local liveTokens: { [string]: boolean } = {} -- begun in this server (settled by finishPurchase)
 local settlingTokens: { [string]: boolean } = {} -- being settled from their source's store
 
@@ -1706,8 +1713,19 @@ function M._settleOpen(player: Player)
 					table.insert(rest, p)
 					wait = math.min(wait or math.huge, Config.PurchaseSettleSeconds - age + 1)
 				else
-					local ok, applied = pcall(reader, player.UserId)
-					if ok and type(applied) == "table" then
+					local ok, applied, record = pcall(reader, player.UserId)
+					local refresh = purchaseRefresh[p.entry.source]
+					local refreshed = true
+					if ok and type(applied) == "table" and refresh then
+						-- the source's copy first: a purchase delivered later is owned there
+						-- before buying is unblocked (never sold twice from a stale copy)
+						local rok, rres = pcall(refresh, player, record)
+						refreshed = rok and rres ~= false
+						if not rok then
+							warn("[Economy] refreshing " .. p.entry.source .. " for " .. player.Name .. " failed: " .. tostring(rres))
+						end
+					end
+					if ok and type(applied) == "table" and refreshed then
 						settlingTokens[p.token] = nil
 						local delivered = applied[p.token] == true
 						if money:settlePurchase(player.UserId, p.token, delivered) == "settled" then
@@ -1737,9 +1755,17 @@ function M._settleOpen(player: Player)
 end
 
 -- A script that delivers purchases into its own store registers how to read
--- the tokens that store holds. Settles open entries of players already here.
-function M.registerPurchaseSource(name: string, reader: (number) -> { [string]: boolean }?)
+-- the tokens that store holds (authoritatively: not a cached read), and
+-- optionally how to refresh its own copy of a player's state from the record
+-- read, before an open purchase is closed. Settles open entries of players
+-- already here.
+function M.registerPurchaseSource(
+	name: string,
+	reader: (number) -> ({ [string]: boolean }?, any),
+	refresh: ((Player, any) -> boolean)?
+)
 	purchaseSources[name] = reader
+	purchaseRefresh[name] = refresh
 	if startOk then
 		for _, p in ipairs(Players:GetPlayers()) do
 			M._settleOpen(p)
@@ -6767,6 +6793,29 @@ end
 
 local function key(p) return "player_" .. p.UserId end
 
+-- Economy board: AUTHORITATIVE reads. GetAsync is cached per server for a
+-- few seconds, so after a write that errored (it may have landed) a plain
+-- read can return the record from before it. Every read this script decides
+-- with (load, delivery read-back, settling an open purchase) bypasses the
+-- cache (DataStoreGetOptions.UseCache = false); if that isn't possible the
+-- read fails, and the purchase stays open rather than guessed.
+local FRESH = nil
+do
+	local ok, opts = pcall(function()
+		local o = Instance.new("DataStoreGetOptions")
+		o.UseCache = false
+		return o
+	end)
+	if ok then FRESH = opts end
+end
+local function readRecord(k, userId)
+	if ds and userId > 0 then
+		assert(FRESH, "DataStoreGetOptions unavailable - can't read authoritatively")
+		return ds:GetAsync(k, FRESH)
+	end
+	return mem[k]
+end
+
 local function update(p, transform)
 	if ds and p.UserId > 0 then
 		return ds:UpdateAsync(key(p), transform)
@@ -6810,10 +6859,7 @@ end
 local function load(p)
 	if storeOff then return end -- Economy board: nothing to load from (and nothing is sold)
 	for attempt = 1, 4 do
-		local ok, res = pcall(function()
-			if ds and p.UserId > 0 then return ds:GetAsync(key(p)) end
-			return mem[key(p)]
-		end)
+		local ok, res = pcall(readRecord, key(p), p.UserId) -- Economy board: authoritative
 		if not p.Parent then return end
 		if ok then
 			data[p] = clean(res)
@@ -6833,27 +6879,58 @@ local function load(p)
 	end
 end
 
--- Writes the new state; returns true only if it was saved.
--- Economy board: with `token`, the purchase token is written in the SAME
--- update (the last APPLIED_KEEP of them, in `applied`): proof of delivery
--- for a purchase whose Money entry is settled later.
+-- Economy board: delivers one purchase. A compare-and-set on the STORED
+-- record: only if its conveyor / blade are still what the purchase was
+-- priced from (`base`), `apply` is applied to the stored state and written
+-- together with the purchase token (the last APPLIED_KEEP, in `applied`:
+-- proof of delivery for a Money entry settled later). Everything else in
+-- the record (kg, unknown fields) is the store's own, never this server's
+-- copy. Returns "saved", state | "stale", state (the store moved on:
+-- nothing written) | "unreadable" (nothing written) | "error".
 local APPLIED_KEEP = 20
-local function save(p, newState, token)
+local function deliver(p, base, apply, token)
+	local outcome, state = nil, nil
 	local ok, err = pcall(update, p, function(old)
-		local out = type(old) == "table" and table.clone(old) or {}
-		out.conveyor = newState.conveyor
-		out.blade = newState.blade
-		out.kg = newState.kg
-		if token then
-			local applied = type(out.applied) == "table" and table.clone(out.applied) or {}
-			table.insert(applied, token)
-			while #applied > APPLIED_KEEP do table.remove(applied, 1) end
-			out.applied = applied
+		outcome, state = nil, nil
+		if not readable(old) then
+			outcome = "unreadable"
+			return nil
 		end
+		local cur = clean(old)
+		if cur.conveyor ~= base.conveyor or cur.blade ~= base.blade then
+			outcome, state = "stale", cur
+			return nil
+		end
+		apply(cur)
+		local out = type(old) == "table" and table.clone(old) or {}
+		out.conveyor = cur.conveyor
+		out.blade = cur.blade
+		out.kg = cur.kg
+		local applied = type(out.applied) == "table" and table.clone(out.applied) or {}
+		table.insert(applied, token)
+		while #applied > APPLIED_KEEP do table.remove(applied, 1) end
+		out.applied = applied
+		outcome, state = "saved", cur
 		return out
 	end)
-	if not ok then warn("[GrinderUpgrades] save failed for " .. p.Name .. ": " .. tostring(err)) end
-	return ok
+	if not ok then
+		warn("[GrinderUpgrades] save failed for " .. p.Name .. ": " .. tostring(err))
+		return "error"
+	end
+	return outcome or "error", state
+end
+
+-- Economy board: the purchase tokens a record holds
+local function hasToken(rec, token)
+	return type(rec) == "table" and type(rec.applied) == "table" and table.find(rec.applied, token) ~= nil
+end
+
+-- Economy board: this server's copy follows the STORED record (validated)
+local function adopt(p, rec)
+	if not p.Parent then return end
+	data[p] = clean(rec)
+	if not readable(rec) then data[p].readOnly = true end
+	publish(p)
 end
 
 ------------------------------------------------------------ purchases
@@ -6877,31 +6954,37 @@ local function buy(p, price, what, apply)
 		Economy.notify(p, REASON[why] or "Couldn't buy that right now - you were not charged", "error")
 		return
 	end
-	local nextState = table.clone(d)
-	apply(nextState)
-	local delivered = save(p, nextState, token) -- the upgrade and its token, one write
-	if not delivered then
-		-- a write can error after it landed: read back whether the token is here
-		local ok, rec = pcall(function()
-			if ds and p.UserId > 0 then return ds:GetAsync(key(p)) end
-			return mem[key(p)]
-		end)
+	local outcome, state = deliver(p, d, apply, token) -- the upgrade and its token, one write
+	local delivered
+	if outcome == "saved" then
+		delivered = true
+	elseif outcome == "stale" or outcome == "unreadable" then
+		delivered = false -- nothing was written
+	else
+		-- a write can error after it landed: read back (authoritatively) whether the token is here
+		local ok, rec = pcall(readRecord, key(p), p.UserId)
 		if ok then
-			delivered = type(rec) == "table" and type(rec.applied) == "table" and table.find(rec.applied, token) ~= nil
+			delivered = hasToken(rec, token)
+			if readable(rec) then state = clean(rec) else outcome = "unreadable" end
 		else
 			delivered = nil -- can't tell: the open entry is settled from this store later
 		end
 	end
+	-- this server's copy follows the store BEFORE the purchase is closed (and buying unblocked)
+	if outcome == "unreadable" then
+		if p.Parent and data[p] then data[p].readOnly = true end
+	elseif state then
+		adopt(p, state)
+	end
 	Economy.finishPurchase(p, token, delivered) -- kept / refunded / settled later
+	if not p.Parent then return end
 	if delivered == true then
-		if p.Parent then
-			data[p] = nextState
-			publish(p)
-			Economy.notify(p, "Bought " .. what .. "!", "success")
-		end
+		Economy.notify(p, "Bought " .. what .. "!", "success")
+	elseif outcome == "stale" then
+		Economy.notify(p, "Your upgrades had already changed - refreshed, you were refunded", "info")
 	elseif delivered == false then
-		if p.Parent then Economy.notify(p, "Purchase failed, refunded", "error") end
-	elseif p.Parent then
+		Economy.notify(p, "Purchase failed, refunded", "error")
+	else
 		Economy.notify(p, "Checking your purchase - it will be kept or refunded shortly", "info")
 	end
 end
@@ -6949,10 +7032,7 @@ for _, pad in ipairs(CollectionService:GetTagged("BladePad")) do hookPad(pad, on
 -- (to settle a Money entry left open by a shutdown / slow write / crash)
 if Economy and type(Economy.registerPurchaseSource) == "function" and not storeOff then
 	Economy.registerPurchaseSource(SOURCE, function(userId)
-		local ok, rec = pcall(function()
-			if ds and userId > 0 then return ds:GetAsync("player_" .. userId) end
-			return mem["player_" .. userId]
-		end)
+		local ok, rec = pcall(readRecord, "player_" .. userId, userId) -- authoritative
 		if not ok then return nil end
 		local set = {}
 		if type(rec) == "table" and type(rec.applied) == "table" then
@@ -6960,7 +7040,12 @@ if Economy and type(Economy.registerPurchaseSource) == "function" and not storeO
 				if type(t) == "string" then set[t] = true end
 			end
 		end
-		return set
+		return set, rec
+	end, function(p, rec)
+		-- before an open purchase is closed: this server's copy follows the record
+		-- just read (a purchase delivered later is owned here at once, never sold twice)
+		if data[p] then adopt(p, rec) end -- not loaded yet: load() reads the store itself
+		return true
 	end)
 end
 

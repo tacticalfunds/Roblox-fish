@@ -485,6 +485,7 @@ local ISA = {
 	ModuleScript = { LuaSourceContainer = true },
 }
 local DEFAULTS = {
+	DataStoreGetOptions = { UseCache = true },
 	ProximityPrompt = {
 		Enabled = true,
 		HoldDuration = 0,
@@ -1035,30 +1036,60 @@ local dsOther = {}
 local dsHooks = {}
 -- dsHooks.store(name): runs in GetDataStore (error() = DataStore unavailable);
 -- dsHooks.get(key): runs at the start of every GetAsync
+-- GetAsync is CACHED like Roblox's (per server, DS_CACHE_SECONDS): a read
+-- within that time of the last read or successful write of the key returns
+-- that copy, even if the stored value changed since (another server, or a
+-- write that landed but errored). A DataStoreGetOptions with UseCache = false
+-- reads the stored value (and leaves the cache as it is).
+local DS_CACHE_SECONDS = 4
+local dsCache = {} -- [store][key] = { value = copy, t = time }
+local function dsCopy(v)
+	if type(v) ~= "table" then
+		return v
+	end
+	local out = {}
+	for k, x in pairs(v) do
+		out[k] = dsCopy(x)
+	end
+	return out
+end
 services.DataStoreService = {
 	GetDataStore = function(_, name)
 		if dsHooks.store then
 			dsHooks.store(name)
 		end
 		local data = dsOther[name] or dsData
+		dsCache[name] = dsCache[name] or {}
+		local cache = dsCache[name]
 		return {
 			UpdateAsync = function(_, key, fn)
 				if dsHooks.before then
 					dsHooks.before(key, name)
 				end
-				local r = fn(data[key])
+				local r = fn(dsCopy(data[key]))
 				if r ~= nil then
 					data[key] = r
 				end
 				if dsHooks.after then
-					dsHooks.after(key, name) -- may error: a write that landed, then failed to answer
+					dsHooks.after(key, name) -- may error: a write that landed, then failed to answer (cache NOT refreshed)
 				end
+				cache[key] = { value = dsCopy(data[key]), t = now }
 				return data[key]
 			end,
-			GetAsync = function(_, key)
+			GetAsync = function(_, key, options)
 				if dsHooks.get then
 					dsHooks.get(key, name)
 				end
+				local fresh = options ~= nil and isInst(options) and options.ClassName == "DataStoreGetOptions"
+					and options.UseCache == false
+				if fresh then
+					return data[key] -- the stored value; the cache is left as it is (worst case for plain reads)
+				end
+				local c = cache[key]
+				if c and now - c.t < DS_CACHE_SECONDS then
+					return dsCopy(c.value)
+				end
+				cache[key] = { value = dsCopy(data[key]), t = now }
 				return data[key]
 			end,
 		}

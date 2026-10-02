@@ -659,6 +659,21 @@ the Money:
    `applied` list, the last 20) in one `UpdateAsync`.
 3. `finishPurchase`: written → kept; failed → refunded at once; the write
    errored → it is read back (token there → kept); can't tell → left open.
+   - **Every read decided with is authoritative:** load, the read-back and
+     the settling reader use `GetAsync` with `DataStoreGetOptions.UseCache
+     = false`. A cached read can return the record from before a write that
+     landed but errored, which would refund a delivered upgrade. If the
+     options can't be made, the read fails and the purchase stays open.
+   - **The write is a compare-and-set** on the stored record: only if its
+     conveyor / blade are still what the purchase was priced from. If the
+     store moved on (another server, a purchase delivered later), nothing
+     is written, the purchase is refunded, and this server's copy follows
+     the store. kg and unknown fields are always the store's own.
+   - **This server's copy follows the store before a purchase is closed:**
+     at once, and for a deferred one through the source's refresh callback,
+     which `_settleOpen` calls before settling (if it fails, the entry
+     stays open and buying stays blocked). A blade delivered late shows as
+     owned (`BladeTier`), and the next press sells the next tier.
 4. An entry still open (the server shut down, the write took longer than
    the 20 s leave wait, the outcome was unknown) stays in the saved Money
    record. At the player's next load, once it is older than
@@ -740,6 +755,7 @@ to the data:
 | G9 | Board | Four cards in the board's card style; icons from the attributes you set |
 | G9b | Buy a blade, then stop the server (Stop) before the save answers | After rejoining and ~2 min: either the blade is there and the money spent, or a toast "... refunded" and the money back; never debited without the blade |
 | G9c | Buy a blade normally | Toast "Bought ..."; the Money record has no `pendingPurchases` left |
+| G9d | Buy a blade, then (as another server would) raise `blade` in that player's `GrinderUpgrades_v1` record by hand and press again | "Your upgrades had already changed - refreshed, you were refunded"; nothing written; `BladeTier` shows the stored tier |
 | G10 | `RollbackBoardUpgrades.lua` | The live GrinderUpgrades scripts, EconomyService and NetLiftScript (untouched) come back exactly |
 
 ## Fast start: customers for every player and early prices (part of `InstallBoardUpgrades.lua`)
@@ -1272,7 +1288,7 @@ changes; the rest re-check behaviour that already worked.
 
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 516 checks (rods 82, net kg 55, board upgrades 72, journal 25, customers 20)
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 49 + 6, luck 30, meat 17, reels 15, grinder 27 + 7, journal 18, net lift 9, customers 19 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 49 + 6, luck 30, meat 17, reels 15, grinder 27 + 7, journal 38, net lift 9, customers 19 checks (the fake DataStore caches GetAsync like Roblox)
 python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 342 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
