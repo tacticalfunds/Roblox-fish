@@ -7,9 +7,9 @@
 --   2 x 2 cards in a wooden frame, white outlined text, a themed icon and a
 --   green Buy button on each:
 --     Net Strength (pink)   15kg > 20kg    $10
---     Rod Luck (lime)       1x > 2x        $10
---     Meat Price (cyan)     1x > 2x        $10
---     Faster Reels (amber)  1x > 1.2x      $10
+--     Rod Luck (lime)       1x > 1.5x      $10
+--     Meat Price (cyan)     1x > 1.25x     $10
+--     Faster Reels (amber)  1x > 1.1x      $10
 -- Net Strength shows YOUR saved net (the same one the KGsign posts sell);
 -- Rod Luck, Meat Price and Faster Reels YOUR saved levels (Meat Price is a
 -- value multiplier on your own fish - fish values differ, so it isn't shown
@@ -54,9 +54,9 @@ local FLASH_SECONDS = 1.6
 
 local CARDS = {
 	{ id = "NetStrength", title = "Net Strength", icon = "🥅", color = Color3.fromRGB(255, 120, 190) },
-	{ id = "RodLuck", title = "Rod Luck", icon = "🍀", color = Color3.fromRGB(150, 225, 45), value = "1x > 2x", upgrade = true },
-	{ id = "MeatPrice", title = "Meat Price", icon = "🥩", color = Color3.fromRGB(45, 205, 235), value = "1x > 2x", upgrade = true },
-	{ id = "FasterReels", title = "Faster Reels", icon = "⚡", color = Color3.fromRGB(255, 180, 35), value = "1x > 1.2x", upgrade = true },
+	{ id = "RodLuck", title = "Rod Luck", icon = "🍀", color = Color3.fromRGB(150, 225, 45), value = "1x > 1.5x", upgrade = true },
+	{ id = "MeatPrice", title = "Meat Price", icon = "🥩", color = Color3.fromRGB(45, 205, 235), value = "1x > 1.25x", upgrade = true },
+	{ id = "FasterReels", title = "Faster Reels", icon = "⚡", color = Color3.fromRGB(255, 180, 35), value = "1x > 1.1x", upgrade = true },
 }
 
 ------------------------------------------------------------ finding the board

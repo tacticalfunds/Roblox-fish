@@ -67,6 +67,23 @@ end
 ------------------------------------------------------------ tuning
 
 check("config check passes", Config.check() == true)
+
+-- The current curve is the fast-start tuning; the checks below were written
+-- for the original one (10, 25, 50, 100, then x1.5), so they pin it (the same
+-- table NetKg reads).
+do
+	local all, c = {}, 0
+	for i = 1, (Config.NetKg.Max - Config.NetKg.Base) / Config.NetKg.Step do
+		c = if i <= #Config.NetKg.Costs then Config.NetKg.Costs[i] else math.floor(c * Config.NetKg.Growth / 5 + 0.5) * 5
+		table.insert(all, c)
+	end
+	check("fast-start curve: 10, 20, 35, 60, 90, 125, 175, 245, 345 (1105 to 60 kg)",
+		table.concat(all, ",") == "10,20,35,60,90,125,175,245,345")
+	check("fast-start curve: the module's own costs match", NetKg.cost(0) == 10 and NetKg.cost(5) == 125 and NetKg.cost(8) == 345)
+	Config.NetKg.Costs = { 10, 25, 50, 100 }
+	Config.NetKg.Growth = 1.5
+	check("config check passes with the pinned curve", Config.check() == true)
+end
 local costs, kg = {}, NetKg.base()
 while true do
 	local nextKg, cost = NetKg.nextStep(kg)

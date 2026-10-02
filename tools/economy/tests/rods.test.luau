@@ -78,6 +78,23 @@ end
 ------------------------------------------------------------ catalog
 
 check("config check passes", Config.check() == true)
+
+-- The current catalog is the fast-start tuning. The checks below were written
+-- for the original prices (150 / 600 / 2000 / 7500); they test the logic, so
+-- they pin those (the same rod tables Rods reads).
+do
+	local price = {}
+	for _, rod in ipairs(Config.Rods) do
+		price[rod.Id] = rod.Price
+	end
+	check("fast-start catalog: Tiger 100, Coral 450, Tide 1500, Magma 5000 (Basic free)", price.FishingRod1 == 0
+		and price.FishingRod4 == 100 and price.FishingRod3 == 450 and price.FishingRod2 == 1500 and price.FishingRod5 == 5000)
+	local ORIGINAL = { FishingRod4 = 150, FishingRod3 = 600, FishingRod2 = 2000, FishingRod5 = 7500 }
+	for _, rod in ipairs(Config.Rods) do
+		rod.Price = ORIGINAL[rod.Id] or rod.Price
+	end
+	check("config check passes with the pinned prices", Config.check() == true)
+end
 local ids = {}
 for _, r in ipairs(Rods.list()) do
 	table.insert(ids, r.Id .. ":" .. r.Price .. ":" .. r.BiteWait)

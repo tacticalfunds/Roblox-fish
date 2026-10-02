@@ -29,10 +29,16 @@
 	    in one write before its own store is touched; the upgrade written with
 	    the purchase token; settled at once, or - after a shutdown, a slow
 	    write or a crash - at the player's next load from those tokens).
+	  * Fast start: customers come for EACH player in the server
+	    (Config.Customers: 6 a minute per player, up to 18; never below the Car
+	    Sales upgrades' published values) - CustomerSystem asks
+	    EconomyService.customers(). Cheaper, more numerous early prices for the
+	    board, the net and the rods (Config).
 	  * PAID UPGRADES STAY CLOSED: NetKgOpen (net) and UpgradesOpen (the other
 	    three) attributes on ReplicatedStorage.Economy, for a Studio validation.
 	Changes EconomyService, Config, MoneyStore, Pricing, Ledger, Sales,
-	RodFishingSystem, GrinderUpgradesServer, GrinderUpgradesClient; adds
+	RodFishingSystem, GrinderUpgradesServer, GrinderUpgradesClient,
+	CustomerSystem; adds
 	EconomyService.NetKg / BoardUpgrades, NetCapacityServer, UpgradeBoardServer,
 	KgSignClient, UpgradeBoardClient.
 	Requires: rods (EconomyRodsBackup) with every source exactly as installed.
@@ -2433,6 +2439,18 @@ function M.saturated(): boolean
 	return startOk and ledger.heldCount >= Config.Pipeline.MaxHeld
 end
 
+-- Customers (CustomerSystem): a rate for EACH player in the server, up to
+-- Config.Customers.Max, never below what the Car Sales upgrades publish.
+-- Returns (customers a minute, line size).
+function M.customers(): (number, number)
+	return Sales.customers(
+		#Players:GetPlayers(),
+		workspace:GetAttribute("CustomersPerMin"),
+		workspace:GetAttribute("CustomersLineCap"),
+		Config.Customers
+	)
+end
+
 function M.pipeline()
 	return Config.Pipeline
 end
@@ -3071,13 +3089,14 @@ Config.RodShopOpen = false
 -- saved in the player's Money record; one copy each, bought once. BiteWait
 -- multiplies the random wait before a bite (lower = faster). Legacy
 -- Tier/Title/Price attributes on the rod models are ignored.
--- INITIAL easy-early-game tuning, NOT measured pacing.
+-- Fast-start tuning (modelled from the place's fish data, not measured in
+-- play): Tiger ~5 min in, Coral ~25, Tide ~40, Magma ~80 for a solo player.
 Config.Rods = {
 	{ Id = "FishingRod1", Key = "Basic", Name = "Basic Rod", Price = 0, BiteWait = 1 },
-	{ Id = "FishingRod4", Key = "Tiger", Name = "Tiger Rod", Price = 150, BiteWait = 0.85 },
-	{ Id = "FishingRod3", Key = "Coral", Name = "Coral Rod", Price = 600, BiteWait = 0.75 },
-	{ Id = "FishingRod2", Key = "Tide", Name = "Tide Rod", Price = 2000, BiteWait = 0.65 },
-	{ Id = "FishingRod5", Key = "Magma", Name = "Magma Rod", Price = 7500, BiteWait = 0.55 },
+	{ Id = "FishingRod4", Key = "Tiger", Name = "Tiger Rod", Price = 100, BiteWait = 0.85 },
+	{ Id = "FishingRod3", Key = "Coral", Name = "Coral Rod", Price = 450, BiteWait = 0.75 },
+	{ Id = "FishingRod2", Key = "Tide", Name = "Tide Rod", Price = 1500, BiteWait = 0.65 },
+	{ Id = "FishingRod5", Key = "Magma", Name = "Magma Rod", Price = 5000, BiteWait = 0.55 },
 }
 -- Every player owns this one (free, never stored as bought) and falls back
 -- to it whenever the equipped rod isn't owned or known.
@@ -3096,15 +3115,15 @@ Config.RodActionCooldown = 0.5
 -- The same saved capacity is sold by both KGsign posts and the upgrade
 -- board's Net Strength card.
 -- Costs: the list first, then the previous cost x Growth rounded to 5, up
--- to Max (15 -> 60 kg: 10, 25, 50, 100, 150, 225, 340, 510, 765 = 2175).
+-- to Max (15 -> 60 kg: 10, 20, 35, 60, 90, 125, 175, 245, 345 = 1105).
 -- The first step is Config.UpgradeFirstCost like every board upgrade.
--- INITIAL tuning, not measured pacing.
+-- Fast-start tuning (modelled, not measured in play).
 Config.NetKg = {
 	Base = 15, -- everyone starts here (the place's NetLift.MaxWeight)
 	Step = 5, -- kg per purchase
 	Max = 60, -- nothing is sold past this
-	Costs = { 10, 25, 50, 100 },
-	Growth = 1.5,
+	Costs = { 10, 20, 35, 60, 90 },
+	Growth = 1.4,
 }
 -- PAID signs stay closed until the saved path is validated in Studio with
 -- real DataStore access: set true here, or (for a test) the NetKgOpen
@@ -3138,23 +3157,31 @@ Config.UpgradeBoardReach = 20 -- studs from the board's face (server check, plus
 -- level; nothing is sold past the last value. Checked by Config.check:
 -- Values[1] = 1 (no effect), Values[2] = FirstValue (what the card promises),
 -- increasing, <= MaxValue; Costs[1] = UpgradeFirstCost, increasing, <=
--- UpgradeCostCap, one fewer than Values. INITIAL tuning, not measured pacing.
+-- UpgradeCostCap, one fewer than Values. Fast-start tuning: many cheap
+-- levels early (a purchase every ~30-75 s for the first 10 minutes of a solo
+-- player, modelled from the place's fish data - not measured in play).
 Config.BoardUpgrades = {
 	-- Rod Luck: on the owner's own casts, rarer fish are weighted up relative
 	-- to common ones and the odds renormalised. Value = the factor on the
 	-- RAREST tier's weight relative to the commonest (tiers between scale
 	-- geometrically). 2x is not a guaranteed rare fish. Silver/Gold odds are
 	-- not touched.
-	RodLuck = { Name = "Rod Luck", Values = { 1, 2, 2.5, 3 }, Costs = { 10, 75, 300 }, FirstValue = 2, MaxValue = 5 },
+	RodLuck = { Name = "Rod Luck", Values = { 1, 1.5, 2, 2.5, 3 }, Costs = { 10, 45, 140, 350 }, FirstValue = 1.5, MaxValue = 5 },
 	-- Meat Price: the owner's VALUE multiplier on their own fish. When the
 	-- grinder cuts a fish, its whole sale value (tier value x Silver/Gold) is
 	-- multiplied by the owner's value once, rounded, then split into meat
 	-- pieces as before. Fish values differ, so the card shows 1x > 2x, not $.
-	MeatPrice = { Name = "Meat Price", Values = { 1, 2, 2.5, 3 }, Costs = { 10, 150, 600 }, FirstValue = 2, MaxValue = 5 },
+	MeatPrice = {
+		Name = "Meat Price",
+		Values = { 1, 1.25, 1.5, 1.75, 2, 2.5, 3 },
+		Costs = { 10, 40, 90, 180, 400, 900 },
+		FirstValue = 1.25,
+		MaxValue = 5,
+	},
 	-- Faster Reels: the owner's reel-in speed on their own casts. The reel
 	-- (3.4 s at 1x) takes 3.4 / Value seconds, server and client animation
 	-- alike. Separate from the equipped rod, which shortens the bite wait.
-	FasterReels = { Name = "Faster Reels", Values = { 1, 1.2, 1.35, 1.5 }, Costs = { 10, 100, 400 }, FirstValue = 1.2, MaxValue = 2 },
+	FasterReels = { Name = "Faster Reels", Values = { 1, 1.1, 1.2, 1.35, 1.5 }, Costs = { 10, 45, 140, 350 }, FirstValue = 1.1, MaxValue = 2 },
 }
 Config.BoardUpgradeIds = { "RodLuck", "MeatPrice", "FasterReels" } -- the order they are listed and checked
 -- PAID board upgrades (other than Net Strength, which is NetKgOpen) stay
@@ -3163,6 +3190,22 @@ Config.BoardUpgradeIds = { "RodLuck", "MeatPrice", "FasterReels" } -- the order 
 -- ReplicatedStorage.Economy.
 Config.BoardUpgradesOpen = false
 Config.BoardUpgradeCooldown = 0.5 -- seconds between presses per player
+
+------------------------------------------------------------ customers (sale table)
+
+-- Customers buy ONE piece each at the sale table, and they are the only buyers
+-- until trucks are unlocked, so their rate is the early game's income limit.
+-- Live, one came every 10-20 s for the WHOLE server (~4 a minute, shared).
+-- Now (CustomerSystem, via EconomyService.customers()): PerPlayer a minute for
+-- EACH player in the server, up to Max a minute (about what the Blender Bot
+-- can carry to the table). The Car Sales upgrades' published values
+-- (workspace CustomersPerMin / CustomersLineCap) are never lowered: a higher
+-- CustomersPerMin is used per player, and also lifts Max to itself.
+Config.Customers = {
+	PerPlayer = 6, -- customers a minute for each player
+	Max = 18, -- customers a minute in the whole server
+	LineCap = 6, -- people in the line (walking or waiting), at least
+}
 
 ------------------------------------------------------------ checks
 
@@ -3240,6 +3283,10 @@ function Config.check(firstTankUpgradeCost: number?): (boolean, string?)
 				return false, "BoardUpgrades." .. id .. ": Costs must be increasing whole numbers up to UpgradeCostCap"
 			end
 		end
+	end
+	local cu = Config.Customers
+	if not (cu.PerPlayer > 0 and cu.Max >= cu.PerPlayer and cu.Max <= 60 and cu.LineCap >= 1 and cu.LineCap <= 8) then
+		return false, "Customers: PerPlayer / Max / LineCap out of range"
 	end
 	if n.Costs[1] ~= Config.UpgradeFirstCost then
 		return false, "NetKg: the first step must cost UpgradeFirstCost"
@@ -5179,6 +5226,23 @@ function Sales.settle(
 	end
 	ledger:notePaid(paid)
 	return paid, if paid then piece.value else 0, piece
+end
+
+-- The customers' rate (a minute) and line size for `players` players in the
+-- server. `cfg` is Config.Customers ({ PerPlayer, Max, LineCap }); the Car
+-- Sales upgrades' published values (`publishedRate` = workspace
+-- CustomersPerMin, `publishedCap` = CustomersLineCap; anything not a positive
+-- number is ignored) are never lowered.
+function Sales.customers(players: any, publishedRate: any, publishedCap: any, cfg: any): (number, number)
+	local function positive(v: any): number
+		return if type(v) == "number" and v == v and v > 0 and v < math.huge then v else 0
+	end
+	local n = math.max(1, math.floor(positive(players)))
+	local rate = positive(publishedRate)
+	local perPlayer = math.max(cfg.PerPlayer, rate)
+	local perMin = math.min(perPlayer * n, math.max(cfg.Max, rate))
+	local cap = math.max(cfg.LineCap, math.floor(positive(publishedCap)))
+	return perMin, cap
 end
 
 return Sales
@@ -7262,6 +7326,618 @@ task.spawn(function()
 	end
 end)
 ]] } } },
+	{ key = "CustomerSystem", where = "script:CustomerSystem", class = "Script", variants = { { label = "meatglow", old = [[
+-- Customers: avatars of the server owner's friends walk out of the shops in the city,
+-- down the sidewalk to the meat table at the end of the conveyor, buy a piece of meat
+-- (if there is any), and walk back into the city.
+--
+-- [MeatGlow patch] Changes marked "MeatGlow": Silver / Gold meat keeps its
+-- glow when it is carried, laid out or loaded (display only; the value is in
+-- the ledger). Needs ReplicatedStorage.FishVariantVisuals; without it this
+-- script behaves exactly like its base version.
+--
+-- [Economy patch v1] Changes vs. the live script are marked "Economy".
+-- A customer's purchase is the piece's one sale: EconomyService pays the piece's
+-- owner its ledger value. The tier is read before the piece is destroyed.
+local Players = game:GetService("Players")
+local PhysicsService = game:GetService("PhysicsService")
+local SS = game:GetService("ServerStorage")
+
+local folder = workspace:WaitForChild("Customers")
+local saleMeat = workspace:WaitForChild("SaleMeat")
+local meatTemplate = SS:WaitForChild("MeatTemplate")
+local bought = SS:WaitForChild("CustomerEvents"):WaitForChild("CustomerBought")
+
+-- Economy: optional money service (missing or not running -> original behaviour)
+local Economy = nil
+do
+	local mod = game:GetService("ServerScriptService"):FindFirstChild("EconomyService")
+	if mod and mod:IsA("ModuleScript") then
+		local ok, api = pcall(require, mod)
+		if ok and type(api) == "table" then
+			local ran, running = pcall(api.start)
+			if ran and running then
+				Economy = api
+			else
+				warn("[CustomerSystem] economy not running, original behaviour: " .. tostring(running))
+			end
+		else
+			warn("[CustomerSystem] could not load EconomyService, original behaviour: " .. tostring(api))
+		end
+	end
+end
+
+-- MeatGlow: optional effects module (missing -> no glow, base behaviour)
+local VariantFx = nil
+do
+	local mod = game:GetService("ReplicatedStorage"):FindFirstChild("FishVariantVisuals")
+	if mod and mod:IsA("ModuleScript") then
+		local ok, result = pcall(require, mod)
+		if ok then
+			VariantFx = result
+		else
+			warn("[MeatGlow] FishVariantVisuals failed to load: " .. tostring(result))
+		end
+	end
+end
+local function glow(part, variant)
+	if VariantFx and variant then pcall(VariantFx.applyToPart, part, variant) end
+end
+
+-- tuning
+local SPAWN_DELAY = { 10, 20 }   -- seconds between new customers
+local MAX_IN_LINE = 4
+local WAIT_FOR_MEAT = 18         -- how long they wait at the table before giving up
+local WALK_SPEED = 9
+
+-- route (sidewalk from the shop doors to the table)
+local Y = 9.3
+local DOORS = {
+	{ door = Vector3.new(-125.6, Y, 185), out = Vector3.new(-126.1, Y, 184) },
+	{ door = Vector3.new(-125.6, Y, 202), out = Vector3.new(-126.1, Y, 201) },
+}
+local CORNER = Vector3.new(-126.1, Y, 163.1)
+local DOCK = Vector3.new(-94, Y, 163.1)
+local SLOTS = { -- slot 1 is at the sale table, the rest line up behind
+	Vector3.new(-94.8, Y, 152.5),
+	Vector3.new(-94.8, Y, 157.5),
+	Vector3.new(-94.6, Y, 162.4),
+	Vector3.new(-98.5, Y, 163.1),
+	Vector3.new(-102.5, Y, 163.1),
+	Vector3.new(-106.5, Y, 163.1),
+	Vector3.new(-110.5, Y, 163.1),
+	Vector3.new(-114.5, Y, 163.1),
+}
+local TABLE_LOOK = Vector3.new(-80, Y, 152.5)
+
+-- R15 default animations
+local ANIM_IDLE = "rbxassetid://507766388"
+local ANIM_WALK = "rbxassetid://507777826"
+
+pcall(function()
+	PhysicsService:RegisterCollisionGroup("Customers")
+	PhysicsService:CollisionGroupSetCollidable("Customers", "Customers", false)
+end)
+
+------------------------------------------------ friends list
+local friendIds = {}
+local fetched = false
+local function fetchFriends(player)
+	if fetched then return end
+	fetched = true
+	local ok, pages = pcall(function() return Players:GetFriendsAsync(player.UserId) end)
+	if ok and pages then
+		while true do
+			for _, f in ipairs(pages:GetCurrentPage()) do table.insert(friendIds, f.Id) end
+			if pages.IsFinished or #friendIds >= 60 then break end
+			local ok2 = pcall(function() pages:AdvanceToNextPageAsync() end)
+			if not ok2 then break end
+		end
+	end
+	if #friendIds == 0 then table.insert(friendIds, player.UserId) end
+end
+Players.PlayerAdded:Connect(fetchFriends)
+for _, p in ipairs(Players:GetPlayers()) do task.spawn(fetchFriends, p) end
+
+local descCache = {}
+local function makeAvatar()
+	local id = #friendIds > 0 and friendIds[math.random(1, #friendIds)] or nil
+	local desc
+	if id then
+		desc = descCache[id]
+		if not desc then
+			local ok, d = pcall(function() return Players:GetHumanoidDescriptionFromUserId(id) end)
+			if ok then desc = d descCache[id] = d end
+		end
+	end
+	desc = desc or Instance.new("HumanoidDescription")
+	local ok, model = pcall(function() return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15) end)
+	if not ok or not model then return nil end
+	if id then
+		local ok2, name = pcall(function() return Players:GetNameFromUserIdAsync(id) end)
+		model.Name = ok2 and name or "Customer"
+	else
+		model.Name = "Customer"
+	end
+	local anim = model:FindFirstChild("Animate") if anim then anim:Destroy() end
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("BasePart") then p.CollisionGroup = "Customers" end
+	end
+	return model
+end
+
+------------------------------------------------ customer behaviour
+local line = {}
+
+local function walkTo(c, pos)
+	local hum = c.hum
+	if not hum.Parent or hum.Health <= 0 then return false end
+	hum:MoveTo(pos)
+	local done = false
+	local conn = hum.MoveToFinished:Connect(function() done = true end)
+	local t = 0
+	while not done and t < 12 do t += task.wait(0.1) end
+	conn:Disconnect()
+	return true
+end
+
+local function face(c, target)
+	local hrp = c.hrp
+	local look = Vector3.new(target.X, hrp.Position.Y, target.Z)
+	hrp.CFrame = CFrame.lookAt(hrp.Position, look)
+end
+
+local function topOfStack() -- nearest meat on the sale table
+	local best, bd = nil, math.huge
+	for _, m in ipairs(saleMeat:GetChildren()) do
+		if not m:GetAttribute("Sold") then
+			local d = (m.Position - SLOTS[1]).Magnitude
+			if d < bd then best, bd = m, d end
+		end
+	end
+	if best then best:SetAttribute("Sold", true) end
+	return best
+end
+
+local function giveMeat(c, meat)
+	local from = meat.Position
+	local variant = meat:GetAttribute("Variant") -- MeatGlow: read before it goes
+	meat:Destroy()
+	local hand = c.model:FindFirstChild("RightHand") or c.hrp
+	local p = meatTemplate:Clone()
+	glow(p, variant) -- MeatGlow: in the customer's hand
+	p.Anchored = true
+	p.Parent = workspace
+	local to = c.hrp.Position + c.hrp.CFrame.LookVector * 1.2 + Vector3.new(0, 0.3, 0)
+	local t = 0
+	while t < 0.35 do
+		t += task.wait()
+		local u = math.min(t / 0.35, 1)
+		p.CFrame = CFrame.new(from:Lerp(to, u) + Vector3.new(0, 3 * 4 * u * (1 - u), 0)) * CFrame.Angles(0, u * 6, 0)
+	end
+	-- hold it in front of them
+	p.Anchored = false
+	p.Massless = true
+	p.CanCollide = false
+	p.CFrame = c.hrp.CFrame * CFrame.new(0, 0.2, -1.1) * CFrame.Angles(0, math.rad(90), 0)
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = c.hrp w.Part1 = p w.Parent = p
+	p.Parent = c.model
+end
+
+local function reposition()
+	for i, c in ipairs(line) do
+		if c.state == "queued" and c.slot ~= i then
+			c.slot = i
+			task.spawn(function()
+				walkTo(c, SLOTS[math.min(i, #SLOTS)])
+				if i == 1 then face(c, TABLE_LOOK) end
+			end)
+		end
+	end
+end
+
+local function leave(c)
+	for i, x in ipairs(line) do if x == c then table.remove(line, i) break end end
+	c.state = "leaving"
+	reposition()
+	walkTo(c, DOCK)
+	walkTo(c, CORNER)
+	walkTo(c, c.route.out)
+	walkTo(c, c.route.door)
+	c.model:Destroy()
+end
+
+local function runCustomer(c)
+	walkTo(c, c.route.out)
+	walkTo(c, CORNER)
+	walkTo(c, DOCK)
+	c.state = "queued"
+	c.slot = nil
+	reposition()
+	-- wait until we're at the front and standing at the table
+	while c.model.Parent and (line[1] ~= c or (c.hrp.Position - SLOTS[1]).Magnitude > 3) do task.wait(0.3) end
+	if not c.model.Parent then return end
+	face(c, TABLE_LOOK)
+	task.wait(1.2)
+	local waited = 0
+	while waited < WAIT_FOR_MEAT do
+		local meat = topOfStack()
+		if meat then
+			local tier = meat:GetAttribute("Tier") -- Economy: read before giveMeat destroys it
+			if Economy then Economy.settle(meat:GetAttribute("PieceId"), "Customer") end -- Economy: the one sale
+			giveMeat(c, meat)
+			bought:Fire(c.model.Name, tier)
+			task.wait(0.8)
+			break
+		end
+		waited += task.wait(0.5)
+	end
+	leave(c)
+end
+
+local function spawnCustomer()
+	local model = makeAvatar()
+	if not model then return end
+	local route = DOORS[math.random(1, #DOORS)]
+	local hum = model:FindFirstChildOfClass("Humanoid")
+	local hrp = model:FindFirstChild("HumanoidRootPart")
+	hum.WalkSpeed = WALK_SPEED
+	hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	local up = Vector3.new(0, 2.9, 0)
+	model:PivotTo(CFrame.lookAt(route.door + up, route.out + up))
+	model.Parent = folder
+	pcall(function() hrp:SetNetworkOwner(nil) end)
+	-- walk / idle animations
+	local animator = hum:FindFirstChildOfClass("Animator") or Instance.new("Animator", hum)
+	local idleA = Instance.new("Animation") idleA.AnimationId = ANIM_IDLE
+	local walkA = Instance.new("Animation") walkA.AnimationId = ANIM_WALK
+	local idle = animator:LoadAnimation(idleA)
+	local walk = animator:LoadAnimation(walkA)
+	idle.Looped = true walk.Looped = true
+	idle:Play()
+	hum.Running:Connect(function(speed)
+		if speed > 0.5 then
+			if not walk.IsPlaying then walk:Play(0.2) end
+			walk:AdjustSpeed(speed / 12)
+		else
+			if walk.IsPlaying then walk:Stop(0.25) end
+		end
+	end)
+	local c = { model = model, hum = hum, hrp = hrp, route = route, state = "walking" }
+	table.insert(line, c)
+	task.spawn(runCustomer, c)
+end
+
+task.wait(4)
+while true do
+	-- Customers upgrade (CarSalesServer) publishes rate + line cap on workspace
+	local cap = workspace:GetAttribute("CustomersLineCap") or MAX_IN_LINE
+	if #Players:GetPlayers() > 0 and #line < cap then
+		spawnCustomer()
+	end
+	local perMin = workspace:GetAttribute("CustomersPerMin")
+	if perMin then
+		local gap = 60 / perMin
+		task.wait(gap * (0.75 + math.random() * 0.5))
+	else
+		task.wait(math.random(SPAWN_DELAY[1] * 10, SPAWN_DELAY[2] * 10) / 10)
+	end
+end
+
+]], new = [[
+-- Customers: avatars of the server owner's friends walk out of the shops in the city,
+-- down the sidewalk to the meat table at the end of the conveyor, buy a piece of meat
+-- (if there is any), and walk back into the city.
+--
+-- [Economy board patch] Changes marked "Economy board": customers come for
+-- EACH player in the server (EconomyService.customers(): Config.Customers),
+-- never slower than the Car Sales upgrades publish. Without EconomyService
+-- the spawn loop is exactly the original.
+--
+-- [MeatGlow patch] Changes marked "MeatGlow": Silver / Gold meat keeps its
+-- glow when it is carried, laid out or loaded (display only; the value is in
+-- the ledger). Needs ReplicatedStorage.FishVariantVisuals; without it this
+-- script behaves exactly like its base version.
+--
+-- [Economy patch v1] Changes vs. the live script are marked "Economy".
+-- A customer's purchase is the piece's one sale: EconomyService pays the piece's
+-- owner its ledger value. The tier is read before the piece is destroyed.
+local Players = game:GetService("Players")
+local PhysicsService = game:GetService("PhysicsService")
+local SS = game:GetService("ServerStorage")
+
+local folder = workspace:WaitForChild("Customers")
+local saleMeat = workspace:WaitForChild("SaleMeat")
+local meatTemplate = SS:WaitForChild("MeatTemplate")
+local bought = SS:WaitForChild("CustomerEvents"):WaitForChild("CustomerBought")
+
+-- Economy: optional money service (missing or not running -> original behaviour)
+local Economy = nil
+do
+	local mod = game:GetService("ServerScriptService"):FindFirstChild("EconomyService")
+	if mod and mod:IsA("ModuleScript") then
+		local ok, api = pcall(require, mod)
+		if ok and type(api) == "table" then
+			local ran, running = pcall(api.start)
+			if ran and running then
+				Economy = api
+			else
+				warn("[CustomerSystem] economy not running, original behaviour: " .. tostring(running))
+			end
+		else
+			warn("[CustomerSystem] could not load EconomyService, original behaviour: " .. tostring(api))
+		end
+	end
+end
+
+-- MeatGlow: optional effects module (missing -> no glow, base behaviour)
+local VariantFx = nil
+do
+	local mod = game:GetService("ReplicatedStorage"):FindFirstChild("FishVariantVisuals")
+	if mod and mod:IsA("ModuleScript") then
+		local ok, result = pcall(require, mod)
+		if ok then
+			VariantFx = result
+		else
+			warn("[MeatGlow] FishVariantVisuals failed to load: " .. tostring(result))
+		end
+	end
+end
+local function glow(part, variant)
+	if VariantFx and variant then pcall(VariantFx.applyToPart, part, variant) end
+end
+
+-- tuning
+local SPAWN_DELAY = { 10, 20 }   -- seconds between new customers
+local MAX_IN_LINE = 4
+local WAIT_FOR_MEAT = 18         -- how long they wait at the table before giving up
+local WALK_SPEED = 9
+
+-- route (sidewalk from the shop doors to the table)
+local Y = 9.3
+local DOORS = {
+	{ door = Vector3.new(-125.6, Y, 185), out = Vector3.new(-126.1, Y, 184) },
+	{ door = Vector3.new(-125.6, Y, 202), out = Vector3.new(-126.1, Y, 201) },
+}
+local CORNER = Vector3.new(-126.1, Y, 163.1)
+local DOCK = Vector3.new(-94, Y, 163.1)
+local SLOTS = { -- slot 1 is at the sale table, the rest line up behind
+	Vector3.new(-94.8, Y, 152.5),
+	Vector3.new(-94.8, Y, 157.5),
+	Vector3.new(-94.6, Y, 162.4),
+	Vector3.new(-98.5, Y, 163.1),
+	Vector3.new(-102.5, Y, 163.1),
+	Vector3.new(-106.5, Y, 163.1),
+	Vector3.new(-110.5, Y, 163.1),
+	Vector3.new(-114.5, Y, 163.1),
+}
+local TABLE_LOOK = Vector3.new(-80, Y, 152.5)
+
+-- R15 default animations
+local ANIM_IDLE = "rbxassetid://507766388"
+local ANIM_WALK = "rbxassetid://507777826"
+
+pcall(function()
+	PhysicsService:RegisterCollisionGroup("Customers")
+	PhysicsService:CollisionGroupSetCollidable("Customers", "Customers", false)
+end)
+
+------------------------------------------------ friends list
+local friendIds = {}
+local fetched = false
+local function fetchFriends(player)
+	if fetched then return end
+	fetched = true
+	local ok, pages = pcall(function() return Players:GetFriendsAsync(player.UserId) end)
+	if ok and pages then
+		while true do
+			for _, f in ipairs(pages:GetCurrentPage()) do table.insert(friendIds, f.Id) end
+			if pages.IsFinished or #friendIds >= 60 then break end
+			local ok2 = pcall(function() pages:AdvanceToNextPageAsync() end)
+			if not ok2 then break end
+		end
+	end
+	if #friendIds == 0 then table.insert(friendIds, player.UserId) end
+end
+Players.PlayerAdded:Connect(fetchFriends)
+for _, p in ipairs(Players:GetPlayers()) do task.spawn(fetchFriends, p) end
+
+local descCache = {}
+local function makeAvatar()
+	local id = #friendIds > 0 and friendIds[math.random(1, #friendIds)] or nil
+	local desc
+	if id then
+		desc = descCache[id]
+		if not desc then
+			local ok, d = pcall(function() return Players:GetHumanoidDescriptionFromUserId(id) end)
+			if ok then desc = d descCache[id] = d end
+		end
+	end
+	desc = desc or Instance.new("HumanoidDescription")
+	local ok, model = pcall(function() return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15) end)
+	if not ok or not model then return nil end
+	if id then
+		local ok2, name = pcall(function() return Players:GetNameFromUserIdAsync(id) end)
+		model.Name = ok2 and name or "Customer"
+	else
+		model.Name = "Customer"
+	end
+	local anim = model:FindFirstChild("Animate") if anim then anim:Destroy() end
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("BasePart") then p.CollisionGroup = "Customers" end
+	end
+	return model
+end
+
+------------------------------------------------ customer behaviour
+local line = {}
+
+local function walkTo(c, pos)
+	local hum = c.hum
+	if not hum.Parent or hum.Health <= 0 then return false end
+	hum:MoveTo(pos)
+	local done = false
+	local conn = hum.MoveToFinished:Connect(function() done = true end)
+	local t = 0
+	while not done and t < 12 do t += task.wait(0.1) end
+	conn:Disconnect()
+	return true
+end
+
+local function face(c, target)
+	local hrp = c.hrp
+	local look = Vector3.new(target.X, hrp.Position.Y, target.Z)
+	hrp.CFrame = CFrame.lookAt(hrp.Position, look)
+end
+
+local function topOfStack() -- nearest meat on the sale table
+	local best, bd = nil, math.huge
+	for _, m in ipairs(saleMeat:GetChildren()) do
+		if not m:GetAttribute("Sold") then
+			local d = (m.Position - SLOTS[1]).Magnitude
+			if d < bd then best, bd = m, d end
+		end
+	end
+	if best then best:SetAttribute("Sold", true) end
+	return best
+end
+
+local function giveMeat(c, meat)
+	local from = meat.Position
+	local variant = meat:GetAttribute("Variant") -- MeatGlow: read before it goes
+	meat:Destroy()
+	local hand = c.model:FindFirstChild("RightHand") or c.hrp
+	local p = meatTemplate:Clone()
+	glow(p, variant) -- MeatGlow: in the customer's hand
+	p.Anchored = true
+	p.Parent = workspace
+	local to = c.hrp.Position + c.hrp.CFrame.LookVector * 1.2 + Vector3.new(0, 0.3, 0)
+	local t = 0
+	while t < 0.35 do
+		t += task.wait()
+		local u = math.min(t / 0.35, 1)
+		p.CFrame = CFrame.new(from:Lerp(to, u) + Vector3.new(0, 3 * 4 * u * (1 - u), 0)) * CFrame.Angles(0, u * 6, 0)
+	end
+	-- hold it in front of them
+	p.Anchored = false
+	p.Massless = true
+	p.CanCollide = false
+	p.CFrame = c.hrp.CFrame * CFrame.new(0, 0.2, -1.1) * CFrame.Angles(0, math.rad(90), 0)
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = c.hrp w.Part1 = p w.Parent = p
+	p.Parent = c.model
+end
+
+local function reposition()
+	for i, c in ipairs(line) do
+		if c.state == "queued" and c.slot ~= i then
+			c.slot = i
+			task.spawn(function()
+				walkTo(c, SLOTS[math.min(i, #SLOTS)])
+				if i == 1 then face(c, TABLE_LOOK) end
+			end)
+		end
+	end
+end
+
+local function leave(c)
+	for i, x in ipairs(line) do if x == c then table.remove(line, i) break end end
+	c.state = "leaving"
+	reposition()
+	walkTo(c, DOCK)
+	walkTo(c, CORNER)
+	walkTo(c, c.route.out)
+	walkTo(c, c.route.door)
+	c.model:Destroy()
+end
+
+local function runCustomer(c)
+	walkTo(c, c.route.out)
+	walkTo(c, CORNER)
+	walkTo(c, DOCK)
+	c.state = "queued"
+	c.slot = nil
+	reposition()
+	-- wait until we're at the front and standing at the table
+	while c.model.Parent and (line[1] ~= c or (c.hrp.Position - SLOTS[1]).Magnitude > 3) do task.wait(0.3) end
+	if not c.model.Parent then return end
+	face(c, TABLE_LOOK)
+	task.wait(1.2)
+	local waited = 0
+	while waited < WAIT_FOR_MEAT do
+		local meat = topOfStack()
+		if meat then
+			local tier = meat:GetAttribute("Tier") -- Economy: read before giveMeat destroys it
+			if Economy then Economy.settle(meat:GetAttribute("PieceId"), "Customer") end -- Economy: the one sale
+			giveMeat(c, meat)
+			bought:Fire(c.model.Name, tier)
+			task.wait(0.8)
+			break
+		end
+		waited += task.wait(0.5)
+	end
+	leave(c)
+end
+
+local function spawnCustomer()
+	local model = makeAvatar()
+	if not model then return end
+	local route = DOORS[math.random(1, #DOORS)]
+	local hum = model:FindFirstChildOfClass("Humanoid")
+	local hrp = model:FindFirstChild("HumanoidRootPart")
+	hum.WalkSpeed = WALK_SPEED
+	hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	local up = Vector3.new(0, 2.9, 0)
+	model:PivotTo(CFrame.lookAt(route.door + up, route.out + up))
+	model.Parent = folder
+	pcall(function() hrp:SetNetworkOwner(nil) end)
+	-- walk / idle animations
+	local animator = hum:FindFirstChildOfClass("Animator") or Instance.new("Animator", hum)
+	local idleA = Instance.new("Animation") idleA.AnimationId = ANIM_IDLE
+	local walkA = Instance.new("Animation") walkA.AnimationId = ANIM_WALK
+	local idle = animator:LoadAnimation(idleA)
+	local walk = animator:LoadAnimation(walkA)
+	idle.Looped = true walk.Looped = true
+	idle:Play()
+	hum.Running:Connect(function(speed)
+		if speed > 0.5 then
+			if not walk.IsPlaying then walk:Play(0.2) end
+			walk:AdjustSpeed(speed / 12)
+		else
+			if walk.IsPlaying then walk:Stop(0.25) end
+		end
+	end)
+	local c = { model = model, hum = hum, hrp = hrp, route = route, state = "walking" }
+	table.insert(line, c)
+	task.spawn(runCustomer, c)
+end
+
+task.wait(4)
+while true do
+	-- Economy board: a rate for each player (never below Car Sales' values)
+	local rate, lineCap = nil, nil
+	if Economy and Economy.customers then
+		local ok, r, c = pcall(Economy.customers)
+		if ok and type(r) == "number" and r > 0 and type(c) == "number" then
+			rate, lineCap = r, c
+		end
+	end
+	-- Customers upgrade (CarSalesServer) publishes rate + line cap on workspace
+	local cap = lineCap or workspace:GetAttribute("CustomersLineCap") or MAX_IN_LINE
+	if #Players:GetPlayers() > 0 and #line < cap then
+		spawnCustomer()
+	end
+	local perMin = rate or workspace:GetAttribute("CustomersPerMin")
+	if perMin then
+		local gap = 60 / perMin
+		task.wait(gap * (0.75 + math.random() * 0.5))
+	else
+		task.wait(math.random(SPAWN_DELAY[1] * 10, SPAWN_DELAY[2] * 10) / 10)
+	end
+end
+
+]] } } },
 }
 -- { where, name, class, source } objects this adds (must not exist yet)
 local ADDS = {
@@ -7995,9 +8671,9 @@ render()
 --   2 x 2 cards in a wooden frame, white outlined text, a themed icon and a
 --   green Buy button on each:
 --     Net Strength (pink)   15kg > 20kg    $10
---     Rod Luck (lime)       1x > 2x        $10
---     Meat Price (cyan)     1x > 2x        $10
---     Faster Reels (amber)  1x > 1.2x      $10
+--     Rod Luck (lime)       1x > 1.5x      $10
+--     Meat Price (cyan)     1x > 1.25x     $10
+--     Faster Reels (amber)  1x > 1.1x      $10
 -- Net Strength shows YOUR saved net (the same one the KGsign posts sell);
 -- Rod Luck, Meat Price and Faster Reels YOUR saved levels (Meat Price is a
 -- value multiplier on your own fish - fish values differ, so it isn't shown
@@ -8042,9 +8718,9 @@ local FLASH_SECONDS = 1.6
 
 local CARDS = {
 	{ id = "NetStrength", title = "Net Strength", icon = "🥅", color = Color3.fromRGB(255, 120, 190) },
-	{ id = "RodLuck", title = "Rod Luck", icon = "🍀", color = Color3.fromRGB(150, 225, 45), value = "1x > 2x", upgrade = true },
-	{ id = "MeatPrice", title = "Meat Price", icon = "🥩", color = Color3.fromRGB(45, 205, 235), value = "1x > 2x", upgrade = true },
-	{ id = "FasterReels", title = "Faster Reels", icon = "⚡", color = Color3.fromRGB(255, 180, 35), value = "1x > 1.2x", upgrade = true },
+	{ id = "RodLuck", title = "Rod Luck", icon = "🍀", color = Color3.fromRGB(150, 225, 45), value = "1x > 1.5x", upgrade = true },
+	{ id = "MeatPrice", title = "Meat Price", icon = "🥩", color = Color3.fromRGB(45, 205, 235), value = "1x > 1.25x", upgrade = true },
+	{ id = "FasterReels", title = "Faster Reels", icon = "⚡", color = Color3.fromRGB(255, 180, 35), value = "1x > 1.1x", upgrade = true },
 }
 
 ------------------------------------------------------------ finding the board

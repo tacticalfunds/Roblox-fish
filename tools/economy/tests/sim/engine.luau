@@ -1313,6 +1313,25 @@ end
 
 local root, Economy
 local CORE = { "Config", "Pricing", "Ledger", "MoneyStore", "Offers", "PieceTags", "Sales", "Rods", "NetKg", "BoardUpgrades" }
+-- The sims were written for the ORIGINAL prices (net 10, 25, 50, 100 then
+-- x1.5; board 3 levels; rods 150 / 600 / 2000 / 7500): they test the logic, so
+-- they run with those, pinned into the same Config tables the modules read.
+-- customers_sim sets fastStartTuning.on to run the current (fast-start) one.
+local fastStartTuning = { on = false }
+local function pinOriginalTuning(Config)
+	Config.NetKg.Costs = { 10, 25, 50, 100 }
+	Config.NetKg.Growth = 1.5
+	local U = Config.BoardUpgrades
+	U.RodLuck.Values, U.RodLuck.Costs, U.RodLuck.FirstValue = { 1, 2, 2.5, 3 }, { 10, 75, 300 }, 2
+	U.MeatPrice.Values, U.MeatPrice.Costs, U.MeatPrice.FirstValue = { 1, 2, 2.5, 3 }, { 10, 150, 600 }, 2
+	U.FasterReels.Values, U.FasterReels.Costs, U.FasterReels.FirstValue = { 1, 1.2, 1.35, 1.5 }, { 10, 100, 400 }, 1.2
+	local ORIGINAL = { FishingRod4 = 150, FishingRod3 = 600, FishingRod2 = 2000, FishingRod5 = 7500 }
+	for _, rod in ipairs(Config.Rods) do
+		rod.Price = ORIGINAL[rod.Id] or rod.Price
+	end
+	assert(Config.check() == true, "pinned tuning fails Config.check")
+end
+
 local function installEconomy()
 	current = "server"
 	root = new("Folder", "Economy")
@@ -1328,6 +1347,9 @@ local function installEconomy()
 	service.Parent = services.ServerScriptService
 	runAs("server", function()
 		Economy = requireModule(service)
+		if not fastStartTuning.on then
+			pinOriginalTuning(Economy.Config)
+		end
 		check("EconomyService starts", Economy.start() == true)
 	end)
 	current = nil

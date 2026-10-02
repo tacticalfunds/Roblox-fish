@@ -88,6 +88,7 @@ def sources() -> dict:
     out["MG_Bot_bot"] = (glow / "BotSystem.patched.from-bot.lua").read_text()
     out["MG_Customer"] = (glow / "CustomerSystem.patched.from-sales.lua").read_text()
     out["MG_Truck"] = (glow / "TruckSystem.patched.from-sales.lua").read_text()
+    out["Board_Customer"] = (ROOT / "studio" / "board" / "CustomerSystem.lua").read_text()
     return out
 
 

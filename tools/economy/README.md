@@ -442,13 +442,15 @@ They are saved with the player's Money.
 | Rod | Model | Price | Bite wait |
 |---|---|---|---|
 | Basic | `FishingRod1` | free, always owned | ×1 |
-| Tiger | `FishingRod4` | 150 | ×0.85 |
-| Coral | `FishingRod3` | 600 | ×0.75 |
-| Tide | `FishingRod2` | 2000 | ×0.65 |
-| Magma | `FishingRod5` | 7500 | ×0.55 |
+| Tiger | `FishingRod4` | 100 | ×0.85 |
+| Coral | `FishingRod3` | 450 | ×0.75 |
+| Tide | `FishingRod2` | 1500 | ×0.65 |
+| Magma | `FishingRod5` | 5000 | ×0.55 |
 
-These numbers are **initial easy-early-game tuning, not measured pacing**
-(`Config.Rods`). The legacy `Price` / `Tier` / `Title` attributes on the rod
+These are the **fast-start prices** that `InstallBoardUpgrades.lua` brings
+(`Config.Rods`; the rods release itself had 150 / 600 / 2000 / 7500).
+They are modelled from the place's fish data, not measured in play (see
+[Fast start](#fast-start-customers-for-every-player-and-early-prices-part-of-installboardupgradeslua)). The legacy `Price` / `Tier` / `Title` attributes on the rod
 models are ignored; while the server runs, each model's `Price` attribute is
 set to the table's price, and `Benefit` holds text like "Bites 45% faster".
 Fish sale and offer prices and rarity odds are unchanged.
@@ -569,7 +571,7 @@ while this is in.
 |---|---|---|
 | R1 | Play | `EquippedRod = FishingRod1`, `RodOwned_FishingRod1 = 1` on your player; Money unchanged from before |
 | R2 | Shop (closed): press Buy on Tiger | "The rod shop opens soon"; nothing charged |
-| R3 | Set `ReplicatedStorage.Economy.RodShopOpen = true`; buy Tiger at the shop | −150, "Bought and equipped Tiger Rod", `EquippedRod = FishingRod4` |
+| R3 | Set `ReplicatedStorage.Economy.RodShopOpen = true`; buy Tiger at the shop | −100 (−150 before the board upgrades are installed), "Bought and equipped Tiger Rod", `EquippedRod = FishingRod4` |
 | R4 | Buy Tiger again / buy Basic | Equips it, no charge |
 | R5 | Walk far away, buy Coral | "Walk back to the rod shop to buy" |
 | R6 | Press the big button | Bites come noticeably sooner than with Basic |
@@ -690,7 +692,8 @@ buy another pad upgrade meanwhile (`unsettled`).
 if any backup of the superseded per-milestone installers exists.
 
 - Changes: EconomyService, Config, MoneyStore, Pricing, Ledger, Sales,
-  RodFishingSystem, GrinderUpgradesServer and GrinderUpgradesClient.
+  RodFishingSystem, GrinderUpgradesServer, GrinderUpgradesClient and
+  CustomerSystem (the live MeatGlow version, checked exactly).
 - Checks unchanged: Rods, Offers, PieceTags, GrinderUpgradesConfig and
   RodShopServer.
 - Adds: `EconomyService.NetKg`, `EconomyService.BoardUpgrades`,
@@ -702,8 +705,8 @@ if any backup of the superseded per-milestone installers exists.
   for the other three.
 
 **Rollback:** `RollbackBoardUpgrades.lua` restores exactly the live
-baseline: the blade EconomyService, the live GrinderUpgrades scripts, and
-the added scripts removed. It refuses over any edited script. What happens
+baseline: the blade EconomyService, the live GrinderUpgrades scripts, the
+MeatGlow CustomerSystem, and the added scripts removed. It refuses over any edited script. What happens
 to the data:
 
 - **Old KG buys are safe both ways.** The `kg` count in
@@ -729,7 +732,7 @@ to the data:
 | G2 | Play with a player whose `GrinderUpgrades_v1` record has `kg = 3` | Their net shows 30 kg (plates `NET 30 KG → 35 KG`, card `30kg > 35kg`); `NetMaxWeight` 30 |
 | G3 | Change `Workspace.NetLift.MaxWeight` by hand | That player's `NetMaxWeight` stays 30; with nobody buying, `MaxWeight` itself is never changed by the scripts |
 | G3b | Second client with no old record joins while the first has 30 kg | Their `NetMaxWeight` is 15 (their own), not 30; a 20 kg load fails for them and lifts for the first |
-| G4 | `NetKgOpen = true`; click a post, then its price plate | Two separate purchases (−$100, then −$150); one toast each; `GrinderUpgrades_v1` kg still 3 |
+| G4 | `NetKgOpen = true`; click a post, then its price plate | Two separate purchases (30 → 35 kg for −$60, then 35 → 40 for −$90); one toast each; `GrinderUpgrades_v1` kg still 3 |
 | G5 | Watch the plates for a few seconds | They keep YOUR values (no flicker back to $100 / old text) |
 | G6 | Blade pad / conveyor pad | Work as before (same prices, blade shows, sales pay × blade) |
 | G7 | Leave and rejoin | Still the same kg as before leaving (e.g. 40 after G4, not 55): the old count isn't added again |
@@ -738,6 +741,76 @@ to the data:
 | G9b | Buy a blade, then stop the server (Stop) before the save answers | After rejoining and ~2 min: either the blade is there and the money spent, or a toast "... refunded" and the money back; never debited without the blade |
 | G9c | Buy a blade normally | Toast "Bought ..."; the Money record has no `pendingPurchases` left |
 | G10 | `RollbackBoardUpgrades.lua` | The live GrinderUpgrades scripts, EconomyService and NetLiftScript (untouched) come back exactly |
+
+## Fast start: customers for every player and early prices (part of `InstallBoardUpgrades.lua`)
+
+**Why.** A model of the live place (the inventory's 25 `SwimTemplates`
+with their `SpawnWeight` / `Weight` / `Tier`, the FishSpawner timing and
+caps, the net's size and weight gate, rod timing, the grinder, belt, bot,
+customers and trucks) showed that **selling** is the early game's limit:
+
+- A player at the net catches about 55 pieces of meat a minute at 15 kg.
+- Until Car Sales unlocks the trucks, the only buyers were customers: one
+  every 10-20 s **for the whole server**, one piece each (~4 a minute,
+  shared). The rest of the meat piles up, then the net pad refuses lifts.
+- So income was ~4 × the value of a piece (~$7.60 at 15 kg): about
+  $30/minute solo, and a quarter of that each in a 4-player server.
+
+**What changes.**
+
+- **Customers for every player.** CustomerSystem (the live MeatGlow
+  version, patched by `build/make_customers.py`) asks
+  `EconomyService.customers()` for its rate and line size:
+  `Config.Customers.PerPlayer` (6) a minute for **each** player in the
+  server, up to `Config.Customers.Max` (18, about what the Blender Bot can
+  carry to the table; customers beyond that would only wait). The line is
+  at least `Config.Customers.LineCap` (6; the sidewalk has 8 places).
+- **Car Sales is never made worse:** a published `CustomersPerMin` higher
+  than 6 is used per player and also lifts the cap to itself; a published
+  `CustomersLineCap` higher than 6 is used. (CarSalesServer and
+  CarSalesConfig themselves were not seen - only their published workspace
+  attributes are read. Please check that their customer levels still feel
+  like upgrades on top of the new base.)
+- **Without EconomyService, or if the call errors,** the loop is exactly
+  the original (published values, else 10-20 s).
+- **Early prices:** more, cheaper levels (tables in each section below):
+  net 10, 20, 35, 60, 90, then ×1.4 (1,105 to 60 kg); Rod Luck and Faster
+  Reels four levels each (10, 45, 140, 350); Meat Price six levels
+  (1.25x ... 3x for 10, 40, 90, 180, 400, 900); rods 100 / 450 / 1,500 /
+  5,000. Blades and the conveyor (GrinderUpgrades) are unchanged.
+
+**Modelled pacing** (a typical player who lifts whenever the net can carry
+the load; customers only, no trucks; not measured in play):
+
+| | Before | Now, 1-3 players | Now, 5 players |
+|---|---|---|---|
+| Customers a minute, per player | ~4 solo, ~1 with 4 players | 6 | 3.6 (the 18 cap) |
+| Income at the start | ~$30/min solo | ~$46/min | ~$27/min |
+| Purchases in the first 10 minutes | 12 solo, 7 with 4 players | 16 | 13 |
+| Gap between purchases, first 10 min | up to 2 min | 30-80 s | 50-105 s |
+| Whole board done | ~41 min solo | ~32 min | ~54 min |
+| Tiger / Coral / Tide / Magma | 9 / 36 / 56 / 150 min | 5 / 27 / 40 / 79 min | 9 / 45 / 66 / 131 min |
+
+The $100 starting grant still buys the first few $10 steps at once.
+
+**Known, not changed here:**
+
+- Faster Reels and faster rods add **catches**, not money, while selling is
+  the limit; only Meat Price, the blades, a heavier net (pricier fish) and
+  Rod Luck raise income. Trucks (Car Sales) raise the selling limit.
+- The bot carries one piece per trip (~12-18 a minute): above that, more
+  customers don't sell more.
+
+### Fast-start checklist (Studio, API access ON)
+
+| # | Do | Expect |
+|---|---|---|
+| C1 | Play solo, net some fish, watch the sale table for 3 minutes | About 6 customers a minute (one every ~10 s), each buying one piece |
+| C2 | Start a 3-player local server | About 18 a minute; no more than 6 people in the line |
+| C3 | Set `workspace.CustomersPerMin = 25` (as Car Sales would) | About 25 a minute even solo (never lowered) |
+| C4 | Delete `ServerScriptService.EconomyService` in a test copy | Customers come every 10-20 s as before; no errors |
+| C5 | Look at the board and posts | `$10` firsts; Meat Price `1x > 1.25x`, Rod Luck `1x > 1.5x`, Faster Reels `1x > 1.1x`; net steps $10, $20, $35 |
+| C6 | Rod shop | Tiger 100, Coral 450, Tide 1500, Magma 5000 |
 
 ## +5 KG signs: net capacity (part of `InstallBoardUpgrades.lua`)
 
@@ -754,19 +827,18 @@ at 15 kg.
   (**SOON** while closed, **MAX** at the cap). It uses the same style as
   the rod Buy panel.
 - The result appears as the usual toast, e.g. "Net capacity 15 → 20 kg
-  (-$25)" or "Walk up to the sign".
+  (-$10)" or "Walk up to the sign".
 
-**Pricing (`Config.NetKg`, initial tuning, not measured pacing).** As
-released in `187fe39` the steps were 25, 50, 100, ... (3,315 in total).
-The upgrade board makes the first step
-$10 like every board upgrade:
+**Pricing (`Config.NetKg`, fast-start tuning, modelled not measured).** As
+released in `187fe39` the steps were 25, 50, 100, ... (3,315 in total); the
+board's first version made them 10, 25, 50, 100, then ×1.5 (2,175). Now:
 
 | From → to (kg) | 15→20 | 20→25 | 25→30 | 30→35 | 35→40 | 40→45 | 45→50 | 50→55 | 55→60 |
 |---|---|---|---|---|---|---|---|---|---|
-| Cost (row 17) | 10 | 25 | 50 | 100 | 150 | 225 | 340 | 510 | 765 |
+| Cost | 10 | 20 | 35 | 60 | 90 | 125 | 175 | 245 | 345 |
 
-After the listed costs (10, 25, 50, 100), each step is the previous cost ×
-1.5, rounded to 5, up to **Max 60 kg**: 2,175 in total from 15 kg.
+After the listed costs (10, 20, 35, 60, 90), each step is the previous cost
+× 1.4, rounded to 5, up to **Max 60 kg**: 1,105 in total from 15 kg.
 `Config.check` refuses a first step other than `UpgradeFirstCost` (10) or
 any step above `UpgradeCostCap` (5,000). To tune:
 
@@ -825,15 +897,14 @@ is validated. For a Studio validation **with API access**, set the
 |---|---|---|
 | K1 | Play, walk to either +5 KG sign | Panel: "Your net 15 → 20 kg", "SOON" (above BOTH signs) |
 | K2 | Click a sign (closed) | Toast "Net upgrades open soon"; nothing charged |
-| K3 | Set `ReplicatedStorage.Economy.NetKgOpen = true`; click | −25, toast "Net capacity 15 → 20 kg (-$25)"; your `NetMaxWeight` 20 (`NetLift.MaxWeight` stays 15); panel $50 |
-| K4 | Click the OTHER sign | Same thing (+5 kg, −50) |
+| K3 | Set `ReplicatedStorage.Economy.NetKgOpen = true`; click | −10, toast "Net capacity 15 → 20 kg (-$10)"; your `NetMaxWeight` 20 (`NetLift.MaxWeight` stays 15); price $20 |
+| K4 | Click the OTHER sign | Same thing (20 → 25 kg, −20) |
 | K5 | Walk away 40+ studs, click | Toast "Walk up to the sign"; nothing charged |
 | K6 | Net a load between 15 and 20 kg | It lifts for you; the same load fails for a 15 kg player |
 | K7 | Second client (15 kg) joins, then the first leaves | Each keeps their own `NetMaxWeight`; `MaxWeight` stays 15; no fish vanish |
 | K8 | Stop, Play again (real DataStore) | Your capacity is back as `NetMaxWeight` once your money loads |
 
-(With row 17 installed the prices in K3/K4 are $10 and $25, and the posts'
-own plates show them instead of the floating panel.)
+(The posts' own plates show the price instead of the floating panel.)
 
 ## Upgrade board, milestone 1: Net Strength (part of `InstallBoardUpgrades.lua`)
 
@@ -843,9 +914,9 @@ four upgrade cards, drawn **for each player**:
 | Card | Colour | Shows | Sells (this milestone) |
 |---|---|---|---|
 | Net Strength | pink | your net, e.g. `15kg > 20kg` | the next +5 kg: **$10** first |
-| Rod Luck | lime | `1x > 2x` | milestone 2 |
-| Meat Price | cyan | `1x > 2x` (a value multiplier: fish values differ) | milestone 3 |
-| Faster Reels | amber | `1x > 1.2x` | milestone 4 |
+| Rod Luck | lime | `1x > 1.5x` | milestone 2 |
+| Meat Price | cyan | `1x > 1.25x` (a value multiplier: fish values differ) | milestone 3 |
+| Faster Reels | amber | `1x > 1.1x` | milestone 4 |
 
 2 × 2 grid in a wooden frame. Each card is made from the board's own card
 art (see [the live-baseline install](#upgrade-board-on-the-live-baseline-installboardupgradeslua)):
@@ -907,12 +978,12 @@ fallback is **not** proof of persistence.
 
 | # | Do | Expect |
 |---|---|---|
-| N1 | Play, look at the board | Four cards in a 2 × 2 wooden frame: Net Strength (pink) `15kg > 20kg`, Rod Luck (lime) `1x > 2x`, Meat Price (cyan) `1x > 2x`, Faster Reels (amber) `1x > 1.2x`; all SOON. No Axe Speed / Buy Miner cards. No `[UpgradeBoard]` warning in Output |
+| N1 | Play, look at the board | Four cards in a 2 × 2 wooden frame: Net Strength (pink) `15kg > 20kg`, Rod Luck (lime) `1x > 1.5x`, Meat Price (cyan) `1x > 1.25x`, Faster Reels (amber) `1x > 1.1x`; all SOON. No Axe Speed / Buy Miner cards. No `[UpgradeBoard]` warning in Output |
 | N2 | Look at both +5 KG posts | Their plates show `SOON` and `NET15KG->20KG`; no floating panel over them |
 | N3 | Press Net Strength (closed) | SOON; toast "Net upgrades open soon"; nothing charged |
 | N4 | Set `ReplicatedStorage.Economy.NetKgOpen = true` | Card and both plates: `$10` |
-| N5 | Press Net Strength | SAVING..., then BOUGHT!; −10; toast "Net capacity 15 → 20 kg (-$10)"; card `20kg > 25kg` `$25`; plates `$25` `NET20KG->25KG`; your `NetMaxWeight` 20 |
-| N6 | Click a post | −25, 20 → 25 kg; the board card follows (`25kg > 30kg`, `$50`) |
+| N5 | Press Net Strength | SAVING..., then BOUGHT!; −10; toast "Net capacity 15 → 20 kg (-$10)"; card `20kg > 25kg` `$20`; plates `$20` `NET20KG->25KG`; your `NetMaxWeight` 20 |
+| N6 | Click a post | −20, 20 → 25 kg; the board card follows (`25kg > 30kg`, `$35`) |
 | N7 | Press the card from 40+ studs away (or from a post) | TOO FAR; toast "Walk up to the board"; nothing charged |
 | N8 | Press Rod Luck / Meat Price / Faster Reels | SOON; toast "... coming soon"; nothing charged |
 | N9 | On a phone emulator and with a mouse | The buttons press the same way |
@@ -923,13 +994,14 @@ fallback is **not** proof of persistence.
 
 The Rod Luck card (lime) now sells a saved **level**:
 
-| Level | 0 | 1 | 2 | 3 |
-|---|---|---|---|---|
-| Rod Luck | 1x | **2x** | 2.5x | 3x |
-| Price of this level | - | **$10** | $75 | $300 |
+| Level | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| Rod Luck | 1x | **1.5x** | 2x | 2.5x | 3x |
+| Price of this level | - | **$10** | $45 | $140 | $350 |
 
-Initial tuning in `Config.BoardUpgrades.RodLuck`. `Config.check` enforces:
-Values start at 1 then the card's `FirstValue` (2), increase, and stay at or
+Fast-start tuning in `Config.BoardUpgrades.RodLuck` (the first version had
+2x / 2.5x / 3x for 10 / 75 / 300). `Config.check` enforces:
+Values start at 1 then the card's `FirstValue` (1.5), increase, and stay at or
 under `MaxValue` (5); the first cost is `UpgradeFirstCost` ($10); costs
 increase and stay at or under `UpgradeCostCap`.
 
@@ -973,8 +1045,8 @@ equipped rod.
 `EconomyService.upgradeAction`. It has the same checks as Net Strength:
 alive, loaded, near the board, one purchase at a time (shared with rods and
 the net), a 0.5 s cooldown, and everything re-checked right before the
-debit. Toasts read like "Rod Luck 1x → 2x (-$10)". The card shows **your**
-`2x > 2.5x` and the price, `3x MAX`, SOON while closed, and so on.
+debit. Toasts read like "Rod Luck 1x → 1.5x (-$10)". The card shows **your**
+`1.5x > 2x` and the price, `3x MAX`, SOON while closed, and so on.
 
 **Paid board upgrades stay CLOSED** (`Config.BoardUpgradesOpen = false`),
 separately from Net Strength (`NetKgOpen`). For a Studio validation **with
@@ -987,12 +1059,12 @@ API access**, set the `UpgradesOpen` attribute on
 
 | # | Do | Expect |
 |---|---|---|
-| L1 | Play, look at the board | Rod Luck: `1x > 2x`, SOON |
+| L1 | Play, look at the board | Rod Luck: `1x > 1.5x`, SOON |
 | L2 | Press Rod Luck (closed) | Toast "Rod Luck upgrades open soon"; nothing charged |
-| L3 | Set `ReplicatedStorage.Economy.UpgradesOpen = true`; press | −10; toast "Rod Luck 1x → 2x (-$10)"; card `2x > 2.5x` `$75` |
-| L4 | Press the fish button, catch fish | Rod-fish offers show chances with 2x (rarer fish's % higher than before); Silver/Gold as before |
+| L3 | Set `ReplicatedStorage.Economy.UpgradesOpen = true`; press | −10; toast "Rod Luck 1x → 1.5x (-$10)"; card `1.5x > 2x` `$45` |
+| L4 | Press the fish button, catch fish | Rod-fish offers show chances with 1.5x (rarer fish's % higher than before); Silver/Gold as before |
 | L5 | A second player without luck fishes | Their offers show the old chances |
-| L6 | Buy 2.5x while your rods are out | That catch keeps 2x; the next press uses 2.5x |
+| L6 | Buy 2x while your rods are out | That catch keeps 1.5x; the next press uses 2x |
 | L7 | Buy up to 3x | `3x MAX`, MAX; pressing again: "Rod Luck is at the maximum (3x)" |
 | L8 | Stop, Play again (real DataStore) | Your level is back on the card |
 
@@ -1001,13 +1073,15 @@ API access**, set the `UpgradesOpen` attribute on
 The Meat Price card (cyan) sells a saved **value multiplier** on your own
 fish:
 
-| Level | 0 | 1 | 2 | 3 |
-|---|---|---|---|---|
-| Meat Price | 1x | **2x** | 2.5x | 3x |
-| Price of this level | - | **$10** | $150 | $600 |
+| Level | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|---|
+| Meat Price | 1x | **1.25x** | 1.5x | 1.75x | 2x | 2.5x | 3x |
+| Price of this level | - | **$10** | $40 | $90 | $180 | $400 | $900 |
 
-Initial tuning in `Config.BoardUpgrades.MeatPrice`, with the same guard
-rails as Rod Luck. The card shows `1x > 2x`, not dollars, because fish
+Fast-start tuning in `Config.BoardUpgrades.MeatPrice` (the first version had
+2x / 2.5x / 3x for 10 / 150 / 600): more, smaller steps, because Meat Price
+is what raises income while selling is the limit. Same guard rails as Rod
+Luck. The card shows `1x > 1.25x`, not dollars, because fish
 values differ.
 
 **How it pays.** When the grinder cuts a fish, `EconomyService.issueFish`
@@ -1039,10 +1113,10 @@ checks, `UpgradesOpen` for a Studio validation).
 
 | # | Do | Expect |
 |---|---|---|
-| P1 | Play, look at the board | Meat Price: `1x > 2x`, SOON |
-| P2 | Set `UpgradesOpen = true`; press Meat Price | −10; toast "Meat Price 1x → 2x (-$10)"; card `2x > 2.5x` `$150` |
-| P3 | Net a fish, sell its meat (truck or customer) | The "+$" popups add up to 2 × that fish's usual value |
-| P4 | A Gold fish | 2 × (its value × 5) |
+| P1 | Play, look at the board | Meat Price: `1x > 1.25x`, SOON |
+| P2 | Set `UpgradesOpen = true`; press Meat Price | −10; toast "Meat Price 1x → 1.25x (-$10)"; card `1.25x > 1.5x` `$40` |
+| P3 | Net a fish, sell its meat (truck or customer) | The "+$" popups add up to 1.25 × that fish's usual value, rounded |
+| P4 | A Gold fish | 1.25 × (its value × 5), rounded |
 | P5 | Net a fish another player bought (their fish) | It pays them at their multiplier, not yours |
 | P6 | Meat already on the stack when you buy | Sells at the old value |
 | P7 | Stop, Play again (real DataStore) | Your level is back |
@@ -1052,13 +1126,14 @@ checks, `UpgradesOpen` for a Studio validation).
 The Faster Reels card (amber) sells a saved **reel speed** for your own
 casts:
 
-| Level | 0 | 1 | 2 | 3 |
-|---|---|---|---|---|
-| Faster Reels | 1x | **1.2x** | 1.35x | 1.5x |
-| Reel-in | 3.4 s | 2.83 s | 2.52 s | 2.27 s |
-| Price of this level | - | **$10** | $100 | $400 |
+| Level | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| Faster Reels | 1x | **1.1x** | 1.2x | 1.35x | 1.5x |
+| Reel-in | 3.4 s | 3.09 s | 2.83 s | 2.52 s | 2.27 s |
+| Price of this level | - | **$10** | $45 | $140 | $350 |
 
-Initial tuning in `Config.BoardUpgrades.FasterReels`, never above 2x
+Fast-start tuning in `Config.BoardUpgrades.FasterReels` (the first version
+had 1.2x / 1.35x / 1.5x for 10 / 100 / 400), never above 2x
 (`MaxValue`).
 
 **What it changes:**
@@ -1082,9 +1157,9 @@ Initial tuning in `Config.BoardUpgrades.FasterReels`, never above 2x
 
 | # | Do | Expect |
 |---|---|---|
-| F1 | Play, look at the board | Faster Reels: `1x > 1.2x`, SOON |
-| F2 | Set `UpgradesOpen = true`; press Faster Reels | −10; toast "Faster Reels 1x → 1.2x (-$10)"; card `1.2x > 1.35x` `$100` |
-| F3 | Press the fish button | The fish rise on the line in about 2.8 s instead of 3.4 s, smoothly (no jump at the end); the rod bends for the same time |
+| F1 | Play, look at the board | Faster Reels: `1x > 1.1x`, SOON |
+| F2 | Set `UpgradesOpen = true`; press Faster Reels | −10; toast "Faster Reels 1x → 1.1x (-$10)"; card `1.1x > 1.2x` `$45` |
+| F3 | Press the fish button | The fish rise on the line in about 3.1 s instead of 3.4 s, smoothly (no jump at the end); the rod bends for the same time |
 | F4 | Compare the wait for a bite | Unchanged (only your rod changes that) |
 | F5 | A second player without it fishes | Their reel stays 3.4 s |
 | F6 | Stop, Play again (real DataStore) | Your level is back |
@@ -1196,9 +1271,9 @@ changes; the rest re-check behaviour that already worked.
 ## Tests (offline, not Roblox runtime)
 
 ```
-python3 tools/economy/tests/run_tests.py path/to/luau          # 486 checks (rods 80, net kg 52, board upgrades 67, journal 25)
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 49 + 6, luck 30, meat 17, reels 15, grinder 27 + 7, journal 18, net lift 9 checks
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 339 checks
+python3 tools/economy/tests/run_tests.py path/to/luau          # 516 checks (rods 82, net kg 55, board upgrades 72, journal 25, customers 20)
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 49 + 6, luck 30, meat 17, reels 15, grinder 27 + 7, journal 18, net lift 9, customers 19 checks
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 342 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

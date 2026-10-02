@@ -137,13 +137,14 @@ Config.RodShopOpen = false
 -- saved in the player's Money record; one copy each, bought once. BiteWait
 -- multiplies the random wait before a bite (lower = faster). Legacy
 -- Tier/Title/Price attributes on the rod models are ignored.
--- INITIAL easy-early-game tuning, NOT measured pacing.
+-- Fast-start tuning (modelled from the place's fish data, not measured in
+-- play): Tiger ~5 min in, Coral ~25, Tide ~40, Magma ~80 for a solo player.
 Config.Rods = {
 	{ Id = "FishingRod1", Key = "Basic", Name = "Basic Rod", Price = 0, BiteWait = 1 },
-	{ Id = "FishingRod4", Key = "Tiger", Name = "Tiger Rod", Price = 150, BiteWait = 0.85 },
-	{ Id = "FishingRod3", Key = "Coral", Name = "Coral Rod", Price = 600, BiteWait = 0.75 },
-	{ Id = "FishingRod2", Key = "Tide", Name = "Tide Rod", Price = 2000, BiteWait = 0.65 },
-	{ Id = "FishingRod5", Key = "Magma", Name = "Magma Rod", Price = 7500, BiteWait = 0.55 },
+	{ Id = "FishingRod4", Key = "Tiger", Name = "Tiger Rod", Price = 100, BiteWait = 0.85 },
+	{ Id = "FishingRod3", Key = "Coral", Name = "Coral Rod", Price = 450, BiteWait = 0.75 },
+	{ Id = "FishingRod2", Key = "Tide", Name = "Tide Rod", Price = 1500, BiteWait = 0.65 },
+	{ Id = "FishingRod5", Key = "Magma", Name = "Magma Rod", Price = 5000, BiteWait = 0.55 },
 }
 -- Every player owns this one (free, never stored as bought) and falls back
 -- to it whenever the equipped rod isn't owned or known.
@@ -162,15 +163,15 @@ Config.RodActionCooldown = 0.5
 -- The same saved capacity is sold by both KGsign posts and the upgrade
 -- board's Net Strength card.
 -- Costs: the list first, then the previous cost x Growth rounded to 5, up
--- to Max (15 -> 60 kg: 10, 25, 50, 100, 150, 225, 340, 510, 765 = 2175).
+-- to Max (15 -> 60 kg: 10, 20, 35, 60, 90, 125, 175, 245, 345 = 1105).
 -- The first step is Config.UpgradeFirstCost like every board upgrade.
--- INITIAL tuning, not measured pacing.
+-- Fast-start tuning (modelled, not measured in play).
 Config.NetKg = {
 	Base = 15, -- everyone starts here (the place's NetLift.MaxWeight)
 	Step = 5, -- kg per purchase
 	Max = 60, -- nothing is sold past this
-	Costs = { 10, 25, 50, 100 },
-	Growth = 1.5,
+	Costs = { 10, 20, 35, 60, 90 },
+	Growth = 1.4,
 }
 -- PAID signs stay closed until the saved path is validated in Studio with
 -- real DataStore access: set true here, or (for a test) the NetKgOpen
@@ -204,23 +205,31 @@ Config.UpgradeBoardReach = 20 -- studs from the board's face (server check, plus
 -- level; nothing is sold past the last value. Checked by Config.check:
 -- Values[1] = 1 (no effect), Values[2] = FirstValue (what the card promises),
 -- increasing, <= MaxValue; Costs[1] = UpgradeFirstCost, increasing, <=
--- UpgradeCostCap, one fewer than Values. INITIAL tuning, not measured pacing.
+-- UpgradeCostCap, one fewer than Values. Fast-start tuning: many cheap
+-- levels early (a purchase every ~30-75 s for the first 10 minutes of a solo
+-- player, modelled from the place's fish data - not measured in play).
 Config.BoardUpgrades = {
 	-- Rod Luck: on the owner's own casts, rarer fish are weighted up relative
 	-- to common ones and the odds renormalised. Value = the factor on the
 	-- RAREST tier's weight relative to the commonest (tiers between scale
 	-- geometrically). 2x is not a guaranteed rare fish. Silver/Gold odds are
 	-- not touched.
-	RodLuck = { Name = "Rod Luck", Values = { 1, 2, 2.5, 3 }, Costs = { 10, 75, 300 }, FirstValue = 2, MaxValue = 5 },
+	RodLuck = { Name = "Rod Luck", Values = { 1, 1.5, 2, 2.5, 3 }, Costs = { 10, 45, 140, 350 }, FirstValue = 1.5, MaxValue = 5 },
 	-- Meat Price: the owner's VALUE multiplier on their own fish. When the
 	-- grinder cuts a fish, its whole sale value (tier value x Silver/Gold) is
 	-- multiplied by the owner's value once, rounded, then split into meat
 	-- pieces as before. Fish values differ, so the card shows 1x > 2x, not $.
-	MeatPrice = { Name = "Meat Price", Values = { 1, 2, 2.5, 3 }, Costs = { 10, 150, 600 }, FirstValue = 2, MaxValue = 5 },
+	MeatPrice = {
+		Name = "Meat Price",
+		Values = { 1, 1.25, 1.5, 1.75, 2, 2.5, 3 },
+		Costs = { 10, 40, 90, 180, 400, 900 },
+		FirstValue = 1.25,
+		MaxValue = 5,
+	},
 	-- Faster Reels: the owner's reel-in speed on their own casts. The reel
 	-- (3.4 s at 1x) takes 3.4 / Value seconds, server and client animation
 	-- alike. Separate from the equipped rod, which shortens the bite wait.
-	FasterReels = { Name = "Faster Reels", Values = { 1, 1.2, 1.35, 1.5 }, Costs = { 10, 100, 400 }, FirstValue = 1.2, MaxValue = 2 },
+	FasterReels = { Name = "Faster Reels", Values = { 1, 1.1, 1.2, 1.35, 1.5 }, Costs = { 10, 45, 140, 350 }, FirstValue = 1.1, MaxValue = 2 },
 }
 Config.BoardUpgradeIds = { "RodLuck", "MeatPrice", "FasterReels" } -- the order they are listed and checked
 -- PAID board upgrades (other than Net Strength, which is NetKgOpen) stay
@@ -229,6 +238,22 @@ Config.BoardUpgradeIds = { "RodLuck", "MeatPrice", "FasterReels" } -- the order 
 -- ReplicatedStorage.Economy.
 Config.BoardUpgradesOpen = false
 Config.BoardUpgradeCooldown = 0.5 -- seconds between presses per player
+
+------------------------------------------------------------ customers (sale table)
+
+-- Customers buy ONE piece each at the sale table, and they are the only buyers
+-- until trucks are unlocked, so their rate is the early game's income limit.
+-- Live, one came every 10-20 s for the WHOLE server (~4 a minute, shared).
+-- Now (CustomerSystem, via EconomyService.customers()): PerPlayer a minute for
+-- EACH player in the server, up to Max a minute (about what the Blender Bot
+-- can carry to the table). The Car Sales upgrades' published values
+-- (workspace CustomersPerMin / CustomersLineCap) are never lowered: a higher
+-- CustomersPerMin is used per player, and also lifts Max to itself.
+Config.Customers = {
+	PerPlayer = 6, -- customers a minute for each player
+	Max = 18, -- customers a minute in the whole server
+	LineCap = 6, -- people in the line (walking or waiting), at least
+}
 
 ------------------------------------------------------------ checks
 
@@ -306,6 +331,10 @@ function Config.check(firstTankUpgradeCost: number?): (boolean, string?)
 				return false, "BoardUpgrades." .. id .. ": Costs must be increasing whole numbers up to UpgradeCostCap"
 			end
 		end
+	end
+	local cu = Config.Customers
+	if not (cu.PerPlayer > 0 and cu.Max >= cu.PerPlayer and cu.Max <= 60 and cu.LineCap >= 1 and cu.LineCap <= 8) then
+		return false, "Customers: PerPlayer / Max / LineCap out of range"
 	end
 	if n.Costs[1] ~= Config.UpgradeFirstCost then
 		return false, "NetKg: the first step must cost UpgradeFirstCost"

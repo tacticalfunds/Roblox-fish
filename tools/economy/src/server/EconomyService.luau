@@ -1300,6 +1300,18 @@ function M.saturated(): boolean
 	return startOk and ledger.heldCount >= Config.Pipeline.MaxHeld
 end
 
+-- Customers (CustomerSystem): a rate for EACH player in the server, up to
+-- Config.Customers.Max, never below what the Car Sales upgrades publish.
+-- Returns (customers a minute, line size).
+function M.customers(): (number, number)
+	return Sales.customers(
+		#Players:GetPlayers(),
+		workspace:GetAttribute("CustomersPerMin"),
+		workspace:GetAttribute("CustomersLineCap"),
+		Config.Customers
+	)
+end
+
 function M.pipeline()
 	return Config.Pipeline
 end

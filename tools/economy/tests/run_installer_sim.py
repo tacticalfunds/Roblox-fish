@@ -1452,7 +1452,9 @@ do
 	check("board upgrades: the BillboardLock line carried into the installed EconomyService",
 		svc.Source:find("gui.Size = UDim2.fromScale(6.25, 3) -- locked world size", 1, true) ~= nil
 		and svc.Source:find("fromOffset(200, 96)", 1, true) == nil)
-	check("board upgrades: backup = 9 changes + 6 adds", #sv.ServerStorage.EconomyBoardUpgradesBackup:GetChildren() == 15)
+	check("board upgrades: backup = 10 changes + 6 adds", #sv.ServerStorage.EconomyBoardUpgradesBackup:GetChildren() == 16)
+	check("board upgrades: the MeatGlow CustomerSystem patched (customers for every player)",
+		sc.CustomerSystem.Source == SUITE.Customer and SUITE.Customer:find("pcall(Economy.customers)", 1, true) ~= nil)
 	local kept = true
 	for name, tree in pairs(backups) do
 		kept = kept and sv.ServerStorage:FindFirstChild(name) ~= nil and subtree(sv.ServerStorage[name]) == tree
@@ -1472,8 +1474,18 @@ do
 	check("board upgrades rollback: exactly Astra's live state (blade EconomyService, live grinder scripts; added scripts gone)",
 		not refused() and snapshot(g) == before and svc.Source == GLIVE.EconomyService and sss.GrinderUpgradesServer.Source == GLIVE.Server
 		and sps.GrinderUpgradesClient.Source == GLIVE.Client and sss:FindFirstChild("NetCapacityServer") == nil and svc:FindFirstChild("NetKg") == nil)
+	check("board upgrades rollback: the MeatGlow CustomerSystem back exactly", sc.CustomerSystem.Source == GLOW.Customer)
 	suite(g, sv)
 	check("and installs again after the rollback", not refused())
+end
+do
+	-- a CustomerSystem other than the MeatGlow one (e.g. the sales version without the glow)
+	local g, sv, _, sc = astraLive()
+	sc.CustomerSystem.Source = GLOW.Customer:gsub("WAIT_FOR_MEAT = 18", "WAIT_FOR_MEAT = 20", 1)
+	local before = snapshot(g)
+	suite(g, sv)
+	check("board upgrades over a different CustomerSystem: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
 end
 do
 	local g, sv = astraLive()
@@ -1718,6 +1730,7 @@ def main() -> int:
         ("Fishing", ROOT / "studio/board/RodFishingSystem.lua"),
         ("GServer", grinder / "GrinderUpgradesServer.lua"),
         ("GClient", grinder / "GrinderUpgradesClient.lua"),
+        ("Customer", ROOT / "studio" / "board" / "CustomerSystem.lua"),
     )) + "}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"

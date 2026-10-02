@@ -74,6 +74,27 @@ end
 ------------------------------------------------------------ tuning
 
 check("config check passes", Config.check() == true)
+
+-- The current levels are the fast-start tuning; the checks below were written
+-- for the original three-level ones, so they pin those (the same tables
+-- BoardUpgrades reads).
+do
+	local U = Config.BoardUpgrades
+	local function list(t)
+		return table.concat(t, ",")
+	end
+	check("fast start: Rod Luck 1x > 1.5x > 2x > 2.5x > 3x for 10, 45, 140, 350",
+		list(U.RodLuck.Values) == "1,1.5,2,2.5,3" and list(U.RodLuck.Costs) == "10,45,140,350" and U.RodLuck.FirstValue == 1.5)
+	check("fast start: Meat Price 1x > 1.25x ... 3x for 10, 40, 90, 180, 400, 900",
+		list(U.MeatPrice.Values) == "1,1.25,1.5,1.75,2,2.5,3" and list(U.MeatPrice.Costs) == "10,40,90,180,400,900" and U.MeatPrice.FirstValue == 1.25)
+	check("fast start: Faster Reels 1x > 1.1x > 1.2x > 1.35x > 1.5x for 10, 45, 140, 350",
+		list(U.FasterReels.Values) == "1,1.1,1.2,1.35,1.5" and list(U.FasterReels.Costs) == "10,45,140,350" and U.FasterReels.FirstValue == 1.1)
+	check("fast start: Meat Price 1.25x on a tier-1 fish (4) pays 5", Pricing.pieceValues(1, nil, 1.25)[1] == 5)
+	U.RodLuck.Values, U.RodLuck.Costs, U.RodLuck.FirstValue = { 1, 2, 2.5, 3 }, { 10, 75, 300 }, 2
+	U.MeatPrice.Values, U.MeatPrice.Costs, U.MeatPrice.FirstValue = { 1, 2, 2.5, 3 }, { 10, 150, 600 }, 2
+	U.FasterReels.Values, U.FasterReels.Costs, U.FasterReels.FirstValue = { 1, 1.2, 1.35, 1.5 }, { 10, 100, 400 }, 1.2
+	check("config check passes with the pinned levels", Config.check() == true)
+end
 check("Rod Luck is a board upgrade", BoardUpgrades.known("RodLuck") and not BoardUpgrades.known("NetStrength")
 	and not BoardUpgrades.known("Hack") and not BoardUpgrades.known(5))
 local values, costs, level = { BoardUpgrades.value("RodLuck", 0) }, {}, 0

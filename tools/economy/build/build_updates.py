@@ -604,10 +604,12 @@ def board_upgrades() -> list[str]:
     sale callback; GrinderUpgradesServer no longer sells KG, reports its old
     kg count for adoption; GrinderUpgradesClient no longer writes the plate)."""
     import make_board
+    import make_customers
     import make_grinder
 
     make_board.main()
     make_grinder.main()
+    make_customers.main()
     core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
     cur = lambda path: (ROOT / path).read_text()  # noqa: E731
     live = lambda name: (ROOT / "studio" / "live" / name).read_text()  # noqa: E731
@@ -637,7 +639,13 @@ def board_upgrades() -> list[str]:
             {"key": "GrinderUpgradesClient", "where": "StarterPlayer/StarterPlayerScripts/GrinderUpgradesClient", "class": "LocalScript"},
             [("live", make_grinder.CLIENT_BASE.read_text(), make_grinder.CLIENT_OUT.read_text())],
         ),
+        (
+            # the MeatGlow CustomerSystem (inventory SourceLength 9985 matches it exactly)
+            {"key": "CustomerSystem", "where": "script:CustomerSystem", "class": "Script"},
+            [("meatglow", make_customers.BASE.read_text(), make_customers.OUT.read_text())],
+        ),
     ]
+    assert len(make_customers.BASE.read_text()) == 9985
     # the rods release's own EconomyService + the blade block = what Studio has
     rods_svc = git_show(RODS_RELEASE, "tools/economy/src/server/EconomyService.luau")
     assert "GrinderUpgrades: the owner's blade tier" in live("EconomyService.grinder.lua") and live("EconomyService.grinder.lua") != rods_svc
@@ -698,10 +706,16 @@ The upgrade board and the ONE saved net capacity, on the live baseline
     in one write before its own store is touched; the upgrade written with
     the purchase token; settled at once, or - after a shutdown, a slow
     write or a crash - at the player's next load from those tokens).
+  * Fast start: customers come for EACH player in the server
+    (Config.Customers: 6 a minute per player, up to 18; never below the Car
+    Sales upgrades' published values) - CustomerSystem asks
+    EconomyService.customers(). Cheaper, more numerous early prices for the
+    board, the net and the rods (Config).
   * PAID UPGRADES STAY CLOSED: NetKgOpen (net) and UpgradesOpen (the other
     three) attributes on ReplicatedStorage.Economy, for a Studio validation.
 Changes EconomyService, Config, MoneyStore, Pricing, Ledger, Sales,
-RodFishingSystem, GrinderUpgradesServer, GrinderUpgradesClient; adds
+RodFishingSystem, GrinderUpgradesServer, GrinderUpgradesClient,
+CustomerSystem; adds
 EconomyService.NetKg / BoardUpgrades, NetCapacityServer, UpgradeBoardServer,
 KgSignClient, UpgradeBoardClient.
 Requires: rods (EconomyRodsBackup) with every source exactly as installed.
@@ -715,7 +729,7 @@ Requires: rods (EconomyRodsBackup) with every source exactly as installed.
         adds,
         ROOT,
     )
-    assert keys == ["EconomyService", "Config", "MoneyStore", "Pricing", "Ledger", "Sales", "RodFishingSystem", "GrinderUpgradesServer", "GrinderUpgradesClient"], keys
+    assert keys == ["EconomyService", "Config", "MoneyStore", "Pricing", "Ledger", "Sales", "RodFishingSystem", "GrinderUpgradesServer", "GrinderUpgradesClient", "CustomerSystem"], keys
     return keys
 
 

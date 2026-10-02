@@ -57,4 +57,21 @@ function Sales.settle(
 	return paid, if paid then piece.value else 0, piece
 end
 
+-- The customers' rate (a minute) and line size for `players` players in the
+-- server. `cfg` is Config.Customers ({ PerPlayer, Max, LineCap }); the Car
+-- Sales upgrades' published values (`publishedRate` = workspace
+-- CustomersPerMin, `publishedCap` = CustomersLineCap; anything not a positive
+-- number is ignored) are never lowered.
+function Sales.customers(players: any, publishedRate: any, publishedCap: any, cfg: any): (number, number)
+	local function positive(v: any): number
+		return if type(v) == "number" and v == v and v > 0 and v < math.huge then v else 0
+	end
+	local n = math.max(1, math.floor(positive(players)))
+	local rate = positive(publishedRate)
+	local perPlayer = math.max(cfg.PerPlayer, rate)
+	local perMin = math.min(perPlayer * n, math.max(cfg.Max, rate))
+	local cap = math.max(cfg.LineCap, math.floor(positive(publishedCap)))
+	return perMin, cap
+end
+
 return Sales
