@@ -37,9 +37,11 @@ As reported by Astra, 2026-09-29 (user authorised the remaining installs):
 - **installed by Astra since** (not from this repo): the GrinderUpgrades
   system (`GrinderUpgradesBackup`: conveyor, blades, the KG signs with their
   own store, the blade multiplier in EconomyService) and `BillboardLockBackup`
-- **next:** row 16, `InstallBoardUpgrades.lua`, built on exactly that live
-  state (the earlier per-milestone installers NetKg / UpgradeBoard / RodLuck /
-  MeatPrice / FasterReels were never installed and are superseded)
+- **installed by Astra (2026-10-03):** row 16, `InstallBoardUpgrades.lua` at
+  `fffdaa3` (all 16 targets verified, `EconomyBoardUpgradesBackup`); paid
+  upgrades closed
+- **next:** row 17, `InstallBoardArt.lua`: the board on the place's own
+  four-card art (`StarterGui.UpgradeBoardGui`)
 
 **Not production-ready as a whole:** paid upgrades (row 3) and the live Car
 Sales upgrades reset every server while the Money spent stays saved. See
@@ -69,6 +71,7 @@ rollback.
 | 13 | [`fish-jump/InstallJumpRate.lua`](fish-jump/README.md#jump-more-often-installjumpratelua) | Fish jump about twice as often (periods 16–28 s → 8–14 s) | 6 | `FishJumpRateBackup` |
 | 14 | [`economy/InstallRods.lua`](economy/README.md#rods-milestone-1-installrodslua) | Rods owned for good (saved with Money), equipped, faster bites; paid shop stays closed | 4 and 9 | `EconomyRodsBackup` |
 | 15 | [`economy/InstallRodShopUI.lua`](economy/README.md#rod-shop-ui-installrodshopuilua) | Shop cards show price / OWNED / benefit / EQUIPPED and the server's real answers | 14 | `EconomyRodShopUIBackup` |
+| 17 | [`economy/InstallBoardArt.lua`](economy/README.md#board-art-installboardartlua) | The board on the place's own four-card art: binds each player's `PlayerGui.UpgradeBoardGui` (Desc / Btn.Price texts only), reach measured to `Workspace["Upgrade board"].Screen`; the generated board on the old Workspace.Board is gone (that board is left as it is) | 16 (exact installed sources) | `EconomyBoardArtBackup` |
 | 16 | [`economy/InstallBoardUpgrades.lua`](economy/README.md#upgrade-board-on-the-live-baseline-installboardupgradeslua) | The four-card upgrade board (Net Strength, Rod Luck, Meat Price, Faster Reels) and ONE saved net capacity sold by the KG posts and the board; earlier GrinderUpgrades KG buys adopted (idempotent); GrinderUpgrades conveyor / blades kept, hardened; customers for every player (CustomerSystem) and fast-start prices; paid upgrades closed | 14 and the GrinderUpgrades system (exact live sources) | `EconomyBoardUpgradesBackup` |
 
 "After X" matters because both change the same script. The later installer
@@ -77,13 +80,14 @@ round is refused, with nothing changed.
 
 ## Rollback order
 
-Exactly the reverse: **16 → 1**, then, if you ever need to go further,
+Exactly the reverse: **17 → 1**, then, if you ever need to go further,
 `economy/RollbackAquariumV12.lua` and `economy/UninstallRodOffers.lua`.
 Row 2 (Money HUD) touches nothing else, so its rollback works at any time.
 
 | # | Rollback file |
 |---|---|
-| 16 | `economy/RollbackBoardUpgrades.lua` (before 14; restores the live GrinderUpgrades scripts) |
+| 17 | `economy/RollbackBoardArt.lua` (before 16; restores the board release's two board scripts) |
+| 16 | `economy/RollbackBoardUpgrades.lua` (before 14; restores the live GrinderUpgrades scripts; refused while 17 is in) |
 | 15 | `economy/RollbackRodShopUI.lua` (before 14) |
 | 14 | `economy/RollbackRods.lua` (before 4 and 9) |
 | 13 | `fish-jump/RollbackJumpRate.lua` (before 6) |

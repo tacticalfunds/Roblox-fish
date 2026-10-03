@@ -1330,6 +1330,76 @@ local function part(name, pos, parent, size)
 	end
 	return p
 end
+-- The place's four-card upgrade board art, as Astra found it: the part
+-- Workspace["Upgrade board"].Screen, and per player PlayerGui.UpgradeBoardGui
+-- (Roblox's copy of StarterGui.UpgradeBoardGui: a SurfaceGui adorned to the
+-- screen, no scripts). Each card is a Frame named for its upgrade with a
+-- TextLabel Desc ("15 >20kg"), a TextLabel Title, an ImageButton Btn (the art
+-- image) holding a TextLabel Price ("$10"), and icon art that must never be
+-- touched (two ViewportFrames named IconOutline with models, a gradient).
+local BOARD_ART_CARDS = {
+	{ "Net Strength", "15 >20kg" },
+	{ "Rod Luck", "1x >2x" },
+	{ "Meat Price", "1x >2x" },
+	{ "Faster Reels", "1x >1.2x" },
+}
+local BOARD_ART_BUTTON = "rbxassetid://77162011310420"
+local function upgradeBoard(pos, size)
+	current = "server"
+	local model = new("Model", "Upgrade board")
+	local screen = part("Screen", pos, model, size or Vector3.new(19.53, 9.34, 0.85))
+	model.Parent = workspaceInst
+	current = nil
+	return model, screen
+end
+-- p's PlayerGui copy; `shape(cardName, frame)` may alter a card (malformed-art tests)
+local function boardArt(p, screen, shape)
+	current = "server"
+	local gui = new("SurfaceGui", "UpgradeBoardGui")
+	gui._props.Enabled = true
+	gui._props.Adornee = screen
+	gui._props.ResetOnSpawn = true
+	for _, c in ipairs(BOARD_ART_CARDS) do
+		local frame = new("Frame", c[1])
+		frame._props.Size = UDim2.fromScale(0.49, 0.48)
+		local title = new("TextLabel", "Title")
+		title._props.Text = c[1]
+		title.Parent = frame
+		local desc = new("TextLabel", "Desc")
+		desc._props.Text = c[2]
+		desc.Parent = frame
+		local btn = new("ImageButton", "Btn")
+		btn._props.Image = BOARD_ART_BUTTON
+		local price = new("TextLabel", "Price")
+		price._props.Text = "$10"
+		price.Parent = btn
+		new("UIGradient", "UIGradient").Parent = btn
+		btn.Parent = frame
+		for _ = 1, 2 do
+			local vp = new("ViewportFrame", "IconOutline")
+			new("Model", "IconModel").Parent = vp
+			vp.Parent = frame
+		end
+		new("UIGradient", "UIGradient").Parent = frame
+		if shape then
+			shape(c[1], frame)
+		end
+		frame.Parent = gui
+	end
+	gui.Parent = p.PlayerGui
+	current = nil
+	return gui
+end
+-- a card of p's board art as { Value = Desc, Buy = Btn, Frame = frame } (nil if missing)
+local function artCard(p, cardName)
+	local gui = p.PlayerGui:FindFirstChild("UpgradeBoardGui")
+	local frame = gui and gui:FindFirstChild(cardName)
+	if not frame then
+		return nil
+	end
+	return { Value = frame:FindFirstChild("Desc"), Buy = frame:FindFirstChild("Btn"), Frame = frame }
+end
+local ART_CARD_NAMES = { NetStrength = "Net Strength", RodLuck = "Rod Luck", MeatPrice = "Meat Price", FasterReels = "Faster Reels" }
 local function model(name, parent, pos)
 	local m = new("Model", name)
 	local body = part("Body", pos or v3(0, 0, 0), m)

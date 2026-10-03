@@ -139,25 +139,16 @@ asServer(function()
 end)
 advance(40)
 
--- the board
-current = "server"
-local board = new("Model", "Board")
-local main = part("Main", MAIN, board, Vector3.new(19.53, 9.34, 0.85))
-local surface = new("SurfaceGui", "SurfaceGui")
-local bord = new("Frame", "bord3")
-new("Frame", "Frame").Parent = bord
-bord.Parent = surface
-surface.Parent = main
-board.Parent = ws
-current = nil
+-- the board: the place's four-card art screen (each player gets its gui copy)
+local _, boardScreen = upgradeBoard(MAIN)
 runScript(script("Script", "UpgradeBoardServer", SOURCES.Board_Server, SSS))
+boardArt(A, boardScreen)
 runAs(A, function()
 	runScript(script("LocalScript", "UpgradeBoardClient", SOURCES.Board_Client), A)
 end)
 advance(1.5)
 local function card(p, id)
-	local g = p.PlayerGui:FindFirstChild("UpgradeBoard")
-	return g and g.bord3:FindFirstChild(id)
+	return artCard(p, ART_CARD_NAMES[id])
 end
 local function pressCard(p, id)
 	click(p, card(p, id).Buy)

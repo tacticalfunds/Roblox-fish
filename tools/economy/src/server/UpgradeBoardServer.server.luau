@@ -1,16 +1,17 @@
--- UpgradeBoardServer (Script in ServerScriptService). [Economy upgrade board v4: Faster Reels]
+-- UpgradeBoardServer (Script in ServerScriptService). [Economy upgrade board v5: the four-card board art]
 --
--- The four-upgrade board (Workspace.Board: its Main part's SurfaceGui.bord3).
--- UpgradeBoardClient draws the four cards for each player and asks here
+-- The four-upgrade board is the place's own art: StarterGui.UpgradeBoardGui
+-- (a SurfaceGui adorned to Workspace["Upgrade board"].Screen). UpgradeBoardClient
+-- binds each player's copy of it (PlayerGui.UpgradeBoardGui) and asks here
 -- through ReplicatedStorage.Economy.UpgradeAction (a RemoteFunction made at
 -- run time): InvokeServer(upgradeId) -> (ok, message). The server decides
 -- everything; the client only shows the answer.
 --   * NetStrength: the SAME saved net capacity the KGsign posts sell
 --     (EconomyService.netKgAction: alive, money loaded, one purchase at a
 --     time, cooldown, money + capacity saved in one write before it counts).
---     Here "in reach" means near the board. NetCapacityServer follows the
---     player's NetKg attribute, so the shared NetLift.MaxWeight updates the
---     same way as after a sign purchase.
+--     Here "in reach" means near the board. The player's NetMaxWeight (what
+--     the net's weight gate reads) updates the same way as after a sign
+--     purchase.
 --   * RodLuck: the player's saved Rod Luck level (EconomyService.upgradeAction:
 --     the same checks, money + level saved in one write; paid board upgrades
 --     open with UpgradesOpen). RodFishingSystem reads the committed value
@@ -23,10 +24,11 @@
 --   * anything else: refused.
 -- The result is also a toast (EconomyService.notify).
 --
--- The board is found by its exact path, never by a name that could match
--- two things: exactly one Workspace child named Board, exactly one Main
--- part in it, exactly one SurfaceGui on Main with exactly one bord3.
--- Without a running EconomyService, or without that board, no remote is
+-- "Near the board" is measured to the board's screen, found by its exact
+-- path, never by a name that could match two things: exactly one Workspace
+-- child named "Upgrade board", exactly one BasePart named Screen in it. The
+-- old Workspace.Board is not used (and left as it is).
+-- Without a running EconomyService, or without that screen, no remote is
 -- made and nothing can be bought here (fail closed).
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -50,25 +52,17 @@ local function only(parent: Instance, name: string, class: string): (Instance?, 
 	return found, nil
 end
 
--- Workspace.Board.Main (the part the board's SurfaceGui is on), or nil + why.
+-- Workspace["Upgrade board"].Screen (the part the board art is adorned to), or nil + why.
 local function findBoard(): (BasePart?, string?)
-	local board, why = only(workspace, "Board", "Model")
+	local board, why = only(workspace, "Upgrade board", "Instance")
 	if not board then
 		return nil, why
 	end
-	local main, why2 = only(board :: Instance, "Main", "BasePart")
-	if not main then
+	local screen, why2 = only(board :: Instance, "Screen", "BasePart")
+	if not screen then
 		return nil, why2
 	end
-	local gui, why3 = only(main :: Instance, "SurfaceGui", "SurfaceGui")
-	if not gui then
-		return nil, why3
-	end
-	local _, why4 = only(gui :: Instance, "bord3", "Frame")
-	if why4 then
-		return nil, why4
-	end
-	return main :: BasePart, nil
+	return screen :: BasePart, nil
 end
 
 local Economy = nil

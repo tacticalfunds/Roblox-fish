@@ -1524,6 +1524,88 @@ do
 	suite(g, sv)
 	check("board upgrades over a different GrinderUpgradesServer: refused (not overwritten)", refused() and snapshot(g) == before)
 end
+-- the board-art update (InstallBoardArt): on the INSTALLED board release
+local function art(g, s) warnings = {} runArt(g, s.Workspace) end
+local function artBack(g, s) warnings = {} runArtBack(g, s.Workspace) end
+do
+	local g, sv, history = astraLive()
+	local before = snapshot(g)
+	art(g, sv)
+	check("board art without the board release installed: refused, nothing changed", refused() and snapshot(g) == before)
+	suite(g, sv)
+	assert(not refused(), "board release: " .. tostring(warnings[#warnings]))
+	local sss, sps, svc = sv.ServerScriptService, sv.StarterPlayer.StarterPlayerScripts, sv.ServerScriptService.EconomyService
+	local backups = {}
+	for _, bk in ipairs(sv.ServerStorage:GetChildren()) do
+		backups[bk.Name] = subtree(bk)
+	end
+	local installed = snapshot(g)
+	sv.RunService.running = true
+	art(g, sv)
+	check("board art in Play: refused", refused() and snapshot(g) == installed)
+	sv.RunService.running = false
+	local commits = history.commits
+	art(g, sv)
+	check("board art on the installed board: one undo step", not refused() and history.commits == commits + 1)
+	check("board art: UpgradeBoardServer / Client replaced, still tagged EconomyOwned", sss.UpgradeBoardServer.Source == ART.Server
+		and sps.UpgradeBoardClient.Source == ART.Client and sss.UpgradeBoardServer:GetAttribute("EconomyOwned") == true
+		and sps.UpgradeBoardClient:GetAttribute("EconomyOwned") == true)
+	check("board art: nothing else changed (EconomyService, NetCapacityServer, KgSignClient, the rest)", svc.Source == SUITE.EconomyService
+		and sss.NetCapacityServer.Source == SUITE.NetCapacityServer and sps.KgSignClient.Source == SUITE.KgSignClient
+		and svc.Config.Source == SUITE.Config)
+	check("board art: backup EconomyBoardArtBackup with its 2 changes; every earlier backup untouched", (function()
+		local bk = sv.ServerStorage:FindFirstChild("EconomyBoardArtBackup")
+		if not (bk and #bk:GetChildren() == 2) then
+			return false
+		end
+		for name, tree in pairs(backups) do
+			if not (sv.ServerStorage:FindFirstChild(name) and subtree(sv.ServerStorage[name]) == tree) then
+				return false
+			end
+		end
+		return true
+	end)())
+	local after = snapshot(g)
+	art(g, sv)
+	check("board art twice: refused", refused() and snapshot(g) == after)
+	suiteBack(g, sv)
+	check("the board release's rollback is refused while the art update is in", refused() and snapshot(g) == after)
+	sps.UpgradeBoardClient.Source ..= "\n-- hand edit"
+	local edited = snapshot(g)
+	artBack(g, sv)
+	check("board art rollback over an edited client: refused", refused() and snapshot(g) == edited)
+	sps.UpgradeBoardClient.Source = ART.Client
+	artBack(g, sv)
+	check("board art rollback: exactly the installed board release again", not refused() and snapshot(g) == installed
+		and sss.UpgradeBoardServer.Source == ART.OldServer and sps.UpgradeBoardClient.Source == ART.OldClient)
+	suiteBack(g, sv)
+	check("then the board release rolls back too", not refused())
+end
+do
+	-- a board client edited after the board release: not the version the art update knows
+	local g, sv = astraLive()
+	suite(g, sv)
+	local sps = sv.StarterPlayer.StarterPlayerScripts
+	sps.UpgradeBoardClient.Source = ART.OldClient:gsub("FLASH_SECONDS = 1.6", "FLASH_SECONDS = 2", 1)
+	local before = snapshot(g)
+	art(g, sv)
+	check("board art over a different UpgradeBoardClient: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+	sps.UpgradeBoardClient.Source = ART.OldClient
+	sv.ServerScriptService.EconomyService.Source ..= "\n-- changed"
+	before = snapshot(g)
+	art(g, sv)
+	check("board art over a different EconomyService: refused", refused() and snapshot(g) == before)
+end
+do
+	-- the board scripts without their EconomyOwned tag: not ours
+	local g, sv = astraLive()
+	suite(g, sv)
+	sv.ServerScriptService.UpgradeBoardServer:SetAttribute("EconomyOwned", nil)
+	local before = snapshot(g)
+	art(g, sv)
+	check("board art over an untagged UpgradeBoardServer: refused (not ours)", refused() and snapshot(g) == before)
+end
 do
 	local g, sv = astraLive()
 	sv.ReplicatedStorage.GrinderUpgradesConfig.Source ..= "\n-- tuned"
@@ -1714,6 +1796,13 @@ def main() -> int:
         ("Config", live / "GrinderUpgradesConfig.lua"),
         ("NetLift", live / "NetLiftScript.grinder.lua"),
     )) + "}\n"
+    # the installed board release's own board scripts, and the board-art update's
+    tables += "local ART = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in (
+        ("OldServer", git_show("src/server/UpgradeBoardServer.server.luau", "fffdaa3")),
+        ("OldClient", git_show("src/client/UpgradeBoardClient.client.luau", "fffdaa3")),
+        ("Server", (ROOT / "src/server/UpgradeBoardServer.server.luau").read_text()),
+        ("Client", (ROOT / "src/client/UpgradeBoardClient.client.luau").read_text()),
+    )) + "}\n"
     tables += "local SUITE = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (
         ("EconomyService", ROOT / "src/server/EconomyService.luau"),
         ("Config", ROOT / "src/core/Config.luau"),
@@ -1724,14 +1813,13 @@ def main() -> int:
         ("NetKg", ROOT / "src/core/NetKg.luau"),
         ("BoardUpgrades", ROOT / "src/core/BoardUpgrades.luau"),
         ("NetCapacityServer", ROOT / "src/server/NetCapacityServer.server.luau"),
-        ("UpgradeBoardServer", ROOT / "src/server/UpgradeBoardServer.server.luau"),
         ("KgSignClient", ROOT / "src/client/KgSignClient.client.luau"),
-        ("UpgradeBoardClient", ROOT / "src/client/UpgradeBoardClient.client.luau"),
         ("Fishing", ROOT / "studio/board/RodFishingSystem.lua"),
         ("GServer", grinder / "GrinderUpgradesServer.lua"),
         ("GClient", grinder / "GrinderUpgradesClient.lua"),
         ("Customer", ROOT / "studio" / "board" / "CustomerSystem.lua"),
     )) + "}\n"
+    tables += "SUITE.UpgradeBoardServer = ART.OldServer\nSUITE.UpgradeBoardClient = ART.OldClient\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1826,6 +1914,8 @@ def main() -> int:
         + wrap("runShopUiBack", (ROOT / "RollbackRodShopUI.lua").read_text())
         + wrap("runSuite", (ROOT / "InstallBoardUpgrades.lua").read_text())
         + wrap("runSuiteBack", (ROOT / "RollbackBoardUpgrades.lua").read_text())
+        + wrap("runArt", (ROOT / "InstallBoardArt.lua").read_text())
+        + wrap("runArtBack", (ROOT / "RollbackBoardArt.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

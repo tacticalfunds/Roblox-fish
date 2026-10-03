@@ -26,16 +26,9 @@ local NEAR_BOARD = MAIN + Vector3.new(0, -7, 6)
 local NEAR_BUTTON = Vector3.new(-20, 5, 0)
 
 current = "server"
--- the board
-local board = new("Model", "Board")
-local main = part("Main", MAIN, board, Vector3.new(19.53, 9.34, 0.85))
-local surface = new("SurfaceGui", "SurfaceGui")
-local bord = new("Frame", "bord3")
-new("UIListLayout", "UIListLayout").Parent = bord
-new("Frame", "Frame").Parent = bord
-bord.Parent = surface
-surface.Parent = main
-board.Parent = ws
+-- the board: the place's four-card art screen (each player gets its gui copy)
+local _, boardScreen = upgradeBoard(MAIN)
+current = "server"
 -- the fishing scene (as in rods_sim)
 local pressRemote = new("RemoteEvent", "PressFishButton")
 pressRemote.Parent = RS
@@ -93,6 +86,7 @@ local N = join(2, "Normal", NEAR_BUTTON + Vector3.new(0, 0, 4))
 runScript(script("Script", "UpgradeBoardServer", SOURCES.Board_Server, SSS))
 runScript(script("Script", "RodFishingSystem", SOURCES.Board_Fishing, SSS))
 for _, p in ipairs({ L, N }) do
+	boardArt(p, boardScreen)
 	runAs(p, function()
 		runScript(script("LocalScript", "UpgradeBoardClient", SOURCES.Board_Client), p)
 	end)
@@ -106,8 +100,7 @@ Economy.runRodOffer = function(args)
 	return false -- passed: the fish slips back into the water
 end
 local function card(p, id)
-	local g = p.PlayerGui:FindFirstChild("UpgradeBoard")
-	return g and g.bord3:FindFirstChild(id)
+	return artCard(p, ART_CARD_NAMES[id])
 end
 local function value(p, id)
 	return card(p, id).Value.Text

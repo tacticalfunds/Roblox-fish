@@ -597,6 +597,12 @@ Requires: rods (InstallRods.lua, EconomyRodsBackup).
     return keys
 
 
+# The upgrade-board release Astra installed (InstallBoardUpgrades.lua, all 16
+# targets verified): its two board scripts are read from that commit, so the
+# board-art update below doesn't change the installed release.
+BOARD_RELEASE = "fffdaa3"
+
+
 def board_upgrades() -> list[str]:
     """The upgrade board (Net Strength, Rod Luck, Meat Price, Faster Reels)
     and the ONE saved net capacity, on Astra's live baseline: rods 61a7bd4 +
@@ -671,9 +677,9 @@ def board_upgrades() -> list[str]:
         {"where": "ServerScriptService/EconomyService", "name": "NetKg", "class": "ModuleScript", "source": cur("src/core/NetKg.luau")},
         {"where": "ServerScriptService/EconomyService", "name": "BoardUpgrades", "class": "ModuleScript", "source": cur("src/core/BoardUpgrades.luau")},
         {"where": "ServerScriptService", "name": "NetCapacityServer", "class": "Script", "source": cur("src/server/NetCapacityServer.server.luau")},
-        {"where": "ServerScriptService", "name": "UpgradeBoardServer", "class": "Script", "source": cur("src/server/UpgradeBoardServer.server.luau")},
+        {"where": "ServerScriptService", "name": "UpgradeBoardServer", "class": "Script", "source": git_show(BOARD_RELEASE, "tools/economy/src/server/UpgradeBoardServer.server.luau")},
         {"where": "StarterPlayer/StarterPlayerScripts", "name": "KgSignClient", "class": "LocalScript", "source": cur("src/client/KgSignClient.client.luau")},
-        {"where": "StarterPlayer/StarterPlayerScripts", "name": "UpgradeBoardClient", "class": "LocalScript", "source": cur("src/client/UpgradeBoardClient.client.luau")},
+        {"where": "StarterPlayer/StarterPlayerScripts", "name": "UpgradeBoardClient", "class": "LocalScript", "source": git_show(BOARD_RELEASE, "tools/economy/src/client/UpgradeBoardClient.client.luau")},
     ]
     keys = write_pair_v2(
         "InstallBoardUpgrades.lua",
@@ -725,13 +731,69 @@ Requires: rods (EconomyRodsBackup) with every source exactly as installed.
         "EconomyBoardUpgradesBackup",
         [["EconomyRodsBackup"]],
         ["EconomyBoardUpgradesBackup", "EconomyNetKgBackup", "EconomyUpgradeBoardBackup", "EconomyRodLuckBackup", "EconomyMeatPriceBackup", "EconomyFasterReelsBackup"],
-        [],
+        ["EconomyBoardArtBackup"],
         changes,
         unchanged,
         adds,
         ROOT,
     )
     assert keys == ["EconomyService", "Config", "MoneyStore", "Pricing", "Ledger", "Sales", "RodFishingSystem", "GrinderUpgradesServer", "GrinderUpgradesClient", "CustomerSystem"], keys
+    return keys
+
+
+def board_art() -> list[str]:
+    """The place's four-card board art: UpgradeBoardClient binds each player's
+    PlayerGui.UpgradeBoardGui (StarterGui.UpgradeBoardGui, adorned to
+    Workspace["Upgrade board"].Screen) instead of generating a board on the
+    old Workspace.Board; UpgradeBoardServer measures "near the board" to that
+    screen. A small update on the INSTALLED board release (BOARD_RELEASE)."""
+    cur = lambda path: (ROOT / path).read_text()  # noqa: E731
+    old = lambda path: git_show(BOARD_RELEASE, "tools/economy/" + path)  # noqa: E731
+    server, client = "src/server/UpgradeBoardServer.server.luau", "src/client/UpgradeBoardClient.client.luau"
+    assert 'only(workspace, "Upgrade board", "Instance")' in cur(server) and '"Board", "Model"' not in cur(server)
+    assert 'GUI_NAME = "UpgradeBoardGui"' in cur(client) and "Instance.new" not in cur(client) and "bord3" not in cur(client)
+    svc = git_show(BOARD_RELEASE, "tools/economy/src/server/EconomyService.luau")
+    assert svc == cur("src/server/EconomyService.luau"), "EconomyService changed since the installed board release"
+    keys = write_pair_v2(
+        "InstallBoardArt.lua",
+        "RollbackBoardArt.lua",
+        """
+The upgrade board on the place's OWN four-card art (a small update on the
+installed InstallBoardUpgrades.lua, fffdaa3).
+  * UpgradeBoardClient binds each player's PlayerGui.UpgradeBoardGui (the
+    copy of StarterGui.UpgradeBoardGui, adorned to
+    Workspace["Upgrade board"].Screen): Frames "Net Strength", "Rod Luck",
+    "Meat Price", "Faster Reels"; Btn.Activated asks the server; only Desc
+    (current > next) and Btn.Price ($10 / ... / SOON / MAX / OFF / SAVING... /
+    the server's answer) texts are written. Icons, titles, the button image,
+    gradients and layout are never touched; nothing is created. A card
+    without that exact shape is left alone (warned). A respawn's new copy
+    is bound again.
+  * The old generated PlayerGui.UpgradeBoard on Workspace.Board is gone;
+    Workspace.Board itself is left exactly as it is (not hidden any more).
+  * UpgradeBoardServer: "near the board" is measured to
+    Workspace["Upgrade board"].Screen (exactly one of each, else it sells
+    nothing). Purchases, prices and saving are unchanged (EconomyService).
+  * PAID UPGRADES STAY CLOSED (NetKgOpen / UpgradesOpen).
+Changes UpgradeBoardServer and UpgradeBoardClient (both exactly as the board
+release added them, tagged EconomyOwned); checks EconomyService unchanged.
+Requires: InstallBoardUpgrades (EconomyBoardUpgradesBackup).
+""",
+        "EconomyBoardArtBackup",
+        [["EconomyBoardUpgradesBackup"]],
+        ["EconomyBoardArtBackup"],
+        [],
+        [
+            ({"key": "UpgradeBoardServer", "where": "ServerScriptService/UpgradeBoardServer", "class": "Script", "tag": "EconomyOwned"},
+             [("board", old(server), cur(server))]),
+            ({"key": "UpgradeBoardClient", "where": "StarterPlayer/StarterPlayerScripts/UpgradeBoardClient", "class": "LocalScript", "tag": "EconomyOwned"},
+             [("board", old(client), cur(client))]),
+        ],
+        [({"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"}, svc)],
+        [],
+        ROOT,
+    )
+    assert keys == ["UpgradeBoardServer", "UpgradeBoardClient"], keys
     return keys
 
 
@@ -748,6 +810,7 @@ def main() -> None:
     # installed (pending validation): rods() / rod_shop_ui() are not rerun;
     # later milestones read their sources from git at RODS_RELEASE.
     board_upgrades()
+    board_art()
 
 
 if __name__ == "__main__":

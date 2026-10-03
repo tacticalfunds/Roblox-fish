@@ -922,6 +922,60 @@ is validated. For a Studio validation **with API access**, set the
 
 (The posts' own plates show the price instead of the floating panel.)
 
+## Board art (`InstallBoardArt.lua`)
+
+**Why.** Astra found two boards in the place. The board code bound the old
+`Workspace.Board.Main.SurfaceGui.bord3` and generated its own cards there.
+The four-card art the user pictured is `StarterGui.UpgradeBoardGui`, a
+SurfaceGui adorned to `Workspace["Upgrade board"].Screen`, with no scripts.
+Roblox copies it into each player's PlayerGui.
+
+**What changes** (a small update on the installed `fffdaa3` board release):
+
+- **UpgradeBoardClient** binds `PlayerGui.UpgradeBoardGui`, found by exact
+  names: Frames `Net Strength`, `Rod Luck`, `Meat Price`, `Faster Reels`,
+  each with exactly one TextLabel `Desc` and one button `Btn` holding one
+  TextLabel `Price`. A card without that shape is left alone and named in a
+  warning; the others still work. Two copies of the gui, or two Frames with
+  a card's name: nothing is guessed.
+  - `Btn.Activated` asks the server (one request per card at a time).
+  - Only two texts are written: `Desc` ("15 > 20kg", "1x > 1.5x",
+    "60kg MAX", "3x MAX"; the art's own text until your values load) and
+    `Btn.Price` (`$10`, `...` while loading, SOON, MAX, OFF, SAVING..., then
+    the server's answer for a moment: BOUGHT! / NEED $ / TOO FAR / NOT SAVED
+    / WAIT / SOON / MAX).
+  - Icons (viewports, models), titles, the button image, gradients and
+    layout are never touched, and nothing is created. Text colours stay the
+    art's (the old red "can't afford" price is gone).
+  - A respawn's new copy (ResetOnSpawn) is bound again.
+- **The old generated `PlayerGui.UpgradeBoard` is gone.** `Workspace.Board`
+  is no longer used, hidden or changed.
+- **UpgradeBoardServer** measures "near the board" to
+  `Workspace["Upgrade board"].Screen` (exactly one `Upgrade board`, exactly
+  one BasePart `Screen` in it; otherwise it sells nothing and warns).
+  Purchases, prices, checks and saving are unchanged (EconomyService).
+- Paid upgrades stay **closed** (`NetKgOpen`, `UpgradesOpen`).
+
+**Install:** needs `EconomyBoardUpgradesBackup`. It changes UpgradeBoardServer
+and UpgradeBoardClient only if each is exactly the version the board release
+added (tagged `EconomyOwned`), and checks that EconomyService is unchanged.
+Backup: `EconomyBoardArtBackup` (2 entries). `RollbackBoardArt.lua` restores
+the board release's two scripts exactly; `RollbackBoardUpgrades.lua` refuses
+while this is in.
+
+### Board art checklist (Studio, API access ON)
+
+| # | Do | Expect |
+|---|---|---|
+| BA1 | Run `InstallBoardArt.lua` (Edit) | "Installed"; `EconomyBoardArtBackup` with 2 entries |
+| BA2 | Play, look at the four-card board | Your values in `Desc` (`15 > 20kg`, `1x > 1.5x`, `1x > 1.25x`, `1x > 1.1x`); `Btn.Price` `SOON`; icons, titles and button art as before; no `PlayerGui.UpgradeBoard`; the old Workspace.Board looks as it always did |
+| BA3 | Press each card's button (closed) | `SOON` for a moment; toast "... open soon"; nothing charged |
+| BA4 | `NetKgOpen = true`, press Net Strength near the screen | SAVING..., BOUGHT!, −10; Desc `20 > 25kg`, Price `$20` |
+| BA5 | Walk 40+ studs from the screen, press | TOO FAR; "Walk up to the board"; nothing charged |
+| BA6 | `UpgradesOpen = true`, press Meat Price with too little money | NEED $; nothing charged |
+| BA7 | Reset your character, press again | The new gui copy works the same |
+| BA8 | Max one upgrade | `3x MAX` (or `60kg MAX`), Price `MAX` |
+
 ## Upgrade board, milestone 1: Net Strength (part of `InstallBoardUpgrades.lua`)
 
 The board at `Workspace.Board` (its `Main` part, `SurfaceGui.bord3`) becomes
@@ -1288,8 +1342,8 @@ changes; the rest re-check behaviour that already worked.
 
 ```
 python3 tools/economy/tests/run_tests.py path/to/luau          # 516 checks (rods 82, net kg 55, board upgrades 72, journal 25, customers 20)
-python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 49 + 6, luck 30, meat 17, reels 15, grinder 27 + 7, journal 38, net lift 9, customers 19 checks (the fake DataStore caches GetAsync like Roblox)
-python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 342 checks
+python3 tools/economy/tests/run_runtime_sim.py path/to/luau    # prompt 80, sales 40, upgrades 18, jump 10, rod 23, dwell 17, variants 25, earnings 47, money HUD 41, rods 67 (+67 on the upgrade board's RodFishingSystem), shop UI 28, panel 47, bot 14, meat glow 21, harpoon blend 15, kg 28 + 4, board 43 + 11, luck 30, meat 17, reels 15, grinder 27 + 7, journal 38, net lift 9, customers 19 checks (the fake DataStore caches GetAsync like Roblox)
+python3 tools/economy/tests/run_installer_sim.py path/to/luau  # 356 checks
 python3 tools/aquarium-cycle/tests/run_tests.py path/to/luau   # 869 checks (aquarium v1.2)
 ```
 

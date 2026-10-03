@@ -1,19 +1,21 @@
--- Upgrade board, milestone 1 (Net Strength): the REAL UpgradeBoardServer +
+-- Upgrade board (Net Strength): the REAL UpgradeBoardServer +
 -- UpgradeBoardClient, NetCapacityServer + KgSignClient and the REAL
 -- EconomyService on the fake engine, in the live layout:
---   Workspace.Board (Model) > Main (Part) > SurfaceGui > bord3 with a
---   UIPadding, a UIListLayout and TWO cards both named "Frame", each with
---   two TextLabels both named "Text" (Axe Speed / x1.00 > x1.15 and
---   Buy Miner / 1/64, $ 120); two KGsign posts, each with PricePlate.PriceGui
---   showing "$100" and "NET 15 KG → 20 KG"; a third post whose plate can't be
---   read unambiguously (two prices).
+--   the place's four-card art: Workspace["Upgrade board"].Screen and each
+--   player's PlayerGui.UpgradeBoardGui (Frames "Net Strength" / "Rod Luck" /
+--   "Meat Price" / "Faster Reels", each with Desc, Title, ImageButton Btn >
+--   Price, and icon viewports); the OLD Workspace.Board (Main > SurfaceGui >
+--   bord3, two old cards) as scenery that must stay untouched; two KGsign
+--   posts, each with PricePlate.PriceGui showing "$100" and
+--   "NET 15 KG → 20 KG"; a third post whose plate can't be read unambiguously.
 -- Checks:
---   * four cards (Net Strength / Rod Luck / Meat Price / Faster Reels) in a
---     2x2 grid on a per-player copy; the place's board only hidden per client
+--   * the existing art is bound (nothing created): only Desc and Btn.Price
+--     texts change; titles, button image, viewports untouched; the old board
+--     neither used nor hidden; a respawn's new gui copy is bound again
 --   * Net Strength = the posts' saved capacity: first step $10, one
 --     progression whether bought at the board or a post; plates per player
 --   * SOON while closed; SAVING... while saving; server answers shown
---     (BOUGHT! / TOO FAR / NEED $ / NOT SAVED / MAX); the price red when short
+--     (BOUGHT! / TOO FAR / NEED $ / NOT SAVED / MAX)
 --   * far / dead / loading / spam / funds / failed save / max refused, never
 --     charged; unknown / bad ids refused; the other three cards stay closed
 --     by default (bought and used in luck_sim, meat_sim, reels_sim)
@@ -41,8 +43,10 @@ netLift.Parent = ws
 
 -- the board as it is in the place
 local board = new("Model", "Board")
-part("Part", MAIN + Vector3.new(0, 5.3, 0), board, Vector3.new(22, 1.3, 1.7))
-local main = part("Main", MAIN, board, Vector3.new(19.53, 9.34, 0.85))
+-- (far from the art screen, so "near the board" can only mean the screen)
+local OLD = MAIN + Vector3.new(0, 0, -150)
+part("Part", OLD + Vector3.new(0, 5.3, 0), board, Vector3.new(22, 1.3, 1.7))
+local main = part("Main", OLD, board, Vector3.new(19.53, 9.34, 0.85))
 local surface = new("SurfaceGui", "SurfaceGui")
 surface._props.Enabled = true
 local bord = new("Frame", "bord3")
@@ -84,10 +88,13 @@ local function oldCard(title, value, image)
 end
 local oldBuy = oldCard("Axe Speed", "x1.00 > x1.15", "rbxassetid://75744565067217")
 oldCard("Buy Miner", "1/64", "rbxassetid://137299198925368")
-board:SetAttribute("IconRodLuck", "rbxassetid://424242") -- a supplied icon for one card
 bord.Parent = surface
 surface.Parent = main
 board.Parent = ws
+current = nil
+-- the board the place really uses: its four-card art screen, at the same spot
+local _, boardScreen = upgradeBoard(MAIN)
+current = "server"
 
 -- the posts, each with the place's price plate
 local detectors, plates = {}, {}
@@ -144,6 +151,7 @@ local function clientScripts(p)
 		runScript(script("LocalScript", "UpgradeBoardClient", SOURCES.Board_Client), p)
 	end)
 end
+boardArt(A, boardScreen)
 clientScripts(A)
 advance(1.5)
 
@@ -156,11 +164,10 @@ local function seen(p, inst, prop)
 	return v
 end
 local function boardGui(p)
-	return p.PlayerGui:FindFirstChild("UpgradeBoard")
+	return p.PlayerGui:FindFirstChild("UpgradeBoardGui")
 end
 local function card(p, id)
-	local g = boardGui(p)
-	return g and g.bord3:FindFirstChild(id)
+	return artCard(p, ART_CARD_NAMES[id])
 end
 local function value(p, id)
 	local c = card(p, id)
@@ -179,46 +186,29 @@ local remote = root:FindFirstChild("UpgradeAction")
 
 check("server made ReplicatedStorage.Economy.UpgradeAction (not saved)", remote ~= nil and remote.ClassName == "RemoteFunction" and remote.Archivable == false)
 local g = boardGui(A)
-check("a per-player copy of the board's SurfaceGui, on Main", g ~= nil and g.ClassName == "SurfaceGui" and g.Adornee == main and g.ResetOnSpawn == false)
-check("the place's board: hidden for A only, never changed", seen(A, surface, "Enabled") == false and surface.Enabled == true
+check("binds the place's own gui copy (nothing generated)", g ~= nil and A.PlayerGui:FindFirstChild("UpgradeBoard") == nil
+	and #g:GetChildren() == 4)
+check("the old Workspace.Board: neither used nor hidden, unchanged", seen(A, surface, "Enabled") == true and surface.Enabled == true
 	and #bord:GetChildren() == 4 and oldBuy.Price.Text == "$ 120")
-local copy = g.bord3
-local order, oldLeft = {}, false
-for _, c in ipairs(copy:GetChildren()) do
-	if c.ClassName == "Frame" then
-		table.insert(order, c.LayoutOrder .. ":" .. c.Name .. ":" .. c.Title.Text)
-		oldLeft = oldLeft or c.Name == "Frame"
-	end
-end
-table.sort(order)
-check("four cards: Net Strength, Rod Luck, Meat Price, Faster Reels", table.concat(order, ",")
-	== "1:NetStrength:Net Strength,2:RodLuck:Rod Luck,3:MeatPrice:Meat Price,4:FasterReels:Faster Reels")
-check("old cards and list layout gone from the copy; a 2x2 grid; padding kept", not oldLeft and copy:FindFirstChildOfClass("UIListLayout") == nil
-	and copy:FindFirstChildOfClass("UIGridLayout") ~= nil and copy:FindFirstChildOfClass("UIPadding") ~= nil)
-local grid = copy:FindFirstChildOfClass("UIGridLayout")
-check("grid cells fit two by two", grid.CellSize.X.Scale * 2 + grid.CellPadding.X.Scale <= 1 and grid.CellSize.Y.Scale * 2 + grid.CellPadding.Y.Scale <= 1)
-check("each card is the board's own card art: its Buy (gradient, stroke, corner), Price and Icons frame, title above value",
-	(function()
-		for _, id in ipairs({ "NetStrength", "RodLuck", "MeatPrice", "FasterReels" }) do
-			local c = card(A, id)
-			local grad = c.Buy:FindFirstChildOfClass("UIGradient")
-			if not (grad and grad:GetAttribute("BoardArt") and c.Buy:FindFirstChildOfClass("UIStroke") and c.Buy:FindFirstChildOfClass("UICorner")
-				and c.Buy.Price and c:FindFirstChild("Icons") and c.Title.Position.Y.Scale < c.Value.Position.Y.Scale
-				and c.Title.TextColor3.R == 1 and c:FindFirstChild("Text") == nil) then
-				return false
+check("the art is untouched: titles, button image, icon viewports and gradients as they were", (function()
+	for id, name in pairs(ART_CARD_NAMES) do
+		local c = card(A, id)
+		local f = c.Frame
+		local vps = 0
+		for _, ch in ipairs(f:GetChildren()) do
+			if ch.ClassName == "ViewportFrame" and ch.Name == "IconOutline" and ch:FindFirstChild("IconModel") then
+				vps += 1
 			end
 		end
-		return true
-	end)())
-check("icons: the supplied Board IconRodLuck image is used (no emoji); cards without one show their emoji over a hidden image",
-	card(A, "RodLuck").Icons.Image == "rbxassetid://424242" and card(A, "RodLuck"):FindFirstChild("Icon") == nil
-	and card(A, "NetStrength").Icons.ImageTransparency == 1 and card(A, "NetStrength").Icon.Text ~= ""
-	and card(A, "MeatPrice").Icon.Text ~= "" and card(A, "FasterReels").Icon.Text ~= "")
-check("card colours: pink, lime, cyan, amber", card(A, "NetStrength").BackgroundColor3.R > card(A, "NetStrength").BackgroundColor3.G
-	and card(A, "RodLuck").BackgroundColor3.G > card(A, "RodLuck").BackgroundColor3.R
-	and card(A, "MeatPrice").BackgroundColor3.B > card(A, "MeatPrice").BackgroundColor3.R
-	and card(A, "FasterReels").BackgroundColor3.R > card(A, "FasterReels").BackgroundColor3.B)
-check("values: 15kg > 20kg, 1x > 2x, 1x > 2x, 1x > 1.2x", value(A, "NetStrength") == "15kg > 20kg" and value(A, "RodLuck") == "1x > 2x"
+		if not (f.Title.Text == name and c.Buy.Image == "rbxassetid://77162011310420" and c.Buy.ClassName == "ImageButton"
+			and vps == 2 and f:FindFirstChildOfClass("UIGradient") and c.Buy:FindFirstChildOfClass("UIGradient")
+			and #f:GetChildren() == 6 and #c.Buy:GetChildren() == 2) then
+			return false
+		end
+	end
+	return true
+end)())
+check("Desc: 15 > 20kg, 1x > 2x, 1x > 2x, 1x > 1.2x", value(A, "NetStrength") == "15 > 20kg" and value(A, "RodLuck") == "1x > 2x"
 	and value(A, "MeatPrice") == "1x > 2x" and value(A, "FasterReels") == "1x > 1.2x")
 check("closed by default: every card says SOON", price(A, "NetStrength") == "SOON" and price(A, "RodLuck") == "SOON"
 	and price(A, "MeatPrice") == "SOON" and price(A, "FasterReels") == "SOON")
@@ -264,7 +254,7 @@ check("BOUGHT! on the button for a moment", price(A, "NetStrength") == "BOUGHT!"
 check("saved at once: money AND netKg in one write", writes == 1 and dsData[KEY .. "1"].netKg == 20 and dsData[KEY .. "1"].money == 1990)
 check("A's own net now 20 kg; the base stays 15", A:GetAttribute("NetMaxWeight") == 20 and netLift:GetAttribute("MaxWeight") == 15)
 advance(2)
-check("then: 20kg > 25kg, $25 on the card and on both plates", value(A, "NetStrength") == "20kg > 25kg" and price(A, "NetStrength") == "$25"
+check("then: 20 > 25kg, $25 on the card and on both plates", value(A, "NetStrength") == "20 > 25kg" and price(A, "NetStrength") == "$25"
 	and seen(A, plates[1][1], "Text") == "$25" and seen(A, plates[2][2], "Text") == "NET 20 KG → 25 KG")
 
 -- the same progression at a post
@@ -275,7 +265,7 @@ end)
 advance(0.6)
 check("a post sells the next step of the SAME net: 20 → 25 for $25", lastNotice(A) == "Net capacity 20 → 25 kg (-$25)"
 	and Economy.balance(A) == 1965 and A:GetAttribute("NetKg") == 25)
-check("the board card follows: 25kg > 30kg, $50", value(A, "NetStrength") == "25kg > 30kg" and price(A, "NetStrength") == "$50")
+check("the board card follows: 25 > 30kg, $50", value(A, "NetStrength") == "25 > 30kg" and price(A, "NetStrength") == "$50")
 
 -- far from the board (at the post now)
 press(A, "NetStrength")
@@ -390,13 +380,12 @@ advance(1)
 
 dsData[KEY .. "2"] = { v = 2, money = 5, netKg = 45 }
 local B = join(2, "Short", NEAR + Vector3.new(3, 0, 0))
+boardArt(B, boardScreen)
 clientScripts(B)
 advance(1.5)
-check("B sees B's own step (45 → 50, $340) on the board and plates; A still sees A's", value(B, "NetStrength") == "45kg > 50kg"
+check("B sees B's own step (45 → 50, $340) on the board and plates; A still sees A's", value(B, "NetStrength") == "45 > 50kg"
 	and price(B, "NetStrength") == "$340" and seen(B, plates[1][2], "Text") == "NET 45 KG → 50 KG" and seen(B, plates[1][1], "Text") == "$340"
 	and seen(A, plates[1][2], "Text") == "NET 30 KG → 35 KG" and seen(A, plates[1][1], "Text") == "$100")
-local short = card(B, "NetStrength").Buy.Price.TextColor3
-check("B can't afford it: the price is red", short.R > 0.9 and short.G < 0.5)
 check("B's own net 45 kg; A's 30; the base 15", B:GetAttribute("NetMaxWeight") == 45 and A:GetAttribute("NetMaxWeight") == 30
 	and netLift:GetAttribute("MaxWeight") == 15)
 press(B, "NetStrength")
@@ -405,15 +394,18 @@ check("B presses: NEED $, not charged", price(B, "NetStrength") == "NEED $" and 
 
 dsData[KEY .. "3"] = { v = 2, money = 0, netKg = 60, lock = { job = "another-server", t = 1700000000 + 10 ^ 7 } }
 local C = join(3, "Loading", NEAR + Vector3.new(-3, 0, 0))
+boardArt(C, boardScreen)
 clientScripts(C)
 advance(1.5)
-check("C's money still loading: the card shows ...", price(C, "NetStrength") == "..." and seen(C, plates[1][1], "Text") == "...")
+check("C's money still loading: the card shows ..., its Desc keeps the art's text", price(C, "NetStrength") == "..."
+	and value(C, "NetStrength") == "15 >20kg" and seen(C, plates[1][1], "Text") == "...")
 press(C, "NetStrength")
 advance(0.3)
 check("loading: refused (WAIT)", price(C, "NetStrength") == "WAIT" and lastNotice(C) == "Your money is still loading - try again in a moment")
 
 dsData[KEY .. "4"] = { v = 2, money = 5000, netKg = 55 }
 local D = join(4, "Maxer", NEAR + Vector3.new(0, 0, 2))
+boardArt(D, boardScreen)
 clientScripts(D)
 advance(1.5)
 press(D, "NetStrength")
@@ -431,17 +423,18 @@ leave(D)
 advance(0.5)
 check("D leaves: the base is still 15", netLift:GetAttribute("MaxWeight") == 15)
 
------------------------------------------------------------- the board streams out and back
+------------------------------------------------------------ respawn: Roblox copies the gui again (ResetOnSpawn)
 
+local oldGui = boardGui(A)
 current = "server"
-board.Parent = nil
+oldGui:Destroy()
 current = nil
-advance(1.5)
-check("board gone: A's copy removed", boardGui(A) == nil)
-current = "server"
-board.Parent = ws
-current = nil
-advance(1.5)
-check("board back: drawn again with A's values", boardGui(A) ~= nil and value(A, "NetStrength") == "30kg > 35kg" and price(A, "NetStrength") == "$100")
+local fresh = boardArt(A, boardScreen)
+advance(0.5)
+check("a new gui copy is bound with A's values", boardGui(A) == fresh and value(A, "NetStrength") == "30 > 35kg"
+	and price(A, "NetStrength") == "$100")
+press(A, "NetStrength")
+advance(0.6)
+check("and its button buys (30 → 35 for $100)", lastNotice(A) == "Net capacity 30 → 35 kg (-$100)" and Economy.balance(A) == 1815)
 
 finish("board sim")
