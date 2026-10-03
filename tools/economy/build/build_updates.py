@@ -601,6 +601,9 @@ Requires: rods (InstallRods.lua, EconomyRodsBackup).
 # targets verified): its two board scripts are read from that commit, so the
 # board-art update below doesn't change the installed release.
 BOARD_RELEASE = "fffdaa3"
+# The board-art update Astra installed on top of it (InstallBoardArt.lua): later
+# client-only changes (the press bounce) don't change that installer.
+BOARD_ART_RELEASE = "4718143"
 
 
 def board_upgrades() -> list[str]:
@@ -747,13 +750,13 @@ def board_art() -> list[str]:
     Workspace["Upgrade board"].Screen) instead of generating a board on the
     old Workspace.Board; UpgradeBoardServer measures "near the board" to that
     screen. A small update on the INSTALLED board release (BOARD_RELEASE)."""
-    cur = lambda path: (ROOT / path).read_text()  # noqa: E731
+    cur = lambda path: git_show(BOARD_ART_RELEASE, "tools/economy/" + path)  # noqa: E731
     old = lambda path: git_show(BOARD_RELEASE, "tools/economy/" + path)  # noqa: E731
     server, client = "src/server/UpgradeBoardServer.server.luau", "src/client/UpgradeBoardClient.client.luau"
     assert 'only(workspace, "Upgrade board", "Instance")' in cur(server) and '"Board", "Model"' not in cur(server)
     assert 'GUI_NAME = "UpgradeBoardGui"' in cur(client) and "Instance.new" not in cur(client) and "bord3" not in cur(client)
     svc = git_show(BOARD_RELEASE, "tools/economy/src/server/EconomyService.luau")
-    assert svc == cur("src/server/EconomyService.luau"), "EconomyService changed since the installed board release"
+    assert svc == (ROOT / "src/server/EconomyService.luau").read_text(), "EconomyService changed since the installed board release"
     keys = write_pair_v2(
         "InstallBoardArt.lua",
         "RollbackBoardArt.lua",

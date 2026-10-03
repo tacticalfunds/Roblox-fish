@@ -437,4 +437,82 @@ press(A, "NetStrength")
 advance(0.6)
 check("and its button buys (30 → 35 for $100)", lastNotice(A) == "Net capacity 30 → 35 kg (-$100)" and Economy.balance(A) == 1815)
 
+------------------------------------------------------------ the press bounce (display only)
+
+local function close(a, b)
+	return math.abs(a - b) < 1e-9
+end
+local function sameU2(u, v)
+	return close(u.X.Scale, v.X.Scale) and close(u.X.Offset, v.X.Offset) and close(u.Y.Scale, v.Y.Scale) and close(u.Y.Offset, v.Y.Offset)
+end
+local function tweensOn(btn, from)
+	local out = {}
+	for i = from + 1, #tweensPlayed do
+		if tweensPlayed[i].Instance == btn then
+			table.insert(out, tweensPlayed[i])
+		end
+	end
+	return out
+end
+local luck = card(A, "RodLuck").Buy -- anchored top-left in the art
+local luckSize, luckPos = luck.Size, luck.Position
+local from = #tweensPlayed
+local noticesBefore = #(notices[A] or {})
+press(A, "RodLuck")
+advance(0.5)
+local tw = tweensOn(luck, from)
+check("a press bounces its button: down 0.08 s (Quad Out) to 0.92 of its size, back 0.22 s (Back Out)", #tw == 2
+	and sameU2(tw[1].Goal.Size, UDim2.new(0.6 * 0.92, 4 * 0.92, 0.22 * 0.92, 2 * 0.92)) and tw[1].TweenInfo.args[1] == 0.08
+	and tw[1].TweenInfo.args[2] == Enum.EasingStyle.Quad and tw[2].TweenInfo.args[1] == 0.22
+	and tw[2].TweenInfo.args[2] == Enum.EasingStyle.Back and tw[2].TweenInfo.args[3] == Enum.EasingDirection.Out)
+check("... around its centre (top-left anchor: moved by 4% of its size)", sameU2(tw[1].Goal.Position,
+	UDim2.new(0.2 + 0.6 * 0.04, 4 * 0.04, 0.7 + 0.22 * 0.04, 2 * 0.04)))
+check("... and back to exactly its own Size and Position", sameU2(luck.Size, luckSize) and sameU2(luck.Position, luckPos)
+	and sameU2(tw[2].Goal.Size, luckSize))
+check("one press = one request (the closed answer once), no extra purchase call", #(notices[A] or {}) == noticesBefore + 1
+	and lastNotice(A) == "Rod Luck upgrades open soon" and price(A, "RodLuck") == "SOON")
+local netBtn = card(A, "NetStrength").Buy -- centre-anchored: only the size changes
+from = #tweensPlayed
+press(A, "NetStrength")
+advance(0.6)
+tw = tweensOn(netBtn, from)
+check("a centre-anchored button keeps its Position while it shrinks", #tw == 2 and sameU2(tw[1].Goal.Position, UDim2.new(0.5, 0, 0.82, 0)))
+advance(2)
+
+-- mid-bounce: a second press restarts it; the first bounce's callbacks do nothing
+tweenHold.on = true
+from = #tweensPlayed
+press(A, "RodLuck")
+advance(0.3)
+press(A, "RodLuck")
+advance(0.3)
+tw = tweensOn(luck, from)
+check("pressed again mid-bounce: the running bounce is cancelled and a new one starts", #tw == 2 and tw[1].cancelled == true
+	and tw[2].held == true and not tw[2].cancelled)
+finishHeldTweens()
+tw = tweensOn(luck, from)
+check("... it finishes once (down, then back), at exactly its own Size and Position", #tw == 3 and sameU2(luck.Size, luckSize)
+	and sameU2(luck.Position, luckPos))
+advance(2)
+
+-- a respawn (the gui copied again) mid-bounce: the old button is put back, the new one bound
+from = #tweensPlayed
+press(A, "RodLuck")
+advance(0.1)
+luck.Size = UDim2.new(0.55, 0, 0.2, 0) -- as if mid-tween
+local oldLuck = luck
+local gone = boardGui(A)
+current = "server"
+gone:Destroy()
+current = nil
+local again = boardArt(A, boardScreen)
+advance(0.5)
+tw = tweensOn(oldLuck, from)
+check("respawn mid-bounce: the bounce is cancelled and the old button restored", #tw == 1 and tw[1].cancelled == true
+	and sameU2(oldLuck.Size, luckSize) and sameU2(oldLuck.Position, luckPos))
+check("the new copy is bound, its button at its own size", boardGui(A) == again
+	and sameU2(card(A, "RodLuck").Buy.Size, UDim2.new(0.6, 4, 0.22, 2)) and price(A, "NetStrength") ~= nil)
+tweenHold.on = false
+finishHeldTweens()
+
 finish("board sim")

@@ -1800,8 +1800,8 @@ def main() -> int:
     tables += "local ART = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in (
         ("OldServer", git_show("src/server/UpgradeBoardServer.server.luau", "fffdaa3")),
         ("OldClient", git_show("src/client/UpgradeBoardClient.client.luau", "fffdaa3")),
-        ("Server", (ROOT / "src/server/UpgradeBoardServer.server.luau").read_text()),
-        ("Client", (ROOT / "src/client/UpgradeBoardClient.client.luau").read_text()),
+        ("Server", git_show("src/server/UpgradeBoardServer.server.luau", "4718143")),
+        ("Client", git_show("src/client/UpgradeBoardClient.client.luau", "4718143")),
     )) + "}\n"
     tables += "local SUITE = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (
         ("EconomyService", ROOT / "src/server/EconomyService.luau"),

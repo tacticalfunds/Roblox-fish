@@ -1,5 +1,5 @@
 -- UpgradeBoardClient (LocalScript in StarterPlayer.StarterPlayerScripts).
--- [Economy upgrade board v6: the place's four-card board art]
+-- [Economy upgrade board v7: the place's four-card board art; buttons bounce]
 --
 -- Wires the place's own board art for THIS player: PlayerGui.UpgradeBoardGui
 -- (Roblox copies it from StarterGui.UpgradeBoardGui, a SurfaceGui adorned to
@@ -17,6 +17,11 @@
 -- Pressing Btn (mouse, touch or gamepad: Activated) asks the server through
 -- ReplicatedStorage.Economy.UpgradeAction; one request per card at a time.
 -- The client decides nothing.
+-- Every press also bounces that Btn at once (display only, whatever the
+-- server answers, no extra request): 0.08 s down to 0.92 of its size, then
+-- 0.22 s back with a little spring, around its centre. A press during a
+-- bounce restarts it; afterwards (and on unbind / a respawn's new copy) the
+-- button's own Size and Position are restored exactly.
 --
 -- Found by exact names, never guessed: exactly one PlayerGui child named
 -- UpgradeBoardGui (a SurfaceGui); in it exactly one Frame per card name; in
@@ -28,12 +33,16 @@
 -- not used.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local GUI_NAME = "UpgradeBoardGui"
 local FLASH_SECONDS = 1.6
+local BOUNCE_SCALE = 0.92 -- pressed size, of the button's own
+local BOUNCE_DOWN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local BOUNCE_BACK = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
 local CARDS = {
 	{ id = "NetStrength", frame = "Net Strength" },
@@ -76,7 +85,7 @@ end
 
 ------------------------------------------------------------ showing
 
-local cards = {} -- id -> { desc, price, artDesc, pending, flashUntil }
+local cards = {} -- id -> { desc, price, artDesc, pending, flashUntil, btn, size, pos, bounce, tween }
 local bound: Instance? = nil
 local connections: { RBXScriptConnection } = {}
 
@@ -190,9 +199,66 @@ local function press(id: string)
 	end
 end
 
+------------------------------------------------------------ the press bounce (display only)
+
+local function scaledUDim2(u: UDim2, k: number): UDim2
+	return UDim2.new(u.X.Scale * k, u.X.Offset * k, u.Y.Scale * k, u.Y.Offset * k)
+end
+
+-- the Position that keeps the button's centre where it is at `small` size
+local function centred(pos: UDim2, size: UDim2, small: UDim2, anchor: Vector2): UDim2
+	return UDim2.new(
+		pos.X.Scale + (size.X.Scale - small.X.Scale) * (0.5 - anchor.X),
+		pos.X.Offset + (size.X.Offset - small.X.Offset) * (0.5 - anchor.X),
+		pos.Y.Scale + (size.Y.Scale - small.Y.Scale) * (0.5 - anchor.Y),
+		pos.Y.Offset + (size.Y.Offset - small.Y.Offset) * (0.5 - anchor.Y)
+	)
+end
+
+-- the button's own Size / Position back, any running bounce stopped
+local function settle(c)
+	c.bounce += 1 -- a stopped bounce's callbacks do nothing
+	if c.tween then
+		c.tween:Cancel()
+		c.tween = nil
+	end
+	c.btn.Size = c.size
+	c.btn.Position = c.pos
+end
+
+local function bounce(c)
+	c.bounce += 1
+	local token = c.bounce
+	if c.tween then
+		c.tween:Cancel() -- a press mid-bounce restarts it from where it is
+	end
+	local small = scaledUDim2(c.size, BOUNCE_SCALE)
+	local down = TweenService:Create(c.btn, BOUNCE_DOWN, { Size = small, Position = centred(c.pos, c.size, small, c.btn.AnchorPoint) })
+	down.Completed:Connect(function(state)
+		if c.bounce ~= token or state ~= Enum.PlaybackState.Completed then
+			return
+		end
+		local back = TweenService:Create(c.btn, BOUNCE_BACK, { Size = c.size, Position = c.pos })
+		back.Completed:Connect(function(state2)
+			if c.bounce == token and state2 == Enum.PlaybackState.Completed then
+				c.tween = nil
+				c.btn.Size = c.size -- exactly the button's own again
+				c.btn.Position = c.pos
+			end
+		end)
+		c.tween = back
+		back:Play()
+	end)
+	c.tween = down
+	down:Play()
+end
+
 ------------------------------------------------------------ binding
 
 local function unbind()
+	for _, c in pairs(cards) do
+		settle(c) -- never leave a button mid-bounce
+	end
 	for _, conn in ipairs(connections) do
 		conn:Disconnect()
 	end
@@ -208,9 +274,12 @@ local function bind(gui: Instance)
 	for _, def in ipairs(CARDS) do
 		local desc, btn, price, why = cardParts(gui, def.frame)
 		if desc and btn and price then
-			cards[def.id] = { desc = desc, price = price, artDesc = desc.Text, pending = false, flashUntil = 0 }
+			local c = { desc = desc, price = price, artDesc = desc.Text, pending = false, flashUntil = 0 }
+			c.btn, c.size, c.pos, c.bounce = btn, btn.Size, btn.Position, 0 -- the art's own size and place
+			cards[def.id] = c
 			local id = def.id
 			table.insert(connections, btn.Activated:Connect(function()
+				bounce(c) -- at once, whatever the server answers
 				press(id)
 			end))
 		elseif not warned[gui] then

@@ -1134,22 +1134,48 @@ services.UserInputService = {
 		return if key == Enum.KeyCode.ButtonX then "rbxasset://textures/ui/Controls/xboxX.png" else ""
 	end,
 }
--- tweens jump to their goal when played (the sims check end states)
+-- tweens jump to their goal when played (the sims check end states); with
+-- tweenHold.on they wait (mid-tween) until finishHeldTweens(); Cancel fires
+-- Completed(Cancelled) like Roblox
 tweensPlayed = {}
+local tweenHold = { on = false }
+local heldTweens = {}
 services.TweenService = {
 	Create = function(_, inst, info, goal)
 		local tw = { Instance = inst, TweenInfo = info, Goal = goal, Completed = Signal.new() }
 		function tw:Play()
 			table.insert(tweensPlayed, self)
+			if tweenHold.on then
+				self.held = true
+				table.insert(heldTweens, self)
+				return
+			end
 			for k, v in pairs(goal) do
 				inst[k] = v
 			end
 			self.Completed:Fire(Enum.PlaybackState.Completed)
 		end
-		function tw:Cancel() end
+		function tw:Cancel()
+			if self.held and not self.cancelled and not self.done then
+				self.cancelled = true
+				self.Completed:Fire(Enum.PlaybackState.Cancelled)
+			end
+		end
 		return tw
 	end,
 }
+local function finishHeldTweens()
+	while #heldTweens > 0 do
+		local tw = table.remove(heldTweens, 1)
+		if not tw.cancelled then
+			tw.done = true
+			for k, v in pairs(tw.Goal) do
+				tw.Instance[k] = v
+			end
+			tw.Completed:Fire(Enum.PlaybackState.Completed)
+		end
+	end
+end
 local boundActions = {} -- player -> name -> { fn, keys }
 services.ContextActionService = {
 	BindAction = function(_, name, fn, _createTouchButton, ...)
@@ -1370,6 +1396,14 @@ local function boardArt(p, screen, shape)
 		desc.Parent = frame
 		local btn = new("ImageButton", "Btn")
 		btn._props.Image = BOARD_ART_BUTTON
+		btn._props.Size = UDim2.new(0.6, 4, 0.22, 2)
+		if c[1] == "Rod Luck" then
+			btn._props.AnchorPoint = Vector2.new(0, 0)
+			btn._props.Position = UDim2.new(0.2, 0, 0.7, 0)
+		else
+			btn._props.AnchorPoint = Vector2.new(0.5, 0.5)
+			btn._props.Position = UDim2.new(0.5, 0, 0.82, 0)
+		end
 		local price = new("TextLabel", "Price")
 		price._props.Text = "$10"
 		price.Parent = btn
