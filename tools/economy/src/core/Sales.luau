@@ -57,20 +57,44 @@ function Sales.settle(
 	return paid, if paid then piece.value else 0, piece
 end
 
--- The customers' rate (a minute) and line size for `players` players in the
--- server. `cfg` is Config.Customers ({ PerPlayer, Max, LineCap }); the Car
--- Sales upgrades' published values (`publishedRate` = workspace
--- CustomersPerMin, `publishedCap` = CustomersLineCap; anything not a positive
--- number is ignored) are never lowered.
-function Sales.customers(players: any, publishedRate: any, publishedCap: any, cfg: any): (number, number)
+-- The customers' rate (a minute) and line size. `players` is either a count
+-- (each player at the base rate) or the list of each present player's own
+-- Customer Speed value; `lines` (optional) the list of their Customer Line
+-- values. `cfg` is Config.Customers ({ PerPlayer, Max, LineCap, LineMax }).
+--   rate = the SUM of the players' rates (each at least the base), at most
+--          Max; line = the LARGEST player's line (at least LineCap), at most
+--          LineMax.
+-- The Car Sales upgrades' published values (`publishedRate` = workspace
+-- CustomersPerMin, used per player; `publishedCap` = CustomersLineCap;
+-- anything not a positive number is ignored) are never lowered.
+function Sales.customers(players: any, publishedRate: any, publishedCap: any, cfg: any, lines: any): (number, number)
 	local function positive(v: any): number
 		return if type(v) == "number" and v == v and v > 0 and v < math.huge then v else 0
 	end
-	local n = math.max(1, math.floor(positive(players)))
-	local rate = positive(publishedRate)
-	local perPlayer = math.max(cfg.PerPlayer, rate)
-	local perMin = math.min(perPlayer * n, math.max(cfg.Max, rate))
-	local cap = math.max(cfg.LineCap, math.floor(positive(publishedCap)))
+	local published = positive(publishedRate)
+	local perPlayer = math.max(cfg.PerPlayer, published)
+	local sum, n = 0, 0
+	if type(players) == "table" then
+		for _, own in ipairs(players) do
+			n += 1
+			sum += math.max(perPlayer, math.min(positive(own), cfg.Max))
+		end
+	else
+		n = math.floor(positive(players))
+		sum = perPlayer * n
+	end
+	if n == 0 then
+		sum = perPlayer -- counted as one player
+	end
+	local perMin = math.min(sum, math.max(cfg.Max, published))
+	local line = cfg.LineCap
+	if type(lines) == "table" then
+		for _, own in ipairs(lines) do
+			line = math.max(line, math.floor(positive(own)))
+		end
+	end
+	line = math.min(line, cfg.LineMax or 8)
+	local cap = math.max(line, math.floor(positive(publishedCap)))
 	return perMin, cap
 end
 

@@ -604,6 +604,8 @@ BOARD_RELEASE = "fffdaa3"
 # The board-art update Astra installed on top of it (InstallBoardArt.lua): later
 # client-only changes (the press bounce) don't change that installer.
 BOARD_ART_RELEASE = "4718143"
+# The solo-owner update Astra installed (InstallSoloOwner.lua): its EconomyService.
+SOLO_OWNER_RELEASE = "15acef6"
 
 
 def board_upgrades() -> list[str]:
@@ -620,7 +622,8 @@ def board_upgrades() -> list[str]:
     make_grinder.main()
     make_customers.main()
     core = lambda name: f"tools/economy/src/core/{name}.luau"  # noqa: E731
-    cur = lambda path: (ROOT / path).read_text()  # noqa: E731
+    # what this release installed (Astra installed it): read from that commit
+    cur = lambda path: git_show(BOARD_RELEASE, "tools/economy/" + path)  # noqa: E731
     live = lambda name: (ROOT / "studio" / "live" / name).read_text()  # noqa: E731
     mod = lambda key: {"key": key, "where": f"ServerScriptService/EconomyService/{key}", "class": "ModuleScript", "tag": "EconomyOwned"}  # noqa: E731
     changes = [
@@ -734,7 +737,7 @@ Requires: rods (EconomyRodsBackup) with every source exactly as installed.
         "EconomyBoardUpgradesBackup",
         [["EconomyRodsBackup"]],
         ["EconomyBoardUpgradesBackup", "EconomyNetKgBackup", "EconomyUpgradeBoardBackup", "EconomyRodLuckBackup", "EconomyMeatPriceBackup", "EconomyFasterReelsBackup"],
-        ["EconomyBoardArtBackup", "EconomyCustomerQueueBackup", "EconomySoloOwnerBackup"],
+        ["EconomyBoardArtBackup", "EconomyCustomerQueueBackup", "EconomySoloOwnerBackup", "EconomyCustomerBoardBackup"],
         changes,
         unchanged,
         adds,
@@ -840,7 +843,7 @@ def solo_owner() -> list[str]:
     """Ambient (harpoon) catches with no owner belong to the only player in a
     solo server, at catch time (EconomyService.issueFish only)."""
     old = git_show(BOARD_RELEASE, "tools/economy/src/server/EconomyService.luau")
-    new = (ROOT / "src/server/EconomyService.luau").read_text()
+    new = git_show(SOLO_OWNER_RELEASE, "tools/economy/src/server/EconomyService.luau")
     assert "local SOLO_AMBIENT_OWNER = true" in new
     keys = write_pair_v2(
         "InstallSoloOwner.lua",
@@ -861,7 +864,7 @@ Requires: InstallBoardUpgrades (EconomyBoardUpgradesBackup).
         "EconomySoloOwnerBackup",
         [["EconomyBoardUpgradesBackup"]],
         ["EconomySoloOwnerBackup"],
-        [],
+        ["EconomyCustomerBoardBackup"],
         [({"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
           [("board", old, new)])],
         [],
@@ -869,6 +872,80 @@ Requires: InstallBoardUpgrades (EconomyBoardUpgradesBackup).
         ROOT,
     )
     assert keys == ["EconomyService"], keys
+    return keys
+
+
+GATES = ("Config.NetKgOpen = false\n", "Config.BoardUpgradesOpen = false\n")
+
+
+def with_gates(src: str, net: bool, board: bool) -> str:
+    """A Config with the paid gates as Astra may have them turned on locally."""
+    for gate, on in zip(GATES, (net, board)):
+        assert src.count(gate) == 1, gate
+        if on:
+            src = src.replace(gate, gate.replace("false", "true"))
+    return src
+
+
+def customer_board() -> list[str]:
+    """The customer upgrades (Customer Speed, Customer Line) on the old
+    two-panel Workspace.Board, saved like the board upgrades."""
+    cur = lambda path: (ROOT / path).read_text()  # noqa: E731
+    old_cfg = git_show(BOARD_RELEASE, "tools/economy/src/core/Config.luau")
+    new_cfg = cur("src/core/Config.luau")
+    assert old_cfg != new_cfg and "CustomerSpeed = {" in new_cfg
+    cfg_variants = []
+    for net in (False, True):
+        for board in (False, True):
+            label = "gates " + ("net on" if net else "net off") + ", " + ("board on" if board else "board off")
+            cfg_variants.append((label, with_gates(old_cfg, net, board), with_gates(new_cfg, net, board)))
+    keys = write_pair_v2(
+        "InstallCustomerBoard.lua",
+        "RollbackCustomerBoard.lua",
+        """
+The customer upgrades, saved like the board upgrades, on the old two-panel
+Workspace.Board (in its own art):
+  * Customer Speed: customers a minute you bring, 6 -> 9 -> 12 -> 16 -> 20 for
+    $25 / $60 / $150 / $350. The shop's rate is the SUM of the present
+    players' (each at least 6), at most 24 a minute.
+  * Customer Line: places in the line, 6 -> 7 -> 8 for $40 / $120 (the
+    sidewalk has 8). The shop's line is the LARGEST of the present players'.
+  * Bought with EconomyService.upgradeAction (money + level in ONE write,
+    alive, loaded, one purchase at a time, cooldown, near the board); saved
+    in the Money record's `upgrades`; open with UpgradesOpen like the board
+    upgrades. No truck unlock needed. Car Sales' published customer values
+    are never lowered.
+  * CustomerBoardClient: each player's copy of Workspace.Board.Main's
+    SurfaceGui (the place's board hidden on that client only, never
+    changed); "Axe Speed" -> Customer Speed, "Buy Miner" -> Customer Line
+    (found by title), the person icon on both, current > next and the price,
+    the Buy button bounces. CustomerBoardServer: ReplicatedStorage.Economy.
+    CustomerUpgradeAction, only these two ids, range to Board.Main.
+Changes Config (the board release's, with the paid gates as found - kept),
+Sales, EconomyService (the solo-owner version); adds CustomerBoardServer and
+CustomerBoardClient. CustomerSystem (the queue fix) is not touched: it asks
+EconomyService for the rate and line every time.
+Requires: InstallSoloOwner (EconomySoloOwnerBackup).
+""",
+        "EconomyCustomerBoardBackup",
+        [["EconomySoloOwnerBackup"]],
+        ["EconomyCustomerBoardBackup"],
+        [],
+        [
+            ({"key": "Config", "where": "ServerScriptService/EconomyService/Config", "class": "ModuleScript", "tag": "EconomyOwned"}, cfg_variants),
+            ({"key": "Sales", "where": "ServerScriptService/EconomyService/Sales", "class": "ModuleScript", "tag": "EconomyOwned"},
+             [("board", git_show(BOARD_RELEASE, "tools/economy/src/core/Sales.luau"), cur("src/core/Sales.luau"))]),
+            ({"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
+             [("solo", git_show(SOLO_OWNER_RELEASE, "tools/economy/src/server/EconomyService.luau"), cur("src/server/EconomyService.luau"))]),
+        ],
+        [],
+        [
+            {"where": "ServerScriptService", "name": "CustomerBoardServer", "class": "Script", "source": cur("src/server/CustomerBoardServer.server.luau")},
+            {"where": "StarterPlayer/StarterPlayerScripts", "name": "CustomerBoardClient", "class": "LocalScript", "source": cur("src/client/CustomerBoardClient.client.luau")},
+        ],
+        ROOT,
+    )
+    assert keys == ["Config", "Sales", "EconomyService"], keys
     return keys
 
 
@@ -888,6 +965,7 @@ def main() -> None:
     board_art()
     customer_queue()
     solo_owner()
+    customer_board()
 
 
 if __name__ == "__main__":

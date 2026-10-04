@@ -230,8 +230,37 @@ Config.BoardUpgrades = {
 	-- (3.4 s at 1x) takes 3.4 / Value seconds, server and client animation
 	-- alike. Separate from the equipped rod, which shortens the bite wait.
 	FasterReels = { Name = "Faster Reels", Values = { 1, 1.1, 1.2, 1.35, 1.5 }, Costs = { 10, 45, 140, 350 }, FirstValue = 1.1, MaxValue = 2 },
+	-- The customer upgrades (the old two-panel Workspace.Board, not the
+	-- 4-card board), each a value THIS player brings while in the server:
+	-- Customer Speed: customers a minute; the server's rate is the SUM of the
+	-- present players' values, capped at Config.Customers.Max.
+	-- Customer Line: places in the line; the server's line is the LARGEST of
+	-- the present players' values, at most Config.Customers.LineMax (the
+	-- sidewalk's places). See EconomyService.customers / Sales.customers.
+	-- Values are real amounts (Unit), starting at the base, so StartValue /
+	-- FirstCost replace the multiplier upgrades' 1 / UpgradeFirstCost.
+	CustomerSpeed = {
+		Name = "Customer Speed",
+		Values = { 6, 9, 12, 16, 20 },
+		Costs = { 25, 60, 150, 350 },
+		StartValue = 6,
+		FirstValue = 9,
+		FirstCost = 25,
+		MaxValue = 24,
+		Unit = "/min",
+	},
+	CustomerLine = {
+		Name = "Customer Line",
+		Values = { 6, 7, 8 },
+		Costs = { 40, 120 },
+		StartValue = 6,
+		FirstValue = 7,
+		FirstCost = 40,
+		MaxValue = 8,
+		Unit = " in line",
+	},
 }
-Config.BoardUpgradeIds = { "RodLuck", "MeatPrice", "FasterReels" } -- the order they are listed and checked
+Config.BoardUpgradeIds = { "RodLuck", "MeatPrice", "FasterReels", "CustomerSpeed", "CustomerLine" } -- the order they are listed and checked
 -- PAID board upgrades (other than Net Strength, which is NetKgOpen) stay
 -- closed until the saved path is validated in Studio with real DataStore
 -- access: set true here, or (for a test) the UpgradesOpen attribute on
@@ -244,15 +273,19 @@ Config.BoardUpgradeCooldown = 0.5 -- seconds between presses per player
 -- Customers buy ONE piece each at the sale table, and they are the only buyers
 -- until trucks are unlocked, so their rate is the early game's income limit.
 -- Live, one came every 10-20 s for the WHOLE server (~4 a minute, shared).
--- Now (CustomerSystem, via EconomyService.customers()): PerPlayer a minute for
--- EACH player in the server, up to Max a minute (about what the Blender Bot
--- can carry to the table). The Car Sales upgrades' published values
--- (workspace CustomersPerMin / CustomersLineCap) are never lowered: a higher
+-- Now (CustomerSystem, via EconomyService.customers()): each player in the
+-- server brings their own rate - PerPlayer a minute, more with their saved
+-- Customer Speed level - and the server's rate is the sum, up to Max a
+-- minute. The line holds LineCap people, more with the largest saved
+-- Customer Line level among the players present, up to LineMax (the
+-- sidewalk's 8 places). The Car Sales upgrades' published values (workspace
+-- CustomersPerMin / CustomersLineCap) are never lowered: a higher
 -- CustomersPerMin is used per player, and also lifts Max to itself.
 Config.Customers = {
-	PerPlayer = 6, -- customers a minute for each player
-	Max = 18, -- customers a minute in the whole server
-	LineCap = 6, -- people in the line (walking or waiting), at least
+	PerPlayer = 6, -- customers a minute for each player (Customer Speed level 0)
+	Max = 24, -- customers a minute in the whole server
+	LineCap = 6, -- people in the line (walking or waiting) (Customer Line level 0)
+	LineMax = 8, -- ... and at most (the sidewalk's places)
 }
 
 ------------------------------------------------------------ checks
@@ -315,16 +348,16 @@ function Config.check(firstTankUpgradeCost: number?): (boolean, string?)
 		if type(u) ~= "table" or type(u.Values) ~= "table" or type(u.Costs) ~= "table" then
 			return false, "BoardUpgrades." .. tostring(id) .. " missing"
 		end
-		if #u.Values < 2 or #u.Costs ~= #u.Values - 1 or u.Values[1] ~= 1 or u.Values[2] ~= u.FirstValue then
-			return false, "BoardUpgrades." .. id .. ": Values must start 1, FirstValue with one Cost per step"
+		if #u.Values < 2 or #u.Costs ~= #u.Values - 1 or u.Values[1] ~= (u.StartValue or 1) or u.Values[2] ~= u.FirstValue then
+			return false, "BoardUpgrades." .. id .. ": Values must start at StartValue (1), FirstValue with one Cost per step"
 		end
 		for i = 2, #u.Values do
 			if not (type(u.Values[i]) == "number" and u.Values[i] > u.Values[i - 1] and u.Values[i] <= u.MaxValue) then
 				return false, "BoardUpgrades." .. id .. ": Values must increase, up to MaxValue"
 			end
 		end
-		if u.Costs[1] ~= Config.UpgradeFirstCost then
-			return false, "BoardUpgrades." .. id .. ": the first step must cost UpgradeFirstCost"
+		if u.Costs[1] ~= (u.FirstCost or Config.UpgradeFirstCost) then
+			return false, "BoardUpgrades." .. id .. ": the first step must cost FirstCost (UpgradeFirstCost)"
 		end
 		for i, c in ipairs(u.Costs) do
 			if not (type(c) == "number" and c == math.floor(c) and c > 0 and c <= Config.UpgradeCostCap and (i == 1 or c > u.Costs[i - 1])) then
@@ -333,8 +366,15 @@ function Config.check(firstTankUpgradeCost: number?): (boolean, string?)
 		end
 	end
 	local cu = Config.Customers
-	if not (cu.PerPlayer > 0 and cu.Max >= cu.PerPlayer and cu.Max <= 60 and cu.LineCap >= 1 and cu.LineCap <= 8) then
-		return false, "Customers: PerPlayer / Max / LineCap out of range"
+	if not (cu.PerPlayer > 0 and cu.Max >= cu.PerPlayer and cu.Max <= 60 and cu.LineCap >= 1 and cu.LineMax >= cu.LineCap and cu.LineMax <= 8) then
+		return false, "Customers: PerPlayer / Max / LineCap / LineMax out of range"
+	end
+	local speed, lineUp = Config.BoardUpgrades.CustomerSpeed, Config.BoardUpgrades.CustomerLine
+	if speed and (speed.Values[1] ~= cu.PerPlayer or speed.Values[#speed.Values] > cu.Max) then
+		return false, "CustomerSpeed: must start at Customers.PerPlayer and stay within Customers.Max"
+	end
+	if lineUp and (lineUp.Values[1] ~= cu.LineCap or lineUp.Values[#lineUp.Values] > cu.LineMax) then
+		return false, "CustomerLine: must start at Customers.LineCap and stay within Customers.LineMax"
 	end
 	if n.Costs[1] ~= Config.UpgradeFirstCost then
 		return false, "NetKg: the first step must cost UpgradeFirstCost"

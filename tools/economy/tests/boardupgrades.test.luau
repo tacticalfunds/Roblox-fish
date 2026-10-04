@@ -289,7 +289,29 @@ check("Faster Reels is a board upgrade: 1x > 1.2x for $10, then 1.35x $100, 1.5x
 	and select(2, BoardUpgrades.nextStep("FasterReels", 1)) == 100 and select(2, BoardUpgrades.nextStep("FasterReels", 2)) == 400
 	and BoardUpgrades.value("FasterReels", 3) == 1.5 and BoardUpgrades.nextStep("FasterReels", 3) == nil
 	and Config.BoardUpgrades.FasterReels.MaxValue == 2)
-check("every board card is a board upgrade except Net Strength (NetKg)", table.concat(BoardUpgrades.ids(), ",") == "RodLuck,MeatPrice,FasterReels")
+check("the board upgrades: the 4-card board's three (Net Strength is NetKg) and the two customer upgrades",
+	table.concat(BoardUpgrades.ids(), ",") == "RodLuck,MeatPrice,FasterReels,CustomerSpeed,CustomerLine")
+check("Customer Speed: 6 > 9 > 12 > 16 > 20 a minute for 25, 60, 150, 350", BoardUpgrades.value("CustomerSpeed", 0) == 6
+	and select(3, BoardUpgrades.nextStep("CustomerSpeed", 0)) == 9 and select(2, BoardUpgrades.nextStep("CustomerSpeed", 0)) == 25
+	and select(2, BoardUpgrades.nextStep("CustomerSpeed", 1)) == 60 and select(2, BoardUpgrades.nextStep("CustomerSpeed", 2)) == 150
+	and select(2, BoardUpgrades.nextStep("CustomerSpeed", 3)) == 350 and BoardUpgrades.value("CustomerSpeed", 4) == 20
+	and BoardUpgrades.nextStep("CustomerSpeed", 4) == nil)
+check("Customer Line: 6 > 7 > 8 places for 40, 120 (the sidewalk has 8)", BoardUpgrades.value("CustomerLine", 0) == 6
+	and select(2, BoardUpgrades.nextStep("CustomerLine", 0)) == 40 and select(2, BoardUpgrades.nextStep("CustomerLine", 1)) == 120
+	and BoardUpgrades.value("CustomerLine", 2) == 8 and BoardUpgrades.nextStep("CustomerLine", 2) == nil)
+do
+	local u = Config.BoardUpgrades.CustomerSpeed
+	u.Values[1] = 5
+	check("config check: Customer Speed must start at Customers.PerPlayer", Config.check() == false)
+	u.Values[1] = 6
+	u.Values[5] = 30
+	check("config check: Customer Speed must stay within Customers.Max", Config.check() == false)
+	u.Values[5] = 20
+	Config.BoardUpgrades.CustomerLine.Values[3] = 9
+	check("config check: Customer Line must stay within the sidewalk's 8 places", Config.check() == false)
+	Config.BoardUpgrades.CustomerLine.Values[3] = 8
+	check("config check passes again", Config.check() == true)
+end
 
 ------------------------------------------------------------ Meat Price
 

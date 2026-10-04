@@ -19,7 +19,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local NAME = "RollbackSoloOwner"
 local BACKUP = "EconomySoloOwnerBackup"
-local LATER = {  }
+local LATER = { "EconomyCustomerBoardBackup" }
 
 local function fail(msg)
 	warn("[" .. NAME .. "] " .. msg .. " - nothing changed.")

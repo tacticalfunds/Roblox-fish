@@ -1230,8 +1230,10 @@ local UPGRADE_REASONS = {
 	upgradesUnavailable = "Your saved upgrades couldn't be read, so board upgrades are off this session",
 	busy = "One moment - still saving",
 }
-local function formatValue(v: number): string
-	return (string.format("%.2f", v):gsub("0+$", ""):gsub("%.$", "")) .. "x"
+-- "1.25x" for a multiplier; "9/min", "7 in line" for an upgrade with a Unit
+local function formatValue(v: number, id: string?): string
+	local unit = id and Config.BoardUpgrades[id] and Config.BoardUpgrades[id].Unit
+	return (string.format("%.2f", v):gsub("0+$", ""):gsub("%.$", "")) .. (if type(unit) == "string" then unit else "x")
 end
 M.formatUpgradeValue = formatValue
 
@@ -1273,7 +1275,7 @@ function M.upgradeAction(player: Player, id: any, canBuy: (() -> (boolean, strin
 			return false, UPGRADE_REASONS.notLoaded
 		end
 		if not BoardUpgrades.nextStep(id, level) then
-			return false, string.format("%s is at the maximum (%s)", name, formatValue(BoardUpgrades.value(id, level)))
+			return false, string.format("%s is at the maximum (%s)", name, formatValue(BoardUpgrades.value(id, level), id))
 		end
 		if canBuy then
 			local allowed, why = canBuy()
@@ -1319,8 +1321,8 @@ function M.upgradeAction(player: Player, id: any, canBuy: (() -> (boolean, strin
 	sync(player)
 	M._publishUpgrades(player)
 	local fromValue, toValue = BoardUpgrades.value(id, before), BoardUpgrades.value(id, newLevel)
-	log(string.format("%s %s %s -> %s for %d", player.Name, id, formatValue(fromValue), formatValue(toValue), cost))
-	return true, string.format("%s %s → %s (-$%d)", name, formatValue(fromValue), formatValue(toValue), cost), toValue
+	log(string.format("%s %s %s -> %s for %d", player.Name, id, formatValue(fromValue, id), formatValue(toValue, id), cost))
+	return true, string.format("%s %s → %s (-$%d)", name, formatValue(fromValue, id), formatValue(toValue, id), cost), toValue
 end
 
 -- The object for a piece is gone without a sale: keep the piece as data.
@@ -1345,15 +1347,31 @@ function M.saturated(): boolean
 	return startOk and ledger.heldCount >= Config.Pipeline.MaxHeld
 end
 
--- Customers (CustomerSystem): a rate for EACH player in the server, up to
--- Config.Customers.Max, never below what the Car Sales upgrades publish.
+-- Customers (CustomerSystem): each present player brings their own saved
+-- Customer Speed (customers a minute) and Customer Line (places); the server's
+-- rate is the sum (up to Config.Customers.Max), its line the largest (up to
+-- Config.Customers.LineMax). A player whose money hasn't loaded counts at the
+-- base. Never below what the Car Sales upgrades publish.
 -- Returns (customers a minute, line size).
+local function savedValue(player: Player, id: string): number?
+	if not (startOk and BoardUpgrades.known(id)) then
+		return nil
+	end
+	local level = money:upgradeLevel(player.UserId, id)
+	return if level then BoardUpgrades.value(id, level) else nil
+end
 function M.customers(): (number, number)
+	local speeds, lines = {}, {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		table.insert(speeds, savedValue(p, "CustomerSpeed") or Config.Customers.PerPlayer)
+		table.insert(lines, savedValue(p, "CustomerLine") or Config.Customers.LineCap)
+	end
 	return Sales.customers(
-		#Players:GetPlayers(),
+		speeds,
 		workspace:GetAttribute("CustomersPerMin"),
 		workspace:GetAttribute("CustomersLineCap"),
-		Config.Customers
+		Config.Customers,
+		lines
 	)
 end
 

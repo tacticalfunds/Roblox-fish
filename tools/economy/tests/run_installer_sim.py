@@ -1657,6 +1657,66 @@ do
 	solo(g, sv)
 	check("solo owner over an edited EconomyService: refused", refused() and snapshot(g) == before)
 end
+-- the customer board (InstallCustomerBoard): Config (paid gates kept), Sales,
+-- EconomyService + two added scripts
+local function cust(g, s) warnings = {} runCust(g, s.Workspace) end
+local function custBack(g, s) warnings = {} runCustBack(g, s.Workspace) end
+local function gatesOn(src)
+	return (src:gsub("Config.NetKgOpen = false\n", "Config.NetKgOpen = true\n", 1):gsub("Config.BoardUpgradesOpen = false\n", "Config.BoardUpgradesOpen = true\n", 1))
+end
+local function fullChain()
+	local g, sv, history, sc = astraLive()
+	suite(g, sv)
+	art(g, sv)
+	queue(g, sv)
+	solo(g, sv)
+	assert(not refused(), "board + art + queue + solo: " .. tostring(warnings[#warnings]))
+	return g, sv, history, sc
+end
+do
+	local g, sv = astraLive()
+	suite(g, sv)
+	local before = snapshot(g)
+	cust(g, sv)
+	check("customer board without the solo owner: refused, nothing changed", refused() and snapshot(g) == before)
+end
+do
+	-- Astra's place: both paid gates turned on in Config by hand
+	local g, sv, history, sc = fullChain()
+	local svc = sv.ServerScriptService.EconomyService
+	svc.Config.Source = gatesOn(svc.Config.Source)
+	local installed = snapshot(g)
+	local commits = history.commits
+	cust(g, sv)
+	check("customer board over a Config with both gates on: one undo step", not refused() and history.commits == commits + 1)
+	check("... the gates stay on and the customer upgrades are in", svc.Config.Source == gatesOn(CUST.Config)
+		and svc.Config.Source:find("Config.NetKgOpen = true", 1, true) ~= nil and svc.Config.Source:find("CustomerSpeed = {", 1, true) ~= nil)
+	check("... Sales and EconomyService updated; the two scripts added, tagged", svc.Sales.Source == CUST.Sales
+		and svc.Source == CUST.EconomyService and sv.ServerScriptService.CustomerBoardServer.Source == CUST.Server
+		and sv.StarterPlayer.StarterPlayerScripts.CustomerBoardClient.Source == CUST.Client
+		and sv.ServerScriptService.CustomerBoardServer:GetAttribute("EconomyOwned") == true)
+	check("... CustomerSystem (the queue fix) and the 4-card board's scripts untouched", sc.CustomerSystem.Source == QUEUE
+		and sv.ServerScriptService.UpgradeBoardServer.Source == ART.Server)
+	local after = snapshot(g)
+	soloBack(g, sv)
+	check("the solo owner's rollback is refused while the customer board is in", refused() and snapshot(g) == after)
+	custBack(g, sv)
+	check("customer board rollback: exactly as before (gates still on, solo-owner EconomyService, scripts gone)",
+		not refused() and snapshot(g) == installed and svc.Config.Source == gatesOn(SUITE.Config) and svc.Source == SOLO)
+end
+do
+	-- the release Config (gates off) works too; a Config edited otherwise is refused
+	local g, sv = fullChain()
+	local svc = sv.ServerScriptService.EconomyService
+	cust(g, sv)
+	check("customer board over the release Config (gates off): installed, gates off", not refused() and svc.Config.Source == CUST.Config)
+	custBack(g, sv)
+	svc.Config.Source = svc.Config.Source:gsub("Config.RodShopOpen = false", "Config.RodShopOpen = true", 1)
+	local before = snapshot(g)
+	cust(g, sv)
+	check("customer board over a Config edited some other way: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
 do
 	-- the board scripts without their EconomyOwned tag: not ours
 	local g, sv = astraLive()
@@ -1881,7 +1941,16 @@ def main() -> int:
     tables += "SUITE.UpgradeBoardServer = ART.OldServer\nSUITE.UpgradeBoardClient = ART.OldClient\n"
     tables += f"local QUEUE = {lua_string((ROOT / 'studio' / 'queue' / 'CustomerSystem.lua').read_text())}\n"
     tables += f"SUITE.EconomyService = {lua_string(git_show('src/server/EconomyService.luau', 'fffdaa3'))}\n"
-    tables += f"local SOLO = {lua_string((ROOT / 'src' / 'server' / 'EconomyService.luau').read_text())}\n"
+    tables += f"SUITE.Config = {lua_string(git_show('src/core/Config.luau', 'fffdaa3'))}\n"
+    tables += f"SUITE.Sales = {lua_string(git_show('src/core/Sales.luau', 'fffdaa3'))}\n"
+    tables += f"local SOLO = {lua_string(git_show('src/server/EconomyService.luau', '15acef6'))}\n"
+    tables += "local CUST = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in (
+        ("Config", (ROOT / "src/core/Config.luau").read_text()),
+        ("Sales", (ROOT / "src/core/Sales.luau").read_text()),
+        ("EconomyService", (ROOT / "src/server/EconomyService.luau").read_text()),
+        ("Server", (ROOT / "src/server/CustomerBoardServer.server.luau").read_text()),
+        ("Client", (ROOT / "src/client/CustomerBoardClient.client.luau").read_text()),
+    )) + "}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1982,6 +2051,8 @@ def main() -> int:
         + wrap("runQueueBack", (ROOT / "RollbackCustomerQueue.lua").read_text())
         + wrap("runSolo", (ROOT / "InstallSoloOwner.lua").read_text())
         + wrap("runSoloBack", (ROOT / "RollbackSoloOwner.lua").read_text())
+        + wrap("runCust", (ROOT / "InstallCustomerBoard.lua").read_text())
+        + wrap("runCustBack", (ROOT / "RollbackCustomerBoard.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

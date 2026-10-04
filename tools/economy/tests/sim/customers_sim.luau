@@ -84,7 +84,7 @@ P[4] = join(4, "D", Vector3.new(15, 10, 0))
 P[5] = join(5, "E", Vector3.new(20, 10, 0))
 advance(20)
 local r5 = measure(log, 20)
-check(("5 players: capped at ~18 (got %.1f)"):format(r5), near(r5, 18))
+check(("5 players: capped at ~24 (got %.1f)"):format(r5), near(r5, 24))
 for i = 5, 2, -1 do
 	leave(P[i])
 end
