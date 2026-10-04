@@ -38,6 +38,11 @@ end
 check("the service made Economy.Earned", root:FindFirstChild("Earned") ~= nil)
 local frame, amount, detail = popup(owner)
 check("the popup exists, hidden", frame ~= nil and frame.Visible == false)
+check("the big popup: centred in the upper middle, sized to the screen within limits", frame.AnchorPoint.X == 0.5
+	and frame.AnchorPoint.Y == 0.5 and frame.Position.X.Scale == 0.5 and frame.Position.Y.Scale == 0.3
+	and frame:FindFirstChildOfClass("UIAspectRatioConstraint") ~= nil and frame:FindFirstChildOfClass("UISizeConstraint") ~= nil)
+check("big outlined FredokaOne amount (thick black stroke)", amount.Font == Enum.Font.FredokaOne
+	and amount:FindFirstChildOfClass("UIStroke").Thickness >= 4)
 
 ------------------------------------------------------------ one sale
 
@@ -48,6 +53,8 @@ local paid, amt = sell(ids[1], "Customer")
 check("owner paid", paid == true and amt > 0 and balance(owner) == before + amt)
 check("owner sees +$ exactly the amount", frame.Visible and amount.Text == "+$" .. amt)
 check("detail names the fish and where it sold", detail.Text == "Salmon sold to a customer")
+check("lime amount, SOLD! caption and sparkles for money that arrived", rgb(amount.TextColor3, 120, 255, 50)
+	and frame.Sold.Visible == true and frame.Sold.Text == "SOLD!" and frame.Sparkle1.Visible == true)
 local carrierFrame = popup(carrier)
 check("the carrier sees nothing", carrierFrame.Visible == false)
 
@@ -68,6 +75,36 @@ check("quick sales add up into one popup", amount.Text == "+$" .. total)
 check("and count the pieces", detail.Text == #ids .. " pieces sold")
 advance(3)
 check("hides after the last sale", frame.Visible == false)
+check("... and is reset for the next one (position, fully opaque)", frame.Position.Y.Scale == 0.3
+	and frame.Amount.TextTransparency == 0 and frame.Amount:FindFirstChildOfClass("UIStroke").Transparency == 0)
+
+-- a sale while the popup fades: the fade is cancelled, it starts over cleanly
+tweenHold.on = true
+local more = issue(owner, "Salmon", 10, { Source = "Net" })
+local _, m1 = sell(more[1], "Customer")
+finishHeldTweens() -- the bounce in
+advance(2.6) -- hold over: the float-up / fade starts (held mid-way)
+local fading = {}
+for _, tw in ipairs(tweensPlayed) do
+	if tw.held and not tw.done and not tw.cancelled then
+		table.insert(fading, tw)
+	end
+end
+frame.Amount.TextTransparency = 0.5 -- as if mid-fade
+frame.Position = UDim2.fromScale(0.5, 0.27)
+local _, m2 = sell(more[2], "Customer")
+local cancelled = #fading > 0
+for _, tw in ipairs(fading) do
+	cancelled = cancelled and tw.cancelled == true
+end
+check("a sale mid-fade: every fade tween cancelled, back in place and opaque, the total adds up", cancelled
+	and frame.Position.Y.Scale == 0.3 and frame.Amount.TextTransparency == 0 and frame.Visible
+	and amount.Text == "+$" .. (m1 + m2))
+finishHeldTweens()
+tweenHold.on = false
+advance(3.2)
+finishHeldTweens()
+check("then it holds, floats up, fades and hides once", frame.Visible == false and frame.Position.Y.Scale == 0.3)
 
 ------------------------------------------------------------ variants tint it; a fresh run starts from 0
 
@@ -88,7 +125,7 @@ advance(1.5)
 check("then hides", frame.Visible == false)
 local plain = issue(owner, "Cod", 1, { Source = "Net" })
 sell(plain[1], "Customer")
-check("plain meat: green again", rgb(amount.TextColor3, 90, 235, 90))
+check("plain meat: lime again", rgb(amount.TextColor3, 120, 255, 50))
 advance(3)
 
 ------------------------------------------------------------ nobody / absent owner / switched off
@@ -118,7 +155,7 @@ asServer(function()
 	root.Earned:FireClient(owner, 7, { "x" }, 42, "Platinum")
 end)
 check("junk labels fall back safely", frame.Visible and amount.Text == "+$7" and detail.Text == "Meat sold")
-check("unknown variant isn't tinted", rgb(amount.TextColor3, 90, 235, 90))
+check("unknown variant isn't tinted", rgb(amount.TextColor3, 120, 255, 50))
 advance(3)
 
 ------------------------------------------------------------ spendable and pending never add up together
@@ -154,6 +191,7 @@ local wIds = issue(waiting, "Salmon", 10, { Source = "Net" })
 local wPaid, wValue = sell(wIds[1], "Customer")
 check("the sale settles, queued for the owner", wPaid == true and wValue > 0)
 check("popup: pending, not spendable", wFrame.Visible and wAmount.Text == "+$" .. wValue .. " pending" and wDetail.Text == "Added when your Money loads")
+check("pending: no SOLD! caption or sparkles", wFrame.Sold.Visible == false and wFrame.Sparkle1.Visible == false)
 check("pending is grey, not green", rgb(wAmount.TextColor3, 160, 175, 190))
 local _, wValue2 = sell(wIds[2], "Truck")
 check("pending sales add up", wAmount.Text == "+$" .. (wValue + wValue2) .. " pending")
@@ -167,7 +205,7 @@ dsData[KEY .. "3"].lock = nil
 advance(35)
 check("Money loads: the saved 500 + the queued sales, once", balance(waiting) == 500 + wValue + wValue2 + wValue3)
 local _, wValue4 = sell(issue(waiting, "Salmon", 10, { Source = "Net" })[1], "Customer")
-check("after loading: spendable popup, green", wAmount.Text == "+$" .. wValue4 and rgb(wAmount.TextColor3, 90, 235, 90) and wDetail.Text == "Salmon sold to a customer")
+check("after loading: spendable popup, green", wAmount.Text == "+$" .. wValue4 and rgb(wAmount.TextColor3, 120, 255, 50) and wDetail.Text == "Salmon sold to a customer")
 check("and it really is in the balance", balance(waiting) == 500 + wValue + wValue2 + wValue3 + wValue4)
 advance(3)
 

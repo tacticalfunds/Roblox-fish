@@ -1,9 +1,12 @@
 -- EconomyClient (LocalScript in StarterPlayerScripts).
 --   * toast for EconomyService notices (money loading, purchase results)
---   * "+$" popup when a piece of YOUR meat sells (Economy.Earned), wherever
---     it sold and whoever carried it; quick sales add up into one popup. It
---     shows what really reached your Money: grey "pending" while your Money
---     is still loading, and the real amount at the balance limit
+--   * a big "+$" popup when a piece of YOUR meat sells (Economy.Earned),
+--     wherever it sold and whoever carried it; quick sales add up into one
+--     popup. It shows what really reached your Money: grey "pending" while
+--     your Money is still loading, and the real amount at the balance limit.
+--     Centred in the upper middle of the screen (above the crosshair, below
+--     the notice toast), sized to the screen within limits; it bounces in,
+--     holds, then floats up and fades. Display only.
 --   * the buy prompt for the local player's OWN rod catches: a ProximityPrompt
 --     (Style = Custom) on the rod stand, with a small world-anchored panel
 --     ([E] + fish name + "Buy"). Keyboard E, the gamepad button and tapping
@@ -69,43 +72,93 @@ end
 
 ------------------------------------------------------------ earnings popup
 
-local GREEN = Color3.fromRGB(90, 235, 90)
+local GREEN = Color3.fromRGB(120, 255, 50) -- lime
 local PENDING = Color3.fromRGB(160, 175, 190) -- not spendable yet
 local VARIANT_COLORS = { Gold = Color3.fromRGB(255, 205, 40), Silver = Color3.fromRGB(205, 220, 235) }
 local VARIANT_RANK = { Silver = 1, Gold = 2 }
 local ROUTES = { Customer = "to a customer", Truck = "to a truck" }
 local EARN_HOLD = 2.5 -- seconds the popup stays after the last sale
+local EARN_POS = UDim2.fromScale(0.5, 0.3) -- upper middle: above the crosshair, below the notice toast
+local EARN_RISE = UDim2.fromScale(0, -0.06) -- how far it floats while fading
+local EARN_POP = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local EARN_FADE = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local OUTLINE_DARK = Color3.fromRGB(10, 10, 12)
 
 local earnFrame = Instance.new("Frame")
 earnFrame.Name = "Earnings"
-earnFrame.AnchorPoint = Vector2.new(1, 0.5)
-earnFrame.Position = UDim2.new(1, -24, 0.6, 0)
-earnFrame.Size = UDim2.fromOffset(240, 78)
+earnFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+earnFrame.Position = EARN_POS
+earnFrame.Size = UDim2.fromScale(0.42, 0.16) -- of the screen, kept in shape and within limits:
 earnFrame.BackgroundTransparency = 1
 earnFrame.Visible = false
 earnFrame.Parent = gui
+local earnAspect = Instance.new("UIAspectRatioConstraint")
+earnAspect.AspectRatio = 3.4
+earnAspect.Parent = earnFrame
+local earnLimits = Instance.new("UISizeConstraint")
+earnLimits.MinSize = Vector2.new(220, 65) -- still readable on a phone
+earnLimits.MaxSize = Vector2.new(500, 147) -- never a wall of text on a big screen
+earnLimits.Parent = earnFrame
 local earnScale = Instance.new("UIScale")
 earnScale.Parent = earnFrame
 
-local function earnText(name: string, y: number, h: number): TextLabel
+local earnFaders = {} -- every label / stroke that fades out
+local function earnText(name: string, pos: UDim2, size: UDim2, stroke: number): TextLabel
 	local t = Instance.new("TextLabel")
 	t.Name = name
 	t.BackgroundTransparency = 1
-	t.Position = UDim2.fromOffset(0, y)
-	t.Size = UDim2.new(1, 0, 0, h)
+	t.AnchorPoint = Vector2.new(0.5, 0)
+	t.Position = pos
+	t.Size = size
 	t.Font = Enum.Font.FredokaOne
 	t.TextScaled = true
-	t.TextXAlignment = Enum.TextXAlignment.Right
+	t.TextXAlignment = Enum.TextXAlignment.Center
 	t.TextColor3 = Color3.new(1, 1, 1)
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(10, 10, 12)
-	stroke.Thickness = 2.5
-	stroke.Parent = t
+	local s = Instance.new("UIStroke")
+	s.Color = OUTLINE_DARK
+	s.Thickness = stroke
+	s.LineJoinMode = Enum.LineJoinMode.Round
+	s.Parent = t
 	t.Parent = earnFrame
+	table.insert(earnFaders, { label = t, stroke = s })
 	return t
 end
-local earnAmount = earnText("Amount", 0, 50)
-local earnDetail = earnText("Detail", 50, 26)
+local earnSold = earnText("Sold", UDim2.fromScale(0.5, 0), UDim2.fromScale(0.34, 0.2), 2.5)
+earnSold.Text = "SOLD!"
+earnSold.Rotation = -6
+local earnAmount = earnText("Amount", UDim2.fromScale(0.5, 0.16), UDim2.fromScale(1, 0.6), 4)
+local earnDetail = earnText("Detail", UDim2.fromScale(0.5, 0.78), UDim2.fromScale(0.9, 0.22), 2.5)
+-- a few UI sparkles around the amount (display only)
+local earnSparkles = {}
+for i, spot in ipairs({ { 0.08, 0.2 }, { 0.92, 0.25 }, { 0.14, 0.72 }, { 0.86, 0.7 } }) do
+	local sp = earnText("Sparkle" .. i, UDim2.fromScale(spot[1], spot[2]), UDim2.fromScale(0.09, 0.26), 1.5)
+	sp.AnchorPoint = Vector2.new(0.5, 0.5)
+	sp.Text = "✦"
+	sp.TextColor3 = Color3.fromRGB(255, 245, 160)
+	earnSparkles[i] = sp
+end
+
+-- the running tweens of the popup (cancelled and reset on every new sale)
+local earnTweens = {}
+local function earnPlay(inst: Instance, info: TweenInfo, goal, onDone: ((Enum.PlaybackState) -> ())?)
+	local tw = TweenService:Create(inst, info, goal)
+	table.insert(earnTweens, tw)
+	if onDone then
+		tw.Completed:Connect(onDone) -- before Play
+	end
+	tw:Play()
+end
+local function earnReset()
+	for _, tw in ipairs(earnTweens) do
+		tw:Cancel()
+	end
+	earnTweens = {}
+	earnFrame.Position = EARN_POS
+	for _, f in ipairs(earnFaders) do
+		f.label.TextTransparency = 0
+		f.stroke.Transparency = 0
+	end
+end
 
 local earnRun = { total = 0, count = 0, rank = 0, token = 0, pending = false, short = false }
 
@@ -151,15 +204,34 @@ local function onEarned(added: any, route: any, fishName: any, variant: any, kin
 	else
 		earnDetail.Text = run.count .. " pieces sold"
 	end
+	-- SOLD! and the sparkles only for money that really arrived
+	local celebrate = not pending and run.total > 0
+	earnSold.Visible = celebrate
+	for _, sp in ipairs(earnSparkles) do
+		sp.Visible = celebrate
+	end
+	-- bounce in (a sale during the hold or the fade starts it over cleanly)
+	earnReset()
 	earnFrame.Visible = true
-	earnScale.Scale = 1.25
-	TweenService:Create(earnScale, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	earnScale.Scale = 0.55
+	earnPlay(earnScale, EARN_POP, { Scale = 1 })
 	run.token += 1
 	local mine = run.token
 	task.delay(EARN_HOLD, function()
-		if mine == run.token then
-			earnFrame.Visible = false
+		if mine ~= run.token then
+			return
 		end
+		-- float up and fade out
+		for _, f in ipairs(earnFaders) do
+			earnPlay(f.label, EARN_FADE, { TextTransparency = 1 })
+			earnPlay(f.stroke, EARN_FADE, { Transparency = 1 })
+		end
+		earnPlay(earnFrame, EARN_FADE, { Position = EARN_POS + EARN_RISE }, function(state)
+			if mine == run.token and state == Enum.PlaybackState.Completed then
+				earnFrame.Visible = false
+				earnReset()
+			end
+		end)
 	end)
 end
 
