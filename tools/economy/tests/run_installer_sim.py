@@ -1717,6 +1717,51 @@ do
 	check("customer board over a Config edited some other way: refused, names the line", refused() and snapshot(g) == before
 		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
 end
+-- the sell stall (InstallSellStall): TruckSystem only, on everything installed so far
+local function stall(g, s) warnings = {} runStall(g, s.Workspace) end
+local function stallBack(g, s) warnings = {} runStallBack(g, s.Workspace) end
+do
+	local g, sv, history, sc = fullChain()
+	cust(g, sv)
+	assert(not refused(), "customer board: " .. tostring(warnings[#warnings]))
+	check("(the place's TruckSystem is the MeatGlow version)", sc.TruckSystem.Source == GLOW.Truck)
+	local backups = {}
+	for _, bk in ipairs(sv.ServerStorage:GetChildren()) do
+		backups[bk.Name] = subtree(bk)
+	end
+	local installed = snapshot(g)
+	local commits = history.commits
+	stall(g, sv)
+	check("sell stall on everything installed: one undo step, TruckSystem = the stall version", not refused()
+		and history.commits == commits + 1 and sc.TruckSystem.Source == STALL)
+	check("sell stall: backup EconomySellStallBackup (1 entry); every earlier backup untouched", (function()
+		if #sv.ServerStorage.EconomySellStallBackup:GetChildren() ~= 1 then
+			return false
+		end
+		for name, tree in pairs(backups) do
+			if not (sv.ServerStorage:FindFirstChild(name) and subtree(sv.ServerStorage[name]) == tree) then
+				return false
+			end
+		end
+		return true
+	end)())
+	check("sell stall: the customer board, queue fix and EconomyService untouched", sc.CustomerSystem.Source == QUEUE
+		and sv.ServerScriptService.EconomyService.Source == CUST.EconomyService
+		and sv.ServerScriptService.CustomerBoardServer.Source == CUST.Server)
+	local after = snapshot(g)
+	stall(g, sv)
+	check("sell stall twice: refused", refused() and snapshot(g) == after)
+	meatGlowBack(g, sv)
+	check("MeatGlow's own rollback refuses while the stall is in (its TruckSystem changed)", refused() and snapshot(g) == after)
+	stallBack(g, sv)
+	check("sell stall rollback: exactly the MeatGlow TruckSystem again", not refused() and snapshot(g) == installed
+		and sc.TruckSystem.Source == GLOW.Truck)
+	sc.TruckSystem.Source = GLOW.Truck:gsub("local DELIVER_RANGE = 9", "local DELIVER_RANGE = 12", 1)
+	local before = snapshot(g)
+	stall(g, sv)
+	check("sell stall over a different TruckSystem: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
 do
 	-- the board scripts without their EconomyOwned tag: not ours
 	local g, sv = astraLive()
@@ -1944,6 +1989,7 @@ def main() -> int:
     tables += f"SUITE.Config = {lua_string(git_show('src/core/Config.luau', 'fffdaa3'))}\n"
     tables += f"SUITE.Sales = {lua_string(git_show('src/core/Sales.luau', 'fffdaa3'))}\n"
     tables += f"local SOLO = {lua_string(git_show('src/server/EconomyService.luau', '15acef6'))}\n"
+    tables += f"local STALL = {lua_string((ROOT / 'studio' / 'stall' / 'TruckSystem.lua').read_text())}\n"
     tables += "local CUST = {\n" + "".join(f"\t{k} = {lua_string(v)},\n" for k, v in (
         ("Config", (ROOT / "src/core/Config.luau").read_text()),
         ("Sales", (ROOT / "src/core/Sales.luau").read_text()),
@@ -2053,6 +2099,8 @@ def main() -> int:
         + wrap("runSoloBack", (ROOT / "RollbackSoloOwner.lua").read_text())
         + wrap("runCust", (ROOT / "InstallCustomerBoard.lua").read_text())
         + wrap("runCustBack", (ROOT / "RollbackCustomerBoard.lua").read_text())
+        + wrap("runStall", (ROOT / "InstallSellStall.lua").read_text())
+        + wrap("runStallBack", (ROOT / "RollbackSellStall.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

@@ -949,6 +949,48 @@ Requires: InstallSoloOwner (EconomySoloOwnerBackup).
     return keys
 
 
+def sell_stall() -> list[str]:
+    """The red-and-white Sell stall sells carried meat (TruckSystem only)."""
+    import make_stall
+
+    make_stall.main()
+    base = make_stall.BASE.read_text()
+    assert len(base) == 15071  # the place inventory's SourceLength for the live TruckSystem
+    keys = write_pair_v2(
+        "InstallSellStall.lua",
+        "RollbackSellStall.lua",
+        """
+Sell stall: standing in the red ring of the red-and-white Sell stall sells
+the meat you carry.
+  * One piece per transfer tick, each the SAME ledger sale as a truck drop
+    (Economy.settle(pieceId, "Stall")): paid once to the piece's OWNER (the
+    Earned popup shows what really arrived), never the carrier, never by
+    count, never twice. An untracked piece sells for nothing, as at a truck.
+  * The ring is found by shape, never by name: exactly one Workspace child
+    Model with direct BasePart children Circle and Touch and a descendant
+    label saying "Sell" (the Sell NPC, Workspace.Sell, isn't it). Not
+    exactly one -> the stall doesn't sell (a warning); trucks unchanged.
+  * "In the ring" is checked on the server (horizontal distance to the
+    Circle's centre within its radius + 1.5, vertically within 8), alive
+    players only. The carried meat visuals are cleared piece by piece.
+  * Without a running EconomyService the stall sells nothing.
+Changes only TruckSystem (exactly the MeatGlow version). Trucks, the Blender
+Bot, customers and every other script are unchanged.
+Requires: InstallMeatGlow (EconomyMeatGlowBackup).
+""",
+        "EconomySellStallBackup",
+        [["EconomyMeatGlowBackup"]],
+        ["EconomySellStallBackup"],
+        [],
+        [({"key": "TruckSystem", "where": "script:TruckSystem", "class": "Script"}, [("meatglow", base, make_stall.OUT.read_text())])],
+        [],
+        [],
+        ROOT,
+    )
+    assert keys == ["TruckSystem"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -966,6 +1008,7 @@ def main() -> None:
     customer_queue()
     solo_owner()
     customer_board()
+    sell_stall()
 
 
 if __name__ == "__main__":

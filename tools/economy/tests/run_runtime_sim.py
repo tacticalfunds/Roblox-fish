@@ -90,6 +90,7 @@ def sources() -> dict:
     out["MG_Truck"] = (glow / "TruckSystem.patched.from-sales.lua").read_text()
     out["Board_Customer"] = (ROOT / "studio" / "board" / "CustomerSystem.lua").read_text()
     out["Queue_Customer"] = (ROOT / "studio" / "queue" / "CustomerSystem.lua").read_text()
+    out["Stall_Truck"] = (ROOT / "studio" / "stall" / "TruckSystem.lua").read_text()
     out["Cust_Server"] = (ROOT / "src" / "server" / "CustomerBoardServer.server.luau").read_text()
     out["Cust_Client"] = (ROOT / "src" / "client" / "CustomerBoardClient.client.luau").read_text()
     return out
