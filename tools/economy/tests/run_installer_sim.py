@@ -1597,6 +1597,35 @@ do
 	art(g, sv)
 	check("board art over a different EconomyService: refused", refused() and snapshot(g) == before)
 end
+-- the customer queue fix (InstallCustomerQueue): CustomerSystem only
+local function queue(g, s) warnings = {} runQueue(g, s.Workspace) end
+local function queueBack(g, s) warnings = {} runQueueBack(g, s.Workspace) end
+do
+	local g, sv, history, sc = astraLive()
+	local before = snapshot(g)
+	queue(g, sv)
+	check("customer queue without the board release: refused, nothing changed", refused() and snapshot(g) == before)
+	suite(g, sv)
+	assert(not refused(), "board release: " .. tostring(warnings[#warnings]))
+	local installed = snapshot(g)
+	local commits = history.commits
+	queue(g, sv)
+	check("customer queue on the installed board: one undo step, CustomerSystem = the queue fix", not refused()
+		and history.commits == commits + 1 and sc.CustomerSystem.Source == QUEUE)
+	check("customer queue: backup EconomyCustomerQueueBackup with 1 entry; the board's own backup untouched",
+		#sv.ServerStorage.EconomyCustomerQueueBackup:GetChildren() == 1 and sv.ServerStorage:FindFirstChild("EconomyBoardUpgradesBackup") ~= nil)
+	local after = snapshot(g)
+	queue(g, sv)
+	check("customer queue twice: refused", refused() and snapshot(g) == after)
+	queueBack(g, sv)
+	check("customer queue rollback: exactly the board release's CustomerSystem again", not refused() and snapshot(g) == installed
+		and sc.CustomerSystem.Source == SUITE.Customer)
+	sc.CustomerSystem.Source = SUITE.Customer:gsub("WAIT_FOR_MEAT = 18", "WAIT_FOR_MEAT = 30", 1)
+	before = snapshot(g)
+	queue(g, sv)
+	check("customer queue over a different CustomerSystem: refused, names the line", refused() and snapshot(g) == before
+		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
+end
 do
 	-- the board scripts without their EconomyOwned tag: not ours
 	local g, sv = astraLive()
@@ -1820,6 +1849,7 @@ def main() -> int:
         ("Customer", ROOT / "studio" / "board" / "CustomerSystem.lua"),
     )) + "}\n"
     tables += "SUITE.UpgradeBoardServer = ART.OldServer\nSUITE.UpgradeBoardClient = ART.OldClient\n"
+    tables += f"local QUEUE = {lua_string((ROOT / 'studio' / 'queue' / 'CustomerSystem.lua').read_text())}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1916,6 +1946,8 @@ def main() -> int:
         + wrap("runSuiteBack", (ROOT / "RollbackBoardUpgrades.lua").read_text())
         + wrap("runArt", (ROOT / "InstallBoardArt.lua").read_text())
         + wrap("runArtBack", (ROOT / "RollbackBoardArt.lua").read_text())
+        + wrap("runQueue", (ROOT / "InstallCustomerQueue.lua").read_text())
+        + wrap("runQueueBack", (ROOT / "RollbackCustomerQueue.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:

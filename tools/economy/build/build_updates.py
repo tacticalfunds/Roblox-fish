@@ -651,7 +651,7 @@ def board_upgrades() -> list[str]:
         (
             # the MeatGlow CustomerSystem (inventory SourceLength 9985 matches it exactly)
             {"key": "CustomerSystem", "where": "script:CustomerSystem", "class": "Script"},
-            [("meatglow", make_customers.BASE.read_text(), make_customers.OUT.read_text())],
+            [("meatglow", make_customers.BASE.read_text(), git_show(BOARD_RELEASE, "tools/economy/studio/board/CustomerSystem.lua"))],
         ),
     ]
     assert len(make_customers.BASE.read_text()) == 9985
@@ -800,6 +800,42 @@ Requires: InstallBoardUpgrades (EconomyBoardUpgradesBackup).
     return keys
 
 
+def customer_queue() -> list[str]:
+    """The customer queue fix (CustomerSystem only), on the installed board
+    release's CustomerSystem."""
+    import make_queue
+
+    make_queue.main()
+    keys = write_pair_v2(
+        "InstallCustomerQueue.lua",
+        "RollbackCustomerQueue.lua",
+        """
+Customer queue fix: customers stop jamming at the sale table.
+  * "At the counter" is a horizontal distance (<= 3 studs) to the slot plus a
+    vertical sanity bound (<= 6). The slots are ground points; a customer's
+    root part stands ~3 studs above, so the old 3-D check (> 3) could stay
+    false forever at the counter (live: 3.126) and block everyone behind.
+  * The front customer walks to the counter again once after 6 s and leaves
+    after 20 s without arriving, so the next one moves up.
+  * A customer that is removed, dies or whose script errors leaves the line.
+Changes only CustomerSystem (exactly the upgrade board release's version).
+Selling, prices and who is paid are unchanged.
+Requires: InstallBoardUpgrades (EconomyBoardUpgradesBackup).
+""",
+        "EconomyCustomerQueueBackup",
+        [["EconomyBoardUpgradesBackup"]],
+        ["EconomyCustomerQueueBackup"],
+        [],
+        [({"key": "CustomerSystem", "where": "script:CustomerSystem", "class": "Script"},
+          [("board", make_queue.base(), make_queue.OUT.read_text())])],
+        [],
+        [],
+        ROOT,
+    )
+    assert keys == ["CustomerSystem"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -814,6 +850,7 @@ def main() -> None:
     # later milestones read their sources from git at RODS_RELEASE.
     board_upgrades()
     board_art()
+    customer_queue()
 
 
 if __name__ == "__main__":
