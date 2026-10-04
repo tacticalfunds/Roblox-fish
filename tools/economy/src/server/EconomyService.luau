@@ -896,11 +896,32 @@ end
 -- for the harpoon); `meta` is the catch payload ({ OwnerId, Variant, Source }).
 -- The owner's Meat Price multiplies the whole fish's value once, here; the
 -- pieces' values are fixed from now on (each still pays once).
+-- An AMBIENT catch (the harpoon shoots on its own) with no buyer and no
+-- bound gun owner belongs to nobody - except in a SOLO server: with exactly
+-- one player present, the scene is running for them, so it is theirs, fixed
+-- now, at catch time. Never over an explicit owner (the fish's buyer, the
+-- gun's OwnerUserId), never with two or more players (nobody is picked),
+-- never for meat caught earlier (pieces keep the owner they were issued with).
+local SOLO_AMBIENT_OWNER = true
+local function soloAmbientOwner(player: Player?, meta: any): number?
+	if not SOLO_AMBIENT_OWNER or player ~= nil or type(meta) ~= "table" or meta.Source ~= "Harpoon" then
+		return nil
+	end
+	if PieceTags.ownerFor(nil, meta) ~= nil then
+		return nil -- an explicit owner stays the owner
+	end
+	local present = Players:GetPlayers()
+	if #present ~= 1 then
+		return nil
+	end
+	return Ledger.validOwner(present[1].UserId, RunService:IsStudio())
+end
+
 function M.issueFish(player: Player?, fishName: any, tier: any, meta: any): { string }
 	if not startOk then
 		return {}
 	end
-	local playerId = if player then player.UserId else nil
+	local playerId = if player then player.UserId else soloAmbientOwner(player, meta)
 	return Sales.issue(ledger, playerId, fishName, tier, meta, meatMultiplier)
 end
 

@@ -626,7 +626,7 @@ def board_upgrades() -> list[str]:
     changes = [
         (
             {"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
-            [("grinder", live("EconomyService.grinder.lua"), cur("src/server/EconomyService.luau"))],
+            [("grinder", live("EconomyService.grinder.lua"), git_show(BOARD_RELEASE, "tools/economy/src/server/EconomyService.luau"))],
         ),
         (mod("Config"), [("rods", git_show(RODS_RELEASE, core("Config")), cur("src/core/Config.luau"))]),
         (mod("MoneyStore"), [("rods", git_show(RODS_RELEASE, core("MoneyStore")), cur("src/core/MoneyStore.luau"))]),
@@ -734,7 +734,7 @@ Requires: rods (EconomyRodsBackup) with every source exactly as installed.
         "EconomyBoardUpgradesBackup",
         [["EconomyRodsBackup"]],
         ["EconomyBoardUpgradesBackup", "EconomyNetKgBackup", "EconomyUpgradeBoardBackup", "EconomyRodLuckBackup", "EconomyMeatPriceBackup", "EconomyFasterReelsBackup"],
-        ["EconomyBoardArtBackup"],
+        ["EconomyBoardArtBackup", "EconomyCustomerQueueBackup", "EconomySoloOwnerBackup"],
         changes,
         unchanged,
         adds,
@@ -756,7 +756,7 @@ def board_art() -> list[str]:
     assert 'only(workspace, "Upgrade board", "Instance")' in cur(server) and '"Board", "Model"' not in cur(server)
     assert 'GUI_NAME = "UpgradeBoardGui"' in cur(client) and "Instance.new" not in cur(client) and "bord3" not in cur(client)
     svc = git_show(BOARD_RELEASE, "tools/economy/src/server/EconomyService.luau")
-    assert svc == (ROOT / "src/server/EconomyService.luau").read_text(), "EconomyService changed since the installed board release"
+    assert svc == git_show(BOARD_ART_RELEASE, "tools/economy/src/server/EconomyService.luau"), "EconomyService changed within the art release"
     keys = write_pair_v2(
         "InstallBoardArt.lua",
         "RollbackBoardArt.lua",
@@ -836,6 +836,42 @@ Requires: InstallBoardUpgrades (EconomyBoardUpgradesBackup).
     return keys
 
 
+def solo_owner() -> list[str]:
+    """Ambient (harpoon) catches with no owner belong to the only player in a
+    solo server, at catch time (EconomyService.issueFish only)."""
+    old = git_show(BOARD_RELEASE, "tools/economy/src/server/EconomyService.luau")
+    new = (ROOT / "src/server/EconomyService.luau").read_text()
+    assert "local SOLO_AMBIENT_OWNER = true" in new
+    keys = write_pair_v2(
+        "InstallSoloOwner.lua",
+        "RollbackSoloOwner.lua",
+        """
+Solo ambient owner: in a server with exactly ONE player, a harpoon catch
+that has no owner (no buyer on the fish, no OwnerUserId on the gun) is that
+player's, fixed when it enters the grinder - so its meat pays them.
+  * Explicit owners always stay: the fish's buyer, the gun's OwnerUserId.
+  * Net catches stay the pad player's.
+  * Two or more players: unchanged, nobody is picked (the meat pays nobody).
+  * Never retroactive: meat caught earlier keeps the owner it was issued
+    with (an unowned piece stays unowned).
+Changes only EconomyService (exactly the upgrade board release's version,
+tagged EconomyOwned): issueFish. Config is not touched.
+Requires: InstallBoardUpgrades (EconomyBoardUpgradesBackup).
+""",
+        "EconomySoloOwnerBackup",
+        [["EconomyBoardUpgradesBackup"]],
+        ["EconomySoloOwnerBackup"],
+        [],
+        [({"key": "EconomyService", "where": "ServerScriptService/EconomyService", "class": "ModuleScript", "tag": "EconomyOwned"},
+          [("board", old, new)])],
+        [],
+        [],
+        ROOT,
+    )
+    assert keys == ["EconomyService"], keys
+    return keys
+
+
 def main() -> None:
     # InstallRodOffers.lua / UpdateRodPrompt.lua are FROZEN at the a826d73
     # release Astra installed; they are not rebuilt here.
@@ -851,6 +887,7 @@ def main() -> None:
     board_upgrades()
     board_art()
     customer_queue()
+    solo_owner()
 
 
 if __name__ == "__main__":

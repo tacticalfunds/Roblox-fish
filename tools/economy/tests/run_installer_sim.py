@@ -1626,6 +1626,37 @@ do
 	check("customer queue over a different CustomerSystem: refused, names the line", refused() and snapshot(g) == before
 		and (warnings[#warnings] or ""):find("first difference at line", 1, true) ~= nil)
 end
+-- the solo ambient owner (InstallSoloOwner): EconomyService only
+local function solo(g, s) warnings = {} runSolo(g, s.Workspace) end
+local function soloBack(g, s) warnings = {} runSoloBack(g, s.Workspace) end
+do
+	local g, sv, history = astraLive()
+	local before = snapshot(g)
+	solo(g, sv)
+	check("solo owner without the board release: refused, nothing changed", refused() and snapshot(g) == before)
+	suite(g, sv)
+	art(g, sv)
+	queue(g, sv)
+	assert(not refused(), "board + art + queue: " .. tostring(warnings[#warnings]))
+	local installed = snapshot(g)
+	local svc = sv.ServerScriptService.EconomyService
+	local commits = history.commits
+	solo(g, sv)
+	check("solo owner on board + art + queue: one undo step, EconomyService = the solo-owner version, still tagged",
+		not refused() and history.commits == commits + 1 and svc.Source == SOLO and svc:GetAttribute("EconomyOwned") == true)
+	check("solo owner: the core modules, CustomerSystem and the board scripts untouched", svc.Config.Source == SUITE.Config
+		and sv.ServerScriptService.UpgradeBoardServer.Source == ART.Server and #sv.ServerStorage.EconomySoloOwnerBackup:GetChildren() == 1)
+	local after = snapshot(g)
+	suiteBack(g, sv)
+	check("the board release's rollback is refused while the solo owner is in", refused() and snapshot(g) == after)
+	soloBack(g, sv)
+	check("solo owner rollback: exactly the board release's EconomyService again", not refused() and snapshot(g) == installed
+		and svc.Source == SUITE.EconomyService)
+	svc.Source ..= "\n-- hand edit"
+	before = snapshot(g)
+	solo(g, sv)
+	check("solo owner over an edited EconomyService: refused", refused() and snapshot(g) == before)
+end
 do
 	-- the board scripts without their EconomyOwned tag: not ours
 	local g, sv = astraLive()
@@ -1833,7 +1864,6 @@ def main() -> int:
         ("Client", git_show("src/client/UpgradeBoardClient.client.luau", "4718143")),
     )) + "}\n"
     tables += "local SUITE = {\n" + "".join(f"\t{k} = {lua_string(v.read_text())},\n" for k, v in (
-        ("EconomyService", ROOT / "src/server/EconomyService.luau"),
         ("Config", ROOT / "src/core/Config.luau"),
         ("MoneyStore", ROOT / "src/core/MoneyStore.luau"),
         ("Pricing", ROOT / "src/core/Pricing.luau"),
@@ -1850,6 +1880,8 @@ def main() -> int:
     )) + "}\n"
     tables += "SUITE.UpgradeBoardServer = ART.OldServer\nSUITE.UpgradeBoardClient = ART.OldClient\n"
     tables += f"local QUEUE = {lua_string((ROOT / 'studio' / 'queue' / 'CustomerSystem.lua').read_text())}\n"
+    tables += f"SUITE.EconomyService = {lua_string(git_show('src/server/EconomyService.luau', 'fffdaa3'))}\n"
+    tables += f"local SOLO = {lua_string((ROOT / 'src' / 'server' / 'EconomyService.luau').read_text())}\n"
     tables += f"local BOTFIX = {lua_string((ROOT / 'studio' / 'bot' / 'BotSystem.lua').read_text())}\n"
     tables += f"local UPG = {{ AquariumEconomy = {lua_string((ROOT / 'src/server/AquariumEconomy.luau').read_text())} }}\n"
     tables += f"local OLDCUSTOMER = {lua_string(git_show('studio/live/CustomerSystem.lua', 'd39b00b'))}\n"
@@ -1948,6 +1980,8 @@ def main() -> int:
         + wrap("runArtBack", (ROOT / "RollbackBoardArt.lua").read_text())
         + wrap("runQueue", (ROOT / "InstallCustomerQueue.lua").read_text())
         + wrap("runQueueBack", (ROOT / "RollbackCustomerQueue.lua").read_text())
+        + wrap("runSolo", (ROOT / "InstallSoloOwner.lua").read_text())
+        + wrap("runSoloBack", (ROOT / "RollbackSoloOwner.lua").read_text())
         + TESTS
     )
     with tempfile.TemporaryDirectory() as tmp:
