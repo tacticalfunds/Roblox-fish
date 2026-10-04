@@ -40,8 +40,28 @@ As reported by Astra, 2026-09-29 (user authorised the remaining installs):
 - **installed by Astra (2026-10-03):** row 16, `InstallBoardUpgrades.lua` at
   `fffdaa3` (all 16 targets verified, `EconomyBoardUpgradesBackup`); paid
   upgrades closed
-- **next:** row 17, `InstallBoardArt.lua`: the board on the place's own
-  four-card art (`StarterGui.UpgradeBoardGui`)
+- **installed by Astra since (2026-10-03 / 04), in this order** - backups in
+  brackets:
+  - row 17 `InstallBoardArt.lua` at `4718143` (`EconomyBoardArtBackup`), then
+    the press bounce `1d6f54d` applied by hand to UpgradeBoardClient
+  - row 18 `InstallCustomerQueue.lua` at `c4a6c61` (`EconomyCustomerQueueBackup`)
+  - row 19 `InstallSoloOwner.lua` at `15acef6` (`EconomySoloOwnerBackup`)
+  - the big sale popup `bd05fbc`: **merged by hand** - only its popup section
+    went into the live EconomyClient, which keeps a buy-prompt world-size fix
+    the repo doesn't have (`EconomyLargeSalePopupBackup`). The repo's
+    EconomyClient is therefore NOT the live one: start any client change from
+    the live source.
+  - row 20 `InstallCustomerBoard.lua` at `da973e3` (`EconomyCustomerBoardBackup`)
+  - the Sell stall `f2c3933`: **merged by hand** - the live TruckSystem (15573
+    chars, with a BoxMeat pickup the repo didn't have) refused
+    `InstallSellStall.lua` as it should; Astra merged the stall changes over
+    it (`EconomySellStallBackup` holds the exact Before / After). The repo's
+    `studio/stall/TruckSystem.box.reconstructed.lua` is that merge as
+    RECONSTRUCTED from the description (build/make_box.py), not the exact
+    text. Do not run `InstallSellStall.lua` / `RollbackSellStall.lua` on the
+    live place: use the backup.
+  - Config: both paid gates (`NetKgOpen`, `BoardUpgradesOpen`) turned on by
+    hand, kept by the customer-board install
 
 **Not production-ready as a whole:** paid upgrades (row 3) and the live Car
 Sales upgrades reset every server while the Money spent stays saved. See
@@ -71,6 +91,9 @@ rollback.
 | 13 | [`fish-jump/InstallJumpRate.lua`](fish-jump/README.md#jump-more-often-installjumpratelua) | Fish jump about twice as often (periods 16–28 s → 8–14 s) | 6 | `FishJumpRateBackup` |
 | 14 | [`economy/InstallRods.lua`](economy/README.md#rods-milestone-1-installrodslua) | Rods owned for good (saved with Money), equipped, faster bites; paid shop stays closed | 4 and 9 | `EconomyRodsBackup` |
 | 15 | [`economy/InstallRodShopUI.lua`](economy/README.md#rod-shop-ui-installrodshopuilua) | Shop cards show price / OWNED / benefit / EQUIPPED and the server's real answers | 14 | `EconomyRodShopUIBackup` |
+| 20 | [`economy/InstallCustomerBoard.lua`](economy/build/build_updates.py) | Saved Customer Speed (sum of present players', max 24/min) and Customer Line (largest, max 8) on the old two-panel Workspace.Board | 19 | `EconomyCustomerBoardBackup` |
+| 19 | [`economy/InstallSoloOwner.lua`](economy/build/build_updates.py) | Ownerless ambient harpoon catches belong to the only player in a solo server, at catch time | 16 | `EconomySoloOwnerBackup` |
+| 18 | [`economy/InstallCustomerQueue.lua`](economy/build/make_queue.py) | Customers stop jamming at the counter (horizontal arrival, bounded front wait, no stale places) | 16 | `EconomyCustomerQueueBackup` |
 | 17 | [`economy/InstallBoardArt.lua`](economy/README.md#board-art-installboardartlua) | The board on the place's own four-card art: binds each player's `PlayerGui.UpgradeBoardGui` (Desc / Btn.Price texts only), reach measured to `Workspace["Upgrade board"].Screen`; the generated board on the old Workspace.Board is gone (that board is left as it is) | 16 (exact installed sources) | `EconomyBoardArtBackup` |
 | 16 | [`economy/InstallBoardUpgrades.lua`](economy/README.md#upgrade-board-on-the-live-baseline-installboardupgradeslua) | The four-card upgrade board (Net Strength, Rod Luck, Meat Price, Faster Reels) and ONE saved net capacity sold by the KG posts and the board; earlier GrinderUpgrades KG buys adopted (idempotent); GrinderUpgrades conveyor / blades kept, hardened; customers for every player (CustomerSystem) and fast-start prices; paid upgrades closed | 14 and the GrinderUpgrades system (exact live sources) | `EconomyBoardUpgradesBackup` |
 
@@ -80,12 +103,16 @@ round is refused, with nothing changed.
 
 ## Rollback order
 
-Exactly the reverse: **17 → 1**, then, if you ever need to go further,
+Exactly the reverse: **the stall (its backup), 20 → 1**, then, if you ever need to go further,
 `economy/RollbackAquariumV12.lua` and `economy/UninstallRodOffers.lua`.
 Row 2 (Money HUD) touches nothing else, so its rollback works at any time.
 
 | # | Rollback file |
 |---|---|
+| stall | `EconomySellStallBackup` (hand merge; not `RollbackSellStall.lua`) |
+| 20 | `economy/RollbackCustomerBoard.lua` (before 19) |
+| 19 | `economy/RollbackSoloOwner.lua` (before 16; refused while 20 is in) |
+| 18 | `economy/RollbackCustomerQueue.lua` (before 16) |
 | 17 | `economy/RollbackBoardArt.lua` (before 16; restores the board release's two board scripts) |
 | 16 | `economy/RollbackBoardUpgrades.lua` (before 14; restores the live GrinderUpgrades scripts; refused while 17 is in) |
 | 15 | `economy/RollbackRodShopUI.lua` (before 14) |

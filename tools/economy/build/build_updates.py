@@ -951,9 +951,11 @@ Requires: InstallSoloOwner (EconomySoloOwnerBackup).
 
 def sell_stall() -> list[str]:
     """The red-and-white Sell stall sells carried meat (TruckSystem only)."""
+    import make_box
     import make_stall
 
     make_stall.main()
+    make_box.main()  # the live box pickup, reconstructed (no installer targets it)
     base = make_stall.BASE.read_text()
     assert len(base) == 15071  # the place inventory's SourceLength for the live TruckSystem
     keys = write_pair_v2(
